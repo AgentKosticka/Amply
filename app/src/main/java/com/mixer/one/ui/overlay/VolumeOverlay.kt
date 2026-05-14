@@ -62,7 +62,6 @@ fun VolumeOverlay(
     currentVolume: Int,
     maxVolume: Int,
     visible: Boolean = true,
-    isMuted: Boolean = false,
     iconType: String = "MUSIC",
     sessions: List<AudioSession> = emptyList(),
     focusedApp: AudioSession? = null,
@@ -283,7 +282,7 @@ private fun MainVolumePill(
 
         // Expand Button at the bottom (only if sessions exist)
         if (hasActiveSessions) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
             IconButton(
                 onClick = {
