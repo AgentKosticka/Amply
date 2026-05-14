@@ -231,7 +231,6 @@ object OverlayManager {
                     currentVolume = currentVolume.value,
                     maxVolume = maxVolume.value,
                     visible = overlayVisible.value,
-                    isMuted = isMuted.value,
                     iconType = iconType.value,
                     sessions = currentSessions.value,
                     focusedApp = focusedApp.value, // Phase 3.5: Smart Focus
