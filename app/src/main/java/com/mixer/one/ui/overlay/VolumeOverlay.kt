@@ -337,13 +337,6 @@ private fun MixerPanel(
                         }
                     }
                 }
-                Text(
-                    text = "MIXER",
-                    color = NothingColors.White,
-                    fontSize = 10.sp,
-                    letterSpacing = 1.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
             }
 
             Icon(
