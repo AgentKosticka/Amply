@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -60,6 +61,7 @@ private const val TAG = "VolumeOverlay"
 fun VolumeOverlay(
     currentVolume: Int,
     maxVolume: Int,
+    visible: Boolean = true,
     isMuted: Boolean = false,
     iconType: String = "MUSIC",
     sessions: List<AudioSession> = emptyList(),
@@ -73,6 +75,18 @@ fun VolumeOverlay(
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     val hasActiveSessions = sessions.isNotEmpty()
+    val pillTransitionState = remember {
+        MutableTransitionState(false).apply {
+            targetState = visible
+        }
+    }
+
+    LaunchedEffect(visible) {
+        pillTransitionState.targetState = visible
+        if (!visible) {
+            isExpanded = false
+        }
+    }
 
     // Chevron rotation animation
     val chevronRotation by animateFloatAsState(
@@ -87,22 +101,48 @@ fun VolumeOverlay(
         horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.Top
     ) {
-        // Main Volume Pill (always visible)
-        MainVolumePill(
-            currentVolume = currentVolume,
-            maxVolume = maxVolume,
-            iconType = iconType,
-            hasActiveSessions = hasActiveSessions,
-            isExpanded = isExpanded,
-            chevronRotation = chevronRotation,
-            onVolumeChange = onVolumeChange,
-            onMuteToggle = onMuteToggle,
-            onExpandToggle = {
-                isExpanded = !isExpanded
-                onInteraction()
-            },
-            onInteraction = onInteraction
-        )
+        // Main Volume Pill
+        AnimatedVisibility(
+            visibleState = pillTransitionState,
+            enter = slideInHorizontally(
+                initialOffsetX = { -it / 2 },
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            ) + scaleIn(
+                initialScale = 0.88f,
+                transformOrigin = TransformOrigin(0f, 0.5f),
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            ) + fadeIn(animationSpec = tween(200)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { -it / 2 },
+                animationSpec = tween(200, easing = FastOutSlowInEasing)
+            ) + scaleOut(
+                targetScale = 0.88f,
+                transformOrigin = TransformOrigin(0f, 0.5f),
+                animationSpec = tween(200, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(150))
+        ) {
+            MainVolumePill(
+                currentVolume = currentVolume,
+                maxVolume = maxVolume,
+                iconType = iconType,
+                hasActiveSessions = hasActiveSessions,
+                isExpanded = isExpanded,
+                chevronRotation = chevronRotation,
+                onVolumeChange = onVolumeChange,
+                onMuteToggle = onMuteToggle,
+                onExpandToggle = {
+                    isExpanded = !isExpanded
+                    onInteraction()
+                },
+                onInteraction = onInteraction
+            )
+        }
 
         // Mixer Panel (expands to the right, side-by-side)
         AnimatedVisibility(

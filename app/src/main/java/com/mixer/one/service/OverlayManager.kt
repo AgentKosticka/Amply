@@ -8,6 +8,7 @@ import android.os.Bundle // Added import
 import android.os.ResultReceiver // Added import
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.runtime.Recomposer
@@ -73,6 +74,7 @@ object OverlayManager {
     // Auto-hide timer
     private val managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var hideJob: Job? = null
+    private var removeJob: Job? = null
 
     // State - persists across hide/show cycles
     private val currentVolume = mutableStateOf(0)
@@ -89,6 +91,7 @@ object OverlayManager {
     
     // Phase 3: ResultReceiver for robust IPC volume control
     private var volumeReceiver: ResultReceiver? = null
+    private val overlayVisible = mutableStateOf(false)
 
     /**
      * Set the callback for per-app volume changes
@@ -135,6 +138,9 @@ object OverlayManager {
         focusedAppSession: AudioSession? = null,
         volumeReceiver: ResultReceiver? = null
     ) {
+        removeJob?.cancel()
+        removeJob = null
+
         // Initialize managers if needed
         if (windowManager == null) {
             windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -161,6 +167,7 @@ object OverlayManager {
         if (overlayContainer == null) {
             createOverlay(context)
         }
+        overlayVisible.value = true
 
         // Reset auto-hide timer
         scheduleHide()
@@ -178,7 +185,16 @@ object OverlayManager {
         lifecycleOwner = owner
 
         // Step 2: Create wrapper FrameLayout - this holds the lifecycle for the view tree
-        val container = FrameLayout(context)
+        val container = FrameLayout(context).apply {
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    hide()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
 
         // Step 3: Set lifecycle owners on the CONTAINER (parent view)
         // This allows child views (ComposeView) to find the lifecycle via view tree traversal
@@ -214,6 +230,7 @@ object OverlayManager {
                 VolumeOverlay(
                     currentVolume = currentVolume.value,
                     maxVolume = maxVolume.value,
+                    visible = overlayVisible.value,
                     isMuted = isMuted.value,
                     iconType = iconType.value,
                     sessions = currentSessions.value,
@@ -291,6 +308,20 @@ object OverlayManager {
     fun hide() {
         hideJob?.cancel()
 
+        if (overlayContainer == null) {
+            return
+        }
+
+        overlayVisible.value = false
+        removeJob?.cancel()
+        removeJob = managerScope.launch {
+            delay(200L)
+            removeOverlay()
+        }
+    }
+
+    private fun removeOverlay() {
+
         overlayContainer?.let { container ->
             try {
                 windowManager?.removeView(container)
@@ -308,6 +339,8 @@ object OverlayManager {
         lifecycleOwner = null
         overlayContainer = null
         composeView = null
+        overlayVisible.value = false
+        removeJob = null
     }
 
     /**
@@ -366,8 +399,9 @@ object OverlayManager {
      */
     fun cleanup() {
         hideJob?.cancel()
+        removeJob?.cancel()
+        removeOverlay()
         managerScope.cancel()
-        hide()
         windowManager = null
         audioManager = null
     }
