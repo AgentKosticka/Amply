@@ -1,27 +1,30 @@
 package com.agentkosticka.amply.ui.overlay
 
+import android.media.AudioManager
 import android.util.Log
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material3.Icon
@@ -30,16 +33,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
@@ -48,6 +55,19 @@ import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.ui.theme.NothingColors
 
 private const val TAG = "VolumeOverlay"
+private val CollapsedPillWidth = 54.dp
+private val ExpandedPillWidth = 216.dp
+private val PanelSpacing = 16.dp
+private val ExpandControlHeight = 48.dp
+private val ExpandControlIconSize = 16.dp
+
+private data class OverlayStreamVolume(
+    val streamType: Int,
+    val currentVolume: Int,
+    val maxVolume: Int,
+    val icon: ImageVector,
+    val contentDescription: String
+)
 
 /**
  * Volume overlay with Nothing OS design
@@ -58,12 +78,19 @@ private const val TAG = "VolumeOverlay"
 fun VolumeOverlay(
     currentVolume: Int,
     maxVolume: Int,
+    alarmVolume: Int = 0,
+    maxAlarmVolume: Int = 7,
+    notificationVolume: Int = 0,
+    maxNotificationVolume: Int = 7,
+    callVolume: Int = 0,
+    maxCallVolume: Int = 5,
     visible: Boolean = true,
     iconType: String = "MUSIC",
     sessions: List<AudioSession> = emptyList(),
     focusedApp: AudioSession? = null,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     onVolumeChange: (Int) -> Unit = {},
+    onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
     onSessionVolumeChange: (AudioSession, Float) -> Unit = { _, _ -> },
     onMuteToggle: () -> Unit = {},
     onInteraction: () -> Unit = {},
@@ -105,15 +132,54 @@ fun VolumeOverlay(
         label = "chevronRotation"
     )
 
-    val pillContent: @Composable () -> Unit = {
-        MainVolumePill(
+    val streamVolumes = listOf(
+        OverlayStreamVolume(
+            streamType = AudioManager.STREAM_MUSIC,
             currentVolume = currentVolume,
             maxVolume = maxVolume,
-            iconType = iconType,
-            hasActiveSessions = hasActiveSessions,
+            icon = when (iconType) {
+                "BLUETOOTH" -> Icons.Rounded.Bluetooth
+                "HEADPHONE" -> Icons.Rounded.Headphones
+                else -> Icons.Default.MusicNote
+            },
+            contentDescription = "Media volume"
+        ),
+        OverlayStreamVolume(
+            streamType = AudioManager.STREAM_ALARM,
+            currentVolume = alarmVolume,
+            maxVolume = maxAlarmVolume,
+            icon = Icons.Default.Alarm,
+            contentDescription = "Alarm volume"
+        ),
+        OverlayStreamVolume(
+            streamType = AudioManager.STREAM_NOTIFICATION,
+            currentVolume = notificationVolume,
+            maxVolume = maxNotificationVolume,
+            icon = Icons.Default.Notifications,
+            contentDescription = "Notification volume"
+        ),
+        OverlayStreamVolume(
+            streamType = AudioManager.STREAM_VOICE_CALL,
+            currentVolume = callVolume,
+            maxVolume = maxCallVolume,
+            icon = Icons.Default.Call,
+            contentDescription = "Call volume"
+        )
+    )
+
+    val pillContent: @Composable () -> Unit = {
+        MainVolumePill(
+            streams = streamVolumes,
             isExpanded = isExpanded,
             chevronRotation = chevronRotation,
-            onVolumeChange = onVolumeChange,
+            keepMediaAtEnd = expandToStart,
+            onStreamVolumeChange = { streamType, newVolume ->
+                if (streamType == AudioManager.STREAM_MUSIC) {
+                    onVolumeChange(newVolume)
+                } else {
+                    onStreamVolumeChange(streamType, newVolume)
+                }
+            },
             onMuteToggle = onMuteToggle,
             onExpandToggle = {
                 isExpanded = !isExpanded
@@ -123,8 +189,9 @@ fun VolumeOverlay(
         )
     }
 
-    val panelBody: @Composable () -> Unit = {
+    val panelBody: @Composable (Dp) -> Unit = { panelWidth ->
         AmplyPanel(
+            panelWidth = panelWidth,
             sessions = sessions,
             focusedApp = focusedApp,
             onSessionVolumeChange = { session, volume ->
@@ -156,80 +223,47 @@ fun VolumeOverlay(
         ) + fadeOut(animationSpec = tween(150))
     ) {
         // Layout: pill stays stable; side panel slides as a whole without resizing its contents.
-        Row(
-            modifier = Modifier.wrapContentSize(),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.Top
-        ) {
-            if (expandToStart) {
-                Box(
-                    modifier = Modifier
-                        .width(if (hasActiveSessions) 274.dp else 54.dp)
-                        .wrapContentHeight()
-                ) {
-                    if (hasActiveSessions && !panelTransitionState.currentState && !panelTransitionState.targetState) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .width(220.dp)
-                                .height(360.dp)
-                                .clickable(
-                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = {
-                                        onDismissRequest()
-                                    }
-                                )
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        AnimatedVisibility(
-                            visibleState = panelTransitionState,
-                            enter = slideInHorizontally(
-                                initialOffsetX = { it },
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessMedium
-                                )
-                            ) + fadeIn(animationSpec = tween(200)),
-                            exit = slideOutHorizontally(
-                                targetOffsetX = { it },
-                                animationSpec = tween(200, easing = FastOutSlowInEasing)
-                            ) + fadeOut(animationSpec = tween(150))
-                        ) {
-                            panelBody()
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        pillContent()
-                    }
-                }
+        val containerTargetWidth = if (expandToStart) {
+            ExpandedPillWidth
+        } else {
+            if (
+                isExpanded ||
+                panelTransitionState.currentState ||
+                panelTransitionState.targetState
+            ) {
+                ExpandedPillWidth
             } else {
-                pillContent()
-                AnimatedVisibility(
-                    visible = isExpanded && hasActiveSessions,
-                    enter = slideInHorizontally(
-                        initialOffsetX = { -it },
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMedium
-                        )
-                    ) + fadeIn(animationSpec = tween(200)),
-                    exit = slideOutHorizontally(
-                        targetOffsetX = { -it },
-                        animationSpec = tween(200, easing = FastOutSlowInEasing)
-                    ) + fadeOut(animationSpec = tween(150))
-                ) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                        panelBody()
-                    }
+                CollapsedPillWidth
+            }
+        }
+        val containerWidth by animateDpAsState(
+            targetValue = containerTargetWidth,
+            animationSpec = tween(250, easing = FastOutSlowInEasing),
+            label = "overlayContainerWidth"
+        )
+
+        Column(
+            modifier = Modifier.width(containerWidth),
+            horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
+        ) {
+            pillContent()
+            AnimatedVisibility(
+                visibleState = panelTransitionState,
+                enter = slideInVertically(
+                    initialOffsetY = { -it / 2 },
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                ) + fadeIn(animationSpec = tween(200)),
+                exit = slideOutVertically(
+                    targetOffsetY = { -it / 2 },
+                    animationSpec = tween(200, easing = FastOutSlowInEasing)
+                ) + fadeOut(animationSpec = tween(150))
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(PanelSpacing))
+                    panelBody(ExpandedPillWidth)
                 }
             }
         }
@@ -241,83 +275,186 @@ fun VolumeOverlay(
  */
 @Composable
 private fun MainVolumePill(
-    currentVolume: Int,
-    maxVolume: Int,
-    iconType: String,
-    hasActiveSessions: Boolean,
+    streams: List<OverlayStreamVolume>,
     isExpanded: Boolean,
     chevronRotation: Float,
-    onVolumeChange: (Int) -> Unit,
+    keepMediaAtEnd: Boolean,
+    onStreamVolumeChange: (Int, Int) -> Unit,
     onMuteToggle: () -> Unit,
     onExpandToggle: () -> Unit,
     onInteraction: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
-    
-    // OPTIMIZED: Use derivedStateOf to reduce recomputations
-    val volumePercentage by remember(currentVolume, maxVolume) {
+    val pillWidth by animateDpAsState(
+        targetValue = if (isExpanded) ExpandedPillWidth else CollapsedPillWidth,
+        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        label = "mainPillWidth"
+    )
+    val arrowWidth by animateDpAsState(
+        targetValue = if (isExpanded) ExpandedPillWidth - 12.dp else ExpandControlHeight,
+        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        label = "expandArrowWidth"
+    )
+    val mediaStream = streams.first()
+    val secondaryStreams = streams.drop(1)
+
+    Column(
+        modifier = Modifier
+            .width(pillWidth)
+            .wrapContentHeight()
+            .clip(RoundedCornerShape(27.dp))
+            .background(
+                color = Color(0xFF1C1C1C),
+                shape = RoundedCornerShape(27.dp)
+            )
+            .padding(top = 14.dp, bottom = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.width(pillWidth),
+        ) {
+            if (isExpanded) {
+                Row(
+                    modifier = Modifier
+                        .align(if (keepMediaAtEnd) Alignment.TopStart else Alignment.TopStart)
+                        .padding(
+                            start = if (keepMediaAtEnd) 0.dp else CollapsedPillWidth,
+                            end = if (keepMediaAtEnd) CollapsedPillWidth else 0.dp
+                        )
+                ) {
+                    val visibleSecondaryStreams = if (keepMediaAtEnd) {
+                        secondaryStreams.asReversed()
+                    } else {
+                        secondaryStreams
+                    }
+                    visibleSecondaryStreams.forEach { stream ->
+                        StreamVolumeColumn(
+                            stream = stream,
+                            onVolumeChange = { newVolume ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onInteraction()
+                                onStreamVolumeChange(stream.streamType, newVolume)
+                            },
+                            onMediaMuteToggle = {}
+                        )
+                    }
+                }
+            }
+
+            StreamVolumeColumn(
+                stream = mediaStream,
+                onVolumeChange = { newVolume ->
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onInteraction()
+                    onStreamVolumeChange(mediaStream.streamType, newVolume)
+                },
+                onMediaMuteToggle = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onInteraction()
+                    onMuteToggle()
+                },
+                modifier = Modifier.align(if (keepMediaAtEnd) Alignment.TopEnd else Alignment.TopStart)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Box(
+            modifier = Modifier
+                .width(arrowWidth)
+                .height(ExpandControlHeight)
+                .background(
+                    color = if (isExpanded) NothingColors.Red.copy(alpha = 0.2f)
+                    else Color(0xFF2A2A2A),
+                    shape = RoundedCornerShape(ExpandControlHeight / 2)
+                )
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onInteraction()
+                    onExpandToggle()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = if (isExpanded) "Collapse Amply" else "Expand Amply",
+                tint = if (isExpanded) NothingColors.Red else NothingColors.GreyMedium,
+                modifier = Modifier
+                    .size(ExpandControlIconSize)
+                    .rotate(chevronRotation)
+            )
+        }
+    }
+}
+
+@Composable
+private fun StreamVolumeColumn(
+    stream: OverlayStreamVolume,
+    onVolumeChange: (Int) -> Unit,
+    onMediaMuteToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val volumePercentage by remember(stream.currentVolume, stream.maxVolume) {
         derivedStateOf {
-            if (maxVolume > 0) {
-                ((currentVolume.toFloat() / maxVolume.toFloat()) * 100).toInt()
+            if (stream.maxVolume > 0) {
+                ((stream.currentVolume.toFloat() / stream.maxVolume.toFloat()) * 100).toInt()
             } else {
                 0
             }
         }
     }
+    val isMediaStream = stream.streamType == AudioManager.STREAM_MUSIC
 
     Column(
-        modifier = Modifier
-            .width(54.dp)
-            .wrapContentHeight()
-            .background(
-                color = Color(0xFF1C1C1C),
-                shape = RoundedCornerShape(27.dp)
-            )
-            .padding(vertical = 14.dp, horizontal = 6.dp),
+        modifier = modifier
+            .width(CollapsedPillWidth)
+            .padding(horizontal = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Mute Button at top
         IconButton(
             onClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onInteraction()
-                onMuteToggle()
+                if (isMediaStream) {
+                    onMediaMuteToggle()
+                }
             },
             modifier = Modifier.size(26.dp)
         ) {
             Icon(
-                imageVector = if (currentVolume == 0)
-                    Icons.AutoMirrored.Filled.VolumeOff
-                else
-                    Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = "Mute/Unmute",
-                tint = if (currentVolume == 0) NothingColors.Red else NothingColors.White,
+                imageVector = if (isMediaStream) {
+                    if (stream.currentVolume == 0) {
+                        Icons.AutoMirrored.Filled.VolumeOff
+                    } else {
+                        Icons.AutoMirrored.Filled.VolumeUp
+                    }
+                } else {
+                    stream.icon
+                },
+                contentDescription = if (isMediaStream) "Mute/Unmute" else stream.contentDescription,
+                tint = if (stream.currentVolume == 0) NothingColors.Red else NothingColors.White,
                 modifier = Modifier.size(18.dp)
             )
         }
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Volume Percentage
         Text(
             text = "$volumePercentage",
             color = NothingColors.White,
             fontSize = 16.sp,
             fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Clip,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(40.dp)
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Vertical Dot Slider
         DraggableDotSlider(
-            currentVolume = currentVolume,
-            maxVolume = maxVolume,
-            onVolumeChange = { newVolume ->
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onInteraction()
-                onVolumeChange(newVolume)
-            },
+            currentVolume = stream.currentVolume,
+            maxVolume = stream.maxVolume,
+            onVolumeChange = onVolumeChange,
             modifier = Modifier
                 .height(130.dp)
                 .width(40.dp)
@@ -325,45 +462,12 @@ private fun MainVolumePill(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Device Icon
         Icon(
-            imageVector = when (iconType) {
-                "BLUETOOTH" -> Icons.Rounded.Bluetooth
-                "HEADPHONE" -> Icons.Rounded.Headphones
-                else -> Icons.Default.MusicNote
-            },
-            contentDescription = "Audio Device",
+            imageVector = stream.icon,
+            contentDescription = stream.contentDescription,
             tint = NothingColors.GreyMedium,
             modifier = Modifier.size(16.dp)
         )
-
-        // Expand Button at the bottom (only if sessions exist)
-        if (hasActiveSessions) {
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            IconButton(
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onExpandToggle()
-                },
-                modifier = Modifier
-                    .size(26.dp)
-                    .background(
-                        color = if (isExpanded) NothingColors.Red.copy(alpha = 0.2f)
-                        else Color(0xFF2A2A2A),
-                        shape = CircleShape
-                    )
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Expand Amply",
-                    tint = if (isExpanded) NothingColors.Red else NothingColors.GreyMedium,
-                    modifier = Modifier
-                        .size(16.dp)
-                        .rotate(chevronRotation)
-                )
-            }
-        }
     }
 }
 
@@ -372,6 +476,7 @@ private fun MainVolumePill(
  */
 @Composable
 private fun AmplyPanel(
+    panelWidth: Dp,
     sessions: List<AudioSession>,
     focusedApp: AudioSession?,
     onSessionVolumeChange: (AudioSession, Float) -> Unit,
@@ -383,7 +488,7 @@ private fun AmplyPanel(
 
     Column(
         modifier = Modifier
-            .width(210.dp)
+            .width(panelWidth)
             .heightIn(min = 100.dp, max = 360.dp)
             .background(
                 color = Color(0xFF1C1C1C),

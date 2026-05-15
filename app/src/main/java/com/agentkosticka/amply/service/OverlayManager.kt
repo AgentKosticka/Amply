@@ -100,6 +100,12 @@ object OverlayManager {
     // State - persists across hide/show cycles
     private val currentVolume = mutableIntStateOf(0)
     private val maxVolume = mutableIntStateOf(30)
+    private val alarmVolume = mutableIntStateOf(0)
+    private val maxAlarmVolume = mutableIntStateOf(7)
+    private val notificationVolume = mutableIntStateOf(0)
+    private val maxNotificationVolume = mutableIntStateOf(7)
+    private val callVolume = mutableIntStateOf(0)
+    private val maxCallVolume = mutableIntStateOf(5)
     private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
     private val currentSessions = mutableStateOf<List<AudioSession>>(emptyList())
@@ -175,15 +181,14 @@ object OverlayManager {
         }
         if (audioManager == null) {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            maxVolume.intValue = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 30
         }
 
         // DEBUG: Log incoming state
         Log.d("OverlayManager", "show() called: volume=$volume, sessions=${sessions.size}, focused=${focusedAppSession?.appName}")
 
         // Update state
-        currentVolume.intValue = volume
-        isMuted.value = (volume == 0)
+        refreshSystemStreamVolumes(mediaVolumeOverride = volume)
+        isMuted.value = (currentVolume.intValue == 0)
         iconType.value = newIconType
         currentSessions.value = sessions
         focusedApp.value = focusedAppSession
@@ -255,13 +260,22 @@ object OverlayManager {
                 VolumeOverlay(
                     currentVolume = currentVolume.intValue,
                     maxVolume = maxVolume.intValue,
+                    alarmVolume = alarmVolume.intValue,
+                    maxAlarmVolume = maxAlarmVolume.intValue,
+                    notificationVolume = notificationVolume.intValue,
+                    maxNotificationVolume = maxNotificationVolume.intValue,
+                    callVolume = callVolume.intValue,
+                    maxCallVolume = maxCallVolume.intValue,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
                     sessions = currentSessions.value,
                     focusedApp = focusedApp.value, // Phase 3.5: Smart Focus
                     overlaySide = currentOverlaySide.value,
                     onVolumeChange = { newVolume ->
-                        setVolume(newVolume)
+                        setStreamVolume(AudioManager.STREAM_MUSIC, newVolume)
+                    },
+                    onStreamVolumeChange = { streamType, newVolume ->
+                        setStreamVolume(streamType, newVolume)
                     },
                     onSessionVolumeChange = { session, volume ->
                         // Phase 3: Use ResultReceiver to send data back to Service
@@ -366,16 +380,36 @@ object OverlayManager {
         removeJob = null
     }
 
+    private fun refreshSystemStreamVolumes(mediaVolumeOverride: Int? = null) {
+        val manager = audioManager ?: return
+        currentVolume.intValue = mediaVolumeOverride ?: manager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        maxVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        alarmVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_ALARM)
+        maxAlarmVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+        notificationVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
+        maxNotificationVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
+        callVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+        maxCallVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+    }
+
     /**
-     * Update volume from overlay interaction
+     * Update a system stream from overlay interaction.
      */
-    private fun setVolume(newVolume: Int) {
-        currentVolume.intValue = newVolume
-        audioManager?.setStreamVolume(
-            AudioManager.STREAM_MUSIC,
-            newVolume,
+    private fun setStreamVolume(streamType: Int, newVolume: Int) {
+        val manager = audioManager ?: return
+        val clampedVolume = newVolume.coerceIn(0, manager.getStreamMaxVolume(streamType))
+        when (streamType) {
+            AudioManager.STREAM_MUSIC -> currentVolume.intValue = clampedVolume
+            AudioManager.STREAM_ALARM -> alarmVolume.intValue = clampedVolume
+            AudioManager.STREAM_NOTIFICATION -> notificationVolume.intValue = clampedVolume
+            AudioManager.STREAM_VOICE_CALL -> callVolume.intValue = clampedVolume
+        }
+        manager.setStreamVolume(
+            streamType,
+            clampedVolume,
             0 // No system UI
         )
+        isMuted.value = currentVolume.intValue == 0
     }
 
     /**
@@ -385,10 +419,10 @@ object OverlayManager {
         if (currentVolume.intValue == 0) {
             // Unmute: Restore to 70%
             val restoreVolume = (maxVolume.intValue * 0.7f).toInt()
-            setVolume(restoreVolume)
+            setStreamVolume(AudioManager.STREAM_MUSIC, restoreVolume)
         } else {
             // Mute: Set to 0
-            setVolume(0)
+            setStreamVolume(AudioManager.STREAM_MUSIC, 0)
         }
     }
 
