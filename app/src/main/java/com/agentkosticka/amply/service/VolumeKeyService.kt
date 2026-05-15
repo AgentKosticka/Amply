@@ -246,10 +246,9 @@ class VolumeKeyService : AccessibilityService() {
         
         // Get current sessions from AudioSessionManager
         val sessions = audioSessionManager?.getDefaultOverlaySessions() ?: emptyList()
-        val expandedSessions = audioSessionManager?.getExpandedOverlaySessions() ?: sessions
         
         // DEBUG: Log session count
-        Log.d(TAG, "showOverlay: volume=$volume, sessions=${sessions.size}, expanded=${expandedSessions.size}, foreground=$foregroundPackage")
+        Log.d(TAG, "showOverlay: volume=$volume, sessions=${sessions.size}, foreground=$foregroundPackage")
         sessions.forEachIndexed { index, session ->
             Log.d(TAG, "  Session[$index]: ${session.appName} (uid=${session.uid}, pkg=${session.packageName})")
         }
@@ -272,11 +271,6 @@ class VolumeKeyService : AccessibilityService() {
                 Log.d(TAG, "  Passing ${parcelableSessions.size} parcelable sessions to overlay")
             } else {
                 Log.w(TAG, "  WARNING: No sessions to pass to overlay!")
-            }
-
-            if (expandedSessions.isNotEmpty()) {
-                val parcelableExpandedSessions = ArrayList(expandedSessions.map { it.toParcelable() })
-                putParcelableArrayListExtra(OverlayService.EXTRA_EXPANDED_SESSIONS, parcelableExpandedSessions)
             }
             
             // Phase 3.5: Pass focused app for Smart Focus

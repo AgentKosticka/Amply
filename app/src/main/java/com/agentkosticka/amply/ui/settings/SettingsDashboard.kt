@@ -17,14 +17,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -40,23 +42,79 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.agentkosticka.amply.R
+import com.agentkosticka.amply.audio.AudioSessionManager
+import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.data.PreferencesManager
+import com.agentkosticka.amply.shizuku.ShizukuRepository
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+private enum class AppListMode {
+    DEFAULT,
+    EXPANDED
+}
+
 @Composable
 fun SettingsDashboard(
     preferencesManager: PreferencesManager,
+    shizukuRepository: ShizukuRepository,
     onOverlayPermissionClick: () -> Unit,
     onAccessibilityClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val audioSessionManager = remember(preferencesManager, shizukuRepository) {
+        AudioSessionManager(
+            context = context.applicationContext,
+            shizukuRepository = shizukuRepository,
+            preferencesManager = preferencesManager
+        )
+    }
+
+    DisposableEffect(audioSessionManager) {
+        audioSessionManager.startPolling()
+        onDispose {
+            audioSessionManager.cleanup()
+        }
+    }
+
     val overlaySide by preferencesManager.overlaySide.collectAsState(initial = OverlaySide.LEFT)
     val verticalFraction by preferencesManager.overlayVerticalFraction.collectAsState(initial = 0.5f)
     val appSettings by preferencesManager.appSettings.collectAsState(initial = emptyMap())
+    val sessionState by audioSessionManager.sessionState.collectAsState(initial = AudioSessionState.empty())
     val scope = rememberCoroutineScope()
+    var appListMode by remember { mutableStateOf(AppListMode.DEFAULT) }
+    var orderedPackageNames by remember(appListMode) { mutableStateOf<List<String>>(emptyList()) }
+    val now = System.currentTimeMillis()
+    val activeSessionsByPackage = sessionState.sessions.associateBy { it.packageName }
+    val activePackageNames = activeSessionsByPackage.keys
+    val allApps = mergeAppSettingsWithActiveSessions(
+        appSettings = appSettings,
+        activeSessions = sessionState.sessions
+    )
+    val candidateApps = if (appListMode == AppListMode.DEFAULT) {
+        allApps.filter { it.packageName in activePackageNames }
+    } else {
+        allApps.filter { it.packageName in activePackageNames || it.isCustomized || now - it.lastSeenTimestamp <= 60_000L }
+    }
+    val candidatePackageNames = candidateApps.map { it.packageName }.toSet()
+    val nextOrderedPackageNames = stablePackageOrder(
+        currentOrder = orderedPackageNames,
+        candidateApps = candidateApps
+    )
+    val appsByPackage = candidateApps.associateBy { it.packageName }
+    val apps = nextOrderedPackageNames.mapNotNull { packageName ->
+        appsByPackage[packageName]
+    }
+
+    LaunchedEffect(appListMode, candidatePackageNames) {
+        if (orderedPackageNames != nextOrderedPackageNames) {
+            orderedPackageNames = nextOrderedPackageNames
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -111,16 +169,18 @@ fun SettingsDashboard(
 
         item {
             SectionTitle("APP VOLUMES")
+            Spacer(modifier = Modifier.height(10.dp))
+            AppListModeSelector(
+                selected = appListMode,
+                onSelected = { appListMode = it }
+            )
         }
-
-        val apps = appSettings.values
-            .sortedWith(compareByDescending<AppSettings> { it.lastSeenTimestamp }.thenBy { it.appName.lowercase() })
 
         if (apps.isEmpty()) {
             item {
                 SettingsPanel {
                     Text(
-                        text = "NO APPS SEEN YET",
+                        text = if (appSettings.isEmpty()) "NO APPS SEEN YET" else "NO DEFAULT APPS RIGHT NOW",
                         style = MaterialTheme.typography.labelMedium,
                         color = NothingColors.GreyMedium
                     )
@@ -137,13 +197,61 @@ fun SettingsDashboard(
                     },
                     onVolumeChange = { volume ->
                         scope.launch {
-                            preferencesManager.setAppDefaultVolume(app.packageName, volume)
+                            val activeSession = activeSessionsByPackage[app.packageName]
+                            if (activeSession != null) {
+                                audioSessionManager.setSessionVolume(
+                                    sessionId = activeSession.sessionId,
+                                    packageName = activeSession.packageName,
+                                    volume = volume
+                                )
+                            } else {
+                                preferencesManager.setAppDefaultVolume(app.packageName, volume)
+                            }
                         }
                     }
                 )
             }
         }
     }
+}
+
+private fun stablePackageOrder(
+    currentOrder: List<String>,
+    candidateApps: List<AppSettings>
+): List<String> {
+    val candidatePackages = candidateApps.map { it.packageName }.toSet()
+    val previousOrder = currentOrder.filter { it in candidatePackages }
+    val previousPackages = previousOrder.toSet()
+    val addedPackages = candidateApps
+        .filter { it.packageName !in previousPackages }
+        .sortedWith(compareByDescending<AppSettings> { it.lastSeenTimestamp }.thenBy { it.appName.lowercase() })
+        .map { it.packageName }
+
+    return previousOrder + addedPackages
+}
+
+private fun mergeAppSettingsWithActiveSessions(
+    appSettings: Map<String, AppSettings>,
+    activeSessions: List<AudioSession>
+): List<AppSettings> {
+    val merged = LinkedHashMap<String, AppSettings>()
+    appSettings.values.forEach { setting ->
+        merged[setting.packageName] = setting
+    }
+
+    activeSessions.forEach { session ->
+        val existing = merged[session.packageName]
+        merged[session.packageName] = AppSettings(
+            packageName = session.packageName,
+            appName = session.appName,
+            uid = session.uid,
+            defaultVolume = existing?.defaultVolume ?: session.volume,
+            hiddenInOverlay = existing?.hiddenInOverlay ?: false,
+            lastSeenTimestamp = maxOf(existing?.lastSeenTimestamp ?: 0L, session.lastSeenTimestamp)
+        )
+    }
+
+    return merged.values.toList()
 }
 
 @Composable
@@ -257,6 +365,31 @@ private fun SideSelector(
                 )
             ) {
                 Text(text = side.name)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppListModeSelector(
+    selected: AppListMode,
+    onSelected: (AppListMode) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        AppListMode.entries.forEach { mode ->
+            Button(
+                onClick = { onSelected(mode) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selected == mode) NothingColors.Red else Color(0xFF2A2A2A),
+                    contentColor = NothingColors.White
+                )
+            ) {
+                Text(text = mode.name)
             }
         }
     }
@@ -379,15 +512,9 @@ private fun AppSettingsRow(
                 )
             }
 
-            Switch(
-                checked = !app.hiddenInOverlay,
-                onCheckedChange = onVisibleChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = NothingColors.White,
-                    checkedTrackColor = NothingColors.Red,
-                    uncheckedThumbColor = NothingColors.GreyMedium,
-                    uncheckedTrackColor = Color(0xFF333333)
-                )
+            VisibilitySelector(
+                visible = !app.hiddenInOverlay,
+                onVisibleChange = onVisibleChange
             )
         }
 
@@ -397,6 +524,55 @@ private fun AppSettingsRow(
             volume = app.defaultVolume,
             onVolumeChange = onVolumeChange,
             modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun VisibilitySelector(
+    visible: Boolean,
+    onVisibleChange: (Boolean) -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.width(118.dp)
+    ) {
+        VisibilityButton(
+            text = "SHOW",
+            active = visible,
+            onClick = { onVisibleChange(true) },
+            modifier = Modifier.weight(1f)
+        )
+        VisibilityButton(
+            text = "HIDE",
+            active = !visible,
+            onClick = { onVisibleChange(false) },
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun VisibilityButton(
+    text: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(34.dp),
+        shape = RoundedCornerShape(10.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (active) NothingColors.Red else Color(0xFF2A2A2A),
+            contentColor = NothingColors.White
+        )
+    ) {
+        Text(
+            text = text,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold
         )
     }
 }

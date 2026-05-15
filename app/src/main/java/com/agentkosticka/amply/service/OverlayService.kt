@@ -31,7 +31,6 @@ class OverlayService : Service() {
         const val EXTRA_MAX_VOLUME = "extra_max_volume"
         const val EXTRA_ICON_TYPE = "extra_icon_type"
         const val EXTRA_SESSIONS = "extra_sessions"
-        const val EXTRA_EXPANDED_SESSIONS = "extra_expanded_sessions"
         const val EXTRA_FOCUSED_APP = "extra_focused_app" // Phase 3.5: Smart Focus
         const val EXTRA_VOLUME_RECEIVER = "extra_volume_receiver" // Phase 3: ResultReceiver for per-app volume
         const val EXTRA_OVERLAY_SIDE = "extra_overlay_side"
@@ -66,11 +65,6 @@ class OverlayService : Service() {
                 } else {
                     intent.getParcelableArrayListExtra(EXTRA_SESSIONS)
                 }
-                val parcelableExpandedSessions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableArrayListExtra(EXTRA_EXPANDED_SESSIONS, ParcelableAudioSession::class.java)
-                } else {
-                    intent.getParcelableArrayListExtra(EXTRA_EXPANDED_SESSIONS)
-                }
                 
                 // DEBUG: Log received sessions
                 Log.d("OverlayService", "Received ${parcelableSessions?.size ?: 0} parcelable sessions")
@@ -91,14 +85,6 @@ class OverlayService : Service() {
                     }
                     parcelable.toAudioSession(icon)
                 } ?: emptyList()
-                val expandedSessions = parcelableExpandedSessions?.map { parcelable ->
-                    val icon = try {
-                        packageManager.getApplicationIcon(parcelable.packageName)
-                    } catch (e: Exception) {
-                        null
-                    }
-                    parcelable.toAudioSession(icon)
-                } ?: sessions
                 
                 // DEBUG: Log converted sessions
                 Log.d("OverlayService", "Converted to ${sessions.size} AudioSessions")
@@ -127,7 +113,6 @@ class OverlayService : Service() {
                     volume = volume,
                     newIconType = iconType,
                     sessions = sessions,
-                    expandedSessions = expandedSessions,
                     focusedAppSession = focusedApp,
                     volumeReceiver = volumeReceiver,
                     overlaySide = overlaySide,

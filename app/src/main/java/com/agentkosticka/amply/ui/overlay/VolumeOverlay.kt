@@ -62,7 +62,6 @@ fun VolumeOverlay(
     visible: Boolean = true,
     iconType: String = "MUSIC",
     sessions: List<AudioSession> = emptyList(),
-    expandedSessions: List<AudioSession> = sessions,
     focusedApp: AudioSession? = null,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     onVolumeChange: (Int) -> Unit = {},
@@ -74,7 +73,7 @@ fun VolumeOverlay(
     onDismissRequest: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
-    val hasActiveSessions = sessions.isNotEmpty() || expandedSessions.isNotEmpty()
+    val hasActiveSessions = sessions.isNotEmpty()
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val panelTransitionState = remember {
         MutableTransitionState(false)
@@ -128,7 +127,6 @@ fun VolumeOverlay(
     val panelBody: @Composable () -> Unit = {
         AmplyPanel(
             sessions = sessions,
-            expandedSessions = expandedSessions,
             focusedApp = focusedApp,
             onSessionVolumeChange = { session, volume ->
                 Log.d(TAG, "Session volume change: sessionId=${session.sessionId}, volume=$volume")
@@ -376,7 +374,6 @@ private fun MainVolumePill(
 @Composable
 private fun AmplyPanel(
     sessions: List<AudioSession>,
-    expandedSessions: List<AudioSession>,
     focusedApp: AudioSession?,
     onSessionVolumeChange: (AudioSession, Float) -> Unit,
     onClose: () -> Unit,
@@ -384,9 +381,6 @@ private fun AmplyPanel(
     onTouchEnd: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
-    var showExpanded by remember { mutableStateOf(false) }
-    val displayedSessions = if (showExpanded) expandedSessions else sessions
-    val hasMoreApps = expandedSessions.size > sessions.size
 
     Column(
         modifier = Modifier
@@ -452,7 +446,7 @@ private fun AmplyPanel(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            displayedSessions.forEach { session ->
+            sessions.forEach { session ->
                 AppVolumeRow(
                     session = session,
                     onVolumeChange = { newVolume ->
@@ -467,7 +461,7 @@ private fun AmplyPanel(
         // Footer
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "${displayedSessions.size} ${if (displayedSessions.size == 1) "app" else "apps"}",
+            text = "${sessions.size} ${if (sessions.size == 1) "app" else "apps"}",
             color = NothingColors.GreyDim,
             fontSize = 9.sp
         )

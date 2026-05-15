@@ -83,7 +83,6 @@ object OverlayManager {
     private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
     private val currentSessions = mutableStateOf<List<AudioSession>>(emptyList())
-    private val expandedSessions = mutableStateOf<List<AudioSession>>(emptyList())
     private val currentOverlaySide = mutableStateOf(OverlaySide.LEFT)
     private val currentOverlayVerticalFraction = mutableStateOf(0.5f)
     
@@ -139,7 +138,6 @@ object OverlayManager {
         volume: Int,
         newIconType: String = "MUSIC",
         sessions: List<AudioSession> = emptyList(),
-        expandedSessions: List<AudioSession> = sessions,
         focusedAppSession: AudioSession? = null,
         volumeReceiver: ResultReceiver? = null,
         overlaySide: OverlaySide = OverlaySide.LEFT,
@@ -165,7 +163,6 @@ object OverlayManager {
         isMuted.value = (volume == 0)
         iconType.value = newIconType
         currentSessions.value = sessions
-        this.expandedSessions.value = expandedSessions
         focusedApp.value = focusedAppSession
         this.volumeReceiver = volumeReceiver // Update the receiver property
         currentOverlaySide.value = overlaySide
@@ -245,7 +242,6 @@ object OverlayManager {
                     visible = overlayVisible.value,
                     iconType = iconType.value,
                     sessions = currentSessions.value,
-                    expandedSessions = expandedSessions.value,
                     focusedApp = focusedApp.value, // Phase 3.5: Smart Focus
                     overlaySide = currentOverlaySide.value,
                     onVolumeChange = { newVolume ->

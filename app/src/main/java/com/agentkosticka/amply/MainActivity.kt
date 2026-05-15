@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
     fun MainAppScreen() {
         SettingsDashboard(
             preferencesManager = preferencesManager,
+            shizukuRepository = shizukuRepository,
             onOverlayPermissionClick = { requestOverlayPermission() },
             onAccessibilityClick = { openAccessibilitySettings() }
         )
