@@ -12,7 +12,9 @@ import rikka.shizuku.Shizuku
 /**
  * Manages connection to the VolumeUserService running in Shizuku's privileged process.
  */
-class ShizukuVolumeManager {
+class ShizukuVolumeManager(
+    packageName: String
+) {
 
     companion object {
         private const val TAG = "ShizukuVolumeManager"
@@ -23,7 +25,7 @@ class ShizukuVolumeManager {
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     private val userServiceArgs = Shizuku.UserServiceArgs(
-        ComponentName("com.amply.one", VolumeUserService::class.java.name)
+        ComponentName(packageName, VolumeUserService::class.java.name)
     )
         .daemon(false)  // Don't run as daemon - stop when unbind
         .processNameSuffix("volume_service")

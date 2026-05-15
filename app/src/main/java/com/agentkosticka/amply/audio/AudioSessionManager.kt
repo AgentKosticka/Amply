@@ -40,7 +40,7 @@ class AudioSessionManager(
     }
 
     // NEW: ShizukuVolumeManager for privileged access via UserService
-    private val shizukuVolumeManager = ShizukuVolumeManager()
+    private val shizukuVolumeManager = ShizukuVolumeManager(context.packageName)
 
     // Fallback: PlayerVolumeController for local reflection (usually returns -1 for uid)
     private val playerVolumeController = PlayerVolumeController(context, shizukuRepository)

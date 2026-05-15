@@ -24,8 +24,8 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "amply_overlay_channel"
         private const val NOTIFICATION_ID = 1001
 
-        const val ACTION_SHOW_OVERLAY = "com.amply.one.ACTION_SHOW_OVERLAY"
-        const val ACTION_FORCE_REFRESH = "com.amply.one.ACTION_FORCE_REFRESH"
+        const val ACTION_SHOW_OVERLAY = "com.agentkosticka.amply.ACTION_SHOW_OVERLAY"
+        const val ACTION_FORCE_REFRESH = "com.agentkosticka.amply.ACTION_FORCE_REFRESH"
         const val EXTRA_VOLUME = "extra_volume"
         const val EXTRA_MAX_VOLUME = "extra_max_volume"
         const val EXTRA_ICON_TYPE = "extra_icon_type"

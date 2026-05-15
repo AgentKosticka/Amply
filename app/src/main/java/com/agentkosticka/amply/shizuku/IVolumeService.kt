@@ -16,7 +16,7 @@ import android.os.Parcel
 interface IVolumeService : IInterface {
 
     companion object {
-        const val DESCRIPTOR = "com.amply.one.shizuku.IVolumeService"
+        const val DESCRIPTOR = "com.agentkosticka.amply.shizuku.IVolumeService"
         const val TRANSACTION_getActivePlaybacks = IBinder.FIRST_CALL_TRANSACTION + 0
         const val TRANSACTION_setPlayerVolume = IBinder.FIRST_CALL_TRANSACTION + 1
         const val TRANSACTION_destroy = IBinder.FIRST_CALL_TRANSACTION + 2

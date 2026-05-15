@@ -11,8 +11,8 @@
     <!-- Splash Screen Theme (Android 12+ SplashScreen API) -->
     <style name="Theme.Amply.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/nothing_black</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
-        <item name="windowSplashScreenIconBackgroundColor">@color/nothing_red</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_amply_logo</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/nothing_black</item>
         <item name="postSplashScreenTheme">@style/Theme.Amply</item>
     </style>
 </resources>

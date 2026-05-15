@@ -2,6 +2,7 @@ package com.agentkosticka.amply.ui.setup
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -11,8 +12,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.agentkosticka.amply.R
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.launch
@@ -131,26 +134,12 @@ fun WelcomeSlide(onNext: () -> Unit) {
 
         Spacer(modifier = Modifier.height(48.dp))
 
-        // Dot Matrix Icon - Premium style
-        Box(
+        Image(
+            painter = painterResource(id = R.drawable.ic_amply_logo),
+            contentDescription = "Amply logo",
             modifier = Modifier
                 .size(140.dp)
-                .background(NothingColors.GreyContainer, RoundedCornerShape(40.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                repeat(3) {
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .background(NothingColors.Red, RoundedCornerShape(8.dp))
-                    )
-                }
-            }
-        }
+        )
 
         Spacer(modifier = Modifier.height(48.dp))
 
