@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.media.AudioManager
 import android.os.Bundle
-import android.os.ResultReceiver
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -91,9 +90,10 @@ object OverlayManager {
     private var lifecycleOwner: ComposeLifecycleOwner? = null
     private var recomposer: Recomposer? = null
     private var audioManager: AudioManager? = null
+    private var currentWindowType: Int? = null
 
     // Auto-hide timer
-    private val managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var hideJob: Job? = null
     private var removeJob: Job? = null
 
@@ -115,11 +115,8 @@ object OverlayManager {
     // Phase 3.5: Smart Focus - the foreground app if detected
     private val focusedApp = mutableStateOf<AudioSession?>(null)
 
-    // Callback for per-app volume changes (wired to Shizuku backend)
-    private var onSessionVolumeChangeCallback: ((Int, Float) -> Unit)? = null
-    
-    // Phase 3: ResultReceiver for robust IPC volume control
-    private var volumeReceiver: ResultReceiver? = null
+    // Callback for per-app volume changes (wired to the foreground runtime backend)
+    private var onSessionVolumeChangeCallback: ((Int, String?, Float) -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
 
     private val overlayContainer: FrameLayout?
@@ -127,23 +124,27 @@ object OverlayManager {
 
     /**
      * Set the callback for per-app volume changes
-     * This should be called by VolumeKeyService to wire up to AudioSessionManager
+     * This should be called by OverlayService to wire up to AudioSessionManager
      */
-    fun setSessionVolumeCallback(callback: (Int, Float) -> Unit) {
+    fun setSessionVolumeCallback(callback: (Int, String?, Float) -> Unit) {
         Log.d("OverlayManager", "setSessionVolumeCallback: callback set")
         onSessionVolumeChangeCallback = callback
+    }
+
+    fun clearSessionVolumeCallback() {
+        onSessionVolumeChangeCallback = null
     }
 
     /**
      * Invoke the session volume callback
      * This method ensures the callback is always read fresh from the property
      */
-    private fun invokeSessionVolumeCallback(sessionId: Int, volume: Float) {
-        Log.d("OverlayManager", "invokeSessionVolumeCallback: sessionId=$sessionId, volume=$volume")
+    private fun invokeSessionVolumeCallback(sessionId: Int, packageName: String?, volume: Float) {
+        Log.d("OverlayManager", "invokeSessionVolumeCallback: sessionId=$sessionId, package=$packageName, volume=$volume")
         val callback = onSessionVolumeChangeCallback
         if (callback != null) {
             Log.d("OverlayManager", "Callback exists, invoking...")
-            callback.invoke(sessionId, volume)
+            callback.invoke(sessionId, packageName, volume)
         } else {
             Log.e("OverlayManager", "ERROR: onSessionVolumeChangeCallback is NULL!")
         }
@@ -160,7 +161,6 @@ object OverlayManager {
      * @param newIconType Device icon type (MUSIC, BLUETOOTH, HEADPHONE)
      * @param sessions List of active audio sessions (Phase 3)
      * @param focusedAppSession The currently focused/foreground app (Phase 3.5 Smart Focus)
-     * @param volumeReceiver ResultReceiver for per-app volume changes (Phase 3)
      */
     fun show(
         context: Context,
@@ -168,17 +168,16 @@ object OverlayManager {
         newIconType: String = "MUSIC",
         sessions: List<AudioSession> = emptyList(),
         focusedAppSession: AudioSession? = null,
-        volumeReceiver: ResultReceiver? = null,
         overlaySide: OverlaySide = OverlaySide.LEFT,
-        overlayVerticalFraction: Float = 0.5f
+        overlayVerticalFraction: Float = 0.5f,
+        windowType: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
     ) {
+        ensureManagerScope()
         removeJob?.cancel()
         removeJob = null
 
         // Initialize managers if needed
-        if (windowManager == null) {
-            windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        }
+        windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         if (audioManager == null) {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         }
@@ -192,15 +191,18 @@ object OverlayManager {
         iconType.value = newIconType
         currentSessions.value = sessions
         focusedApp.value = focusedAppSession
-        this.volumeReceiver = volumeReceiver // Update the receiver property
         currentOverlaySide.value = overlaySide
         currentOverlayVerticalFraction.floatValue = overlayVerticalFraction.coerceIn(0f, 1f)
         
         // DEBUG: Verify state was set
         Log.d("OverlayManager", "State updated: currentSessions.value has ${currentSessions.value.size} items")
 
+        if (overlayContainer != null && currentWindowType != windowType) {
+            removeOverlay()
+        }
+
         if (overlayContainer == null) {
-            createOverlay(context)
+            createOverlay(context, windowType)
         } else {
             updateOverlayPosition(context)
         }
@@ -214,7 +216,7 @@ object OverlayManager {
      * Create the overlay view with proper lifecycle
      * CRITICAL: Uses wrapper FrameLayout for proper view tree lifecycle propagation
      */
-    private fun createOverlay(context: Context) {
+    private fun createOverlay(context: Context, windowType: Int) {
         // Step 1: Create lifecycle owner FIRST
         val owner = ComposeLifecycleOwner()
         owner.performRestore(null)
@@ -278,17 +280,11 @@ object OverlayManager {
                         setStreamVolume(streamType, newVolume)
                     },
                     onSessionVolumeChange = { session, volume ->
-                        // Phase 3: Use ResultReceiver to send data back to Service
                         Log.d(
                             "OverlayManager",
-                            "Sending volume change via ResultReceiver: id=${session.sessionId} pkg=${session.packageName} vol=$volume"
+                            "Sending volume change via runtime callback: id=${session.sessionId} pkg=${session.packageName} vol=$volume"
                         )
-                        val bundle = Bundle().apply {
-                            putFloat("volume", volume)
-                            putString("package_name", session.packageName)
-                        }
-                        volumeReceiver?.send(session.sessionId, bundle)
-                            ?: Log.w("OverlayManager", "ResultReceiver is null!")
+                        invokeSessionVolumeCallback(session.sessionId, session.packageName, volume)
                     },
                     onMuteToggle = {
                         toggleMute()
@@ -317,7 +313,7 @@ object OverlayManager {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            windowType,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
@@ -327,6 +323,7 @@ object OverlayManager {
         // Step 10: Add CONTAINER to window manager
         try {
             windowManager?.addView(container, params)
+            currentWindowType = windowType
         } catch (e: Exception) {
             e.printStackTrace()
             // Cleanup on failure
@@ -376,6 +373,7 @@ object OverlayManager {
         lifecycleOwner = null
         overlayContainerRef = null
         composeView = null
+        currentWindowType = null
         overlayVisible.value = false
         removeJob = null
     }
@@ -461,6 +459,12 @@ object OverlayManager {
         managerScope.cancel()
         windowManager = null
         audioManager = null
+    }
+
+    private fun ensureManagerScope() {
+        if (!managerScope.isActive) {
+            managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        }
     }
 
     private fun updateOverlayPosition(context: Context) {

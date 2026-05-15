@@ -1,22 +1,12 @@
 package com.agentkosticka.amply.service
 
 import android.accessibilityservice.AccessibilityService
-import android.content.Intent
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.ResultReceiver
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
-import com.agentkosticka.amply.audio.AudioSessionManager
-import com.agentkosticka.amply.data.OverlaySide
-import com.agentkosticka.amply.data.PreferencesManager
-import com.agentkosticka.amply.data.toParcelable
-import com.agentkosticka.amply.shizuku.ShizukuRepository
 import kotlinx.coroutines.*
 
 /**
@@ -46,34 +36,16 @@ class VolumeKeyService : AccessibilityService() {
     // Phase 3.5: Smart Focus - track foreground app package
     private var foregroundPackage: String? = null
 
-    // Phase 3: Audio session management
-    private var shizukuRepository: ShizukuRepository? = null
-    private var audioSessionManager: AudioSessionManager? = null
-    private var preferencesManager: PreferencesManager? = null
-    private var overlaySide: OverlaySide = OverlaySide.LEFT
-    private var overlayVerticalFraction: Float = 0.5f
-
     // Audio device callback for dynamic icon updates
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
             super.onAudioDevicesAdded(addedDevices)
 
-            // AGGRESSIVE Z-ORDER STRATEGY: "Double Tap" to force our overlay on top
             serviceScope.launch {
-                // Step 1: Wait for System UI to appear
-                delay(300) // 300ms delay
-
-                // Step 2: Update icon type and show overlay (first tap)
+                delay(300)
                 updateIconType()
                 val currentVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
                 showOverlay(currentVol)
-
-                // Step 3: Wait a bit
-                delay(150) // 150ms delay
-
-                // Step 4: FORCE REFRESH - hide & immediately re-show (second tap)
-                // This forces WindowManager to re-evaluate the stack
-                forceRefreshOverlay(currentVol)
             }
         }
 
@@ -101,31 +73,7 @@ class VolumeKeyService : AccessibilityService() {
         // Initial icon type detection
         updateIconType()
 
-        // Phase 3: Initialize audio session management
-        try {
-            preferencesManager = PreferencesManager(this)
-            shizukuRepository = ShizukuRepository(this)
-            audioSessionManager = AudioSessionManager(this, shizukuRepository!!, preferencesManager!!)
-            audioSessionManager?.startPolling()
-            serviceScope.launch {
-                preferencesManager?.overlaySide?.collect { side ->
-                    overlaySide = side
-                }
-            }
-            serviceScope.launch {
-                preferencesManager?.overlayVerticalFraction?.collect { fraction ->
-                    overlayVerticalFraction = fraction
-                }
-            }
-            Log.d(TAG, "AudioSessionManager initialized and polling started")
-            
-            // Set up per-app volume callback
-            ensureCallbackRegistered()
-            Log.d(TAG, "Per-app volume callback registered in onServiceConnected")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize AudioSessionManager", e)
-            // Continue without per-app volume (graceful fallback)
-        }
+        OverlayService.startRuntime(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -237,80 +185,13 @@ class VolumeKeyService : AccessibilityService() {
      * Phase 3.5: Now includes focused app detection for Smart Focus
      */
     private fun showOverlay(volume: Int) {
-        // IMPORTANT: Ensure callback is always set (safety net for app updates)
-        // This is needed because onServiceConnected() may not run after an APK update
-        ensureCallbackRegistered()
-        
-        // Get current sessions from AudioSessionManager
-        val sessions = audioSessionManager?.getDefaultOverlaySessions() ?: emptyList()
-        
-        // DEBUG: Log session count
-        Log.d(TAG, "showOverlay: volume=$volume, sessions=${sessions.size}, foreground=$foregroundPackage")
-        sessions.forEachIndexed { index, session ->
-            Log.d(TAG, "  Session[$index]: ${session.appName} (uid=${session.uid}, pkg=${session.packageName})")
-        }
-        
-        // Phase 3.5: Get focused app based on foreground package
-        val focusedApp = audioSessionManager?.getFocusedApp(foregroundPackage)
-            ?: audioSessionManager?.getMostRecentSession() // Fallback to most recent
-        Log.d(TAG, "  Focused app: ${focusedApp?.appName ?: "none"}")
-
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_SHOW_OVERLAY
-            putExtra(OverlayService.EXTRA_VOLUME, volume)
-            putExtra(OverlayService.EXTRA_MAX_VOLUME, maxVolume)
-            putExtra(OverlayService.EXTRA_ICON_TYPE, currentIconType)
-
-            // Phase 3: Pass sessions as parcelable list
-            if (sessions.isNotEmpty()) {
-                val parcelableSessions = ArrayList(sessions.map { it.toParcelable() })
-                putParcelableArrayListExtra(OverlayService.EXTRA_SESSIONS, parcelableSessions)
-                Log.d(TAG, "  Passing ${parcelableSessions.size} parcelable sessions to overlay")
-            } else {
-                Log.w(TAG, "  WARNING: No sessions to pass to overlay!")
-            }
-            
-            // Phase 3.5: Pass focused app for Smart Focus
-            focusedApp?.let {
-                putExtra(OverlayService.EXTRA_FOCUSED_APP, it.toParcelable())
-            }
-
-            // Phase 3: Create ResultReceiver for robust per-app volume control
-            val volumeReceiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
-                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
-                    val sessionId = resultCode // We use resultCode as sessionId
-                    val newVolume = resultData?.getFloat("volume") ?: return
-                    val packageName = resultData.getString("package_name")
-                    Log.d(TAG, "VolumeReceiver: sessionId=$sessionId, package=$packageName, volume=$newVolume")
-                    
-                    serviceScope.launch {
-                        audioSessionManager?.setSessionVolume(sessionId, packageName, newVolume)
-                    }
-                }
-            }
-            putExtra(OverlayService.EXTRA_VOLUME_RECEIVER, volumeReceiver)
-            putExtra(OverlayService.EXTRA_OVERLAY_SIDE, overlaySide.name)
-            putExtra(OverlayService.EXTRA_OVERLAY_VERTICAL_FRACTION, overlayVerticalFraction)
-        }
-        
-        // Start the overlay service
-        startService(intent)
-    }
-
-    /**
-     * Force refresh overlay by hiding and immediately re-showing
-     * This forces WindowManager to re-evaluate Z-order stack
-     */
-    private fun forceRefreshOverlay(volume: Int) {
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = OverlayService.ACTION_FORCE_REFRESH
-            putExtra(OverlayService.EXTRA_VOLUME, volume)
-            putExtra(OverlayService.EXTRA_MAX_VOLUME, maxVolume)
-            putExtra(OverlayService.EXTRA_ICON_TYPE, currentIconType)
-            putExtra(OverlayService.EXTRA_OVERLAY_SIDE, overlaySide.name)
-            putExtra(OverlayService.EXTRA_OVERLAY_VERTICAL_FRACTION, overlayVerticalFraction)
-        }
-        startService(intent)
+        Log.d(TAG, "showOverlay: volume=$volume, foreground=$foregroundPackage")
+        OverlayService.showFromAccessibilityHost(
+            host = this,
+            volume = volume,
+            iconType = currentIconType,
+            foregroundPackage = foregroundPackage
+        )
     }
 
     /**
@@ -334,19 +215,6 @@ class VolumeKeyService : AccessibilityService() {
         }
     }
 
-    /**
-     * Ensure the per-app volume callback is registered
-     * Called from both onServiceConnected() and showOverlay() for redundancy
-     */
-    private fun ensureCallbackRegistered() {
-        OverlayManager.setSessionVolumeCallback { sessionId, newVolume ->
-            Log.d(TAG, "Per-app volume callback invoked: sessionId=$sessionId, volume=$newVolume")
-            serviceScope.launch {
-                audioSessionManager?.setSessionVolume(sessionId, null, newVolume)
-            }
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         repeatJob?.cancel()
@@ -354,10 +222,7 @@ class VolumeKeyService : AccessibilityService() {
 
         // Unregister audio device callback
         audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
-
-        // Phase 3: Cleanup audio session management
-        audioSessionManager?.cleanup()
-        shizukuRepository?.cleanup()
-        Log.d(TAG, "VolumeKeyService destroyed, cleaned up audio session management")
+        OverlayManager.cleanup()
+        Log.d(TAG, "VolumeKeyService destroyed")
     }
 }
