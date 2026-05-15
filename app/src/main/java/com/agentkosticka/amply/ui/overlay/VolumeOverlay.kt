@@ -243,7 +243,26 @@ fun VolumeOverlay(
         )
 
         Column(
-            modifier = Modifier.width(containerWidth),
+            modifier = Modifier
+                .width(containerWidth)
+                .pointerInput(isExpanded, expandToStart) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (!isExpanded) {
+                            val collapsedWidth = CollapsedPillWidth.toPx()
+                            val isInsideVisiblePill = if (expandToStart) {
+                                down.position.x >= size.width - collapsedWidth
+                            } else {
+                                down.position.x <= collapsedWidth
+                            }
+
+                            if (!isInsideVisiblePill) {
+                                down.consume()
+                                onDismissRequest()
+                            }
+                        }
+                    }
+                },
             horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
         ) {
             pillContent()
