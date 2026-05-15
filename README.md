@@ -1,10 +1,10 @@
-# Mixer (1)
+# Amply (1)
 
 Per-app volume control for Android, designed with Nothing OS aesthetics.
 
-Mixer (1) intercepts hardware volume button presses and displays a custom overlay that allows independent volume control for each currently playing audio application. It uses Shizuku for privileged access without requiring root.
+Amply (1) intercepts hardware volume button presses and displays a custom overlay that allows independent volume control for each currently playing audio application. It uses Shizuku for privileged access without requiring root.
 
-<img width="2752" height="1536" alt="mixer(1)-banner" src="https://github.com/user-attachments/assets/33eed5dc-a6b3-4e17-959a-b5828c4282ef" />
+<img width="2752" height="1536" alt="amply(1)-banner" src="https://github.com/user-attachments/assets/33eed5dc-a6b3-4e17-959a-b5828c4282ef" />
 
 ---
 
@@ -53,7 +53,7 @@ Mixer (1) intercepts hardware volume button presses and displays a custom overla
 ## Installation
 
 1. Install [Shizuku](https://github.com/RikkaApps/Shizuku/releases) and start the Shizuku service
-2. Install Mixer (1) APK
+2. Install Amply (1) APK
 3. Follow the setup wizard:
    - Grant Shizuku permission when prompted
    - Enable the Accessibility Service for volume key detection
@@ -64,7 +64,7 @@ Mixer (1) intercepts hardware volume button presses and displays a custom overla
 
 ## How It Works
 
-Mixer (1) uses a multi-layered approach to achieve per-app volume control:
+Amply (1) uses a multi-layered approach to achieve per-app volume control:
 
 ### 1. Audio Session Detection
 
@@ -72,7 +72,7 @@ The app uses `AudioManager.getActivePlaybackConfigurations()` to enumerate all c
 
 ### 2. Privileged Access via Shizuku
 
-Because Android sanitizes UID and player proxy information when accessed from regular app processes, Mixer (1) runs a UserService in Shizuku's privileged shell process (UID 2000). This allows access to:
+Because Android sanitizes UID and player proxy information when accessed from regular app processes, Amply (1) runs a UserService in Shizuku's privileged shell process (UID 2000). This allows access to:
 
 - `AudioPlaybackConfiguration.getClientUid()` - Identifies which app owns the audio stream
 - `AudioPlaybackConfiguration.getPlayerProxy()` - Returns the IPlayer interface for volume control
@@ -93,7 +93,7 @@ An Accessibility Service monitors volume key events. When detected, it triggers 
 
 ## Comparison with Similar Projects
 
-| Feature | Mixer (1) | VolumeManager | AudioHQ |
+| Feature | Amply (1) | VolumeManager | AudioHQ |
 |---------|-----------|---------------|---------|
 | **Root Required** | No | No | Yes |
 | **Shizuku Required** | Yes | Yes | No |
@@ -113,13 +113,13 @@ An Accessibility Service monitors volume key events. When detected, it triggers 
 
 Both projects use the same underlying IPlayer.setVolume() API via Shizuku. The main differences are:
 
-- Mixer (1) persists volume settings per UID and auto-applies them to new audio players
-- Mixer (1) uses a Shizuku UserService to access privileged AudioPlaybackConfiguration data, while VolumeManager may use different approaches
-- Design philosophy: Mixer (1) targets Nothing OS aesthetics, VolumeManager uses Material You
+- Amply (1) persists volume settings per UID and auto-applies them to new audio players
+- Amply (1) uses a Shizuku UserService to access privileged AudioPlaybackConfiguration data, while VolumeManager may use different approaches
+- Design philosophy: Amply (1) targets Nothing OS aesthetics, VolumeManager uses Material You
 
 **vs AudioHQ (Alcatraz323)**
 
-AudioHQ requires root access and uses native AudioFlinger patches for volume control. This provides more complete control but requires a rooted device. Mixer (1) achieves similar results without root by using Shizuku and the IPlayer API.
+AudioHQ requires root access and uses native AudioFlinger patches for volume control. This provides more complete control but requires a rooted device. Amply (1) achieves similar results without root by using Shizuku and the IPlayer API.
 
 ---
 
@@ -147,8 +147,8 @@ AudioHQ requires root access and uses native AudioFlinger patches for volume con
 
 ```bash
 # Clone the repository
-git clone https://github.com/farizanjum/mixer-1.git
-cd mixer-1
+git clone https://github.com/farizanjum/amply-1.git
+cd amply-1
 
 # Build debug APK
 ./gradlew assembleDebug
@@ -166,9 +166,9 @@ APK output locations:
 ## Project Structure
 
 ```
-app/src/main/java/com/mixer/one/
+app/src/main/java/com/amply/one/
 ├── MainActivity.kt           # Main activity and setup UI
-├── MixerApplication.kt       # Application class
+├── AmplyApplication.kt       # Application class
 ├── audio/
 │   ├── AudioSessionManager.kt    # Core session management and volume control
 │   ├── AudioSessionDetector.kt   # Dumpsys-based fallback detection

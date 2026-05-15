@@ -1,4 +1,4 @@
-package com.mixer.one.data
+package com.agentkosticka.amply.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.map
 class PreferencesManager(private val context: Context) {
 
     companion object {
-        private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "mixer_preferences")
+        private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "amply_preferences")
         private val SETUP_COMPLETED = booleanPreferencesKey("setup_completed")
         private val GAME_MODE_ENABLED = booleanPreferencesKey("game_mode_enabled")
     }

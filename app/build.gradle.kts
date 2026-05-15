@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mixer.one"
-    compileSdk = 36
+    namespace = "com.agentkosticka.amply"
+    compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.mixer.one"
+        applicationId = "com.agentkosticka.amply"
         minSdk = 29
         targetSdk = 34
         versionCode = 1

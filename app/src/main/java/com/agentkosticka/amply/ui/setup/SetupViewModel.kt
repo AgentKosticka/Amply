@@ -1,13 +1,13 @@
-package com.mixer.one.ui.setup
+package com.agentkosticka.amply.ui.setup
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.mixer.one.data.PreferencesManager
-import com.mixer.one.shizuku.ShizukuPermissionState
-import com.mixer.one.shizuku.ShizukuRepository
+import com.agentkosticka.amply.data.PreferencesManager
+import com.agentkosticka.amply.shizuku.ShizukuPermissionState
+import com.agentkosticka.amply.shizuku.ShizukuRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

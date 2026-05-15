@@ -1,4 +1,4 @@
-package com.mixer.one.audio
+package com.agentkosticka.amply.audio
 
 import android.content.Context
 import android.content.pm.PackageManager
@@ -7,13 +7,13 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.util.Log
 import android.util.LruCache
-import com.mixer.one.data.AudioSession
-import com.mixer.one.data.AudioSessionState
-import com.mixer.one.data.DumpsysParseResult
-import com.mixer.one.data.RawAudioSession
-import com.mixer.one.shizuku.ShizukuPermissionState
-import com.mixer.one.shizuku.ShizukuRepository
-import com.mixer.one.shizuku.ShizukuVolumeManager
+import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.data.AudioSessionState
+import com.agentkosticka.amply.data.DumpsysParseResult
+import com.agentkosticka.amply.data.RawAudioSession
+import com.agentkosticka.amply.shizuku.ShizukuPermissionState
+import com.agentkosticka.amply.shizuku.ShizukuRepository
+import com.agentkosticka.amply.shizuku.ShizukuVolumeManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,7 +52,7 @@ class AudioSessionManager(
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     // Session state observable
-    private val _sessionState = MutableStateFlow(AudioSessionState.empty())
+    private val _sessionState = MutableStateFlow(AudioSessionState.Companion.empty())
     val sessionState: StateFlow<AudioSessionState> = _sessionState.asStateFlow()
 
     // Polling job
@@ -476,7 +476,7 @@ class AudioSessionManager(
      * Uses uidPackageMap (from Shizuku) as primary lookup, falls back to PackageManager
      */
     private fun enrichSessionWithMetadata(
-        raw: RawAudioSession, 
+        raw: RawAudioSession,
         uidPackageMap: Map<Int, String>
     ): AudioSession? {
         return try {

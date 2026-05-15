@@ -1,5 +1,6 @@
-package com.mixer.one.service
+package com.agentkosticka.amply.service
 
+import android.R
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,9 +9,10 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.ResultReceiver
+import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.mixer.one.data.ParcelableAudioSession
-import com.mixer.one.data.toAudioSession
+import com.agentkosticka.amply.data.ParcelableAudioSession
+import com.agentkosticka.amply.data.toAudioSession
 
 /**
  * Foreground service that manages the floating volume overlay
@@ -19,11 +21,11 @@ import com.mixer.one.data.toAudioSession
 class OverlayService : Service() {
 
     companion object {
-        private const val CHANNEL_ID = "mixer_overlay_channel"
+        private const val CHANNEL_ID = "amply_overlay_channel"
         private const val NOTIFICATION_ID = 1001
 
-        const val ACTION_SHOW_OVERLAY = "com.mixer.one.ACTION_SHOW_OVERLAY"
-        const val ACTION_FORCE_REFRESH = "com.mixer.one.ACTION_FORCE_REFRESH"
+        const val ACTION_SHOW_OVERLAY = "com.amply.one.ACTION_SHOW_OVERLAY"
+        const val ACTION_FORCE_REFRESH = "com.amply.one.ACTION_FORCE_REFRESH"
         const val EXTRA_VOLUME = "extra_volume"
         const val EXTRA_MAX_VOLUME = "extra_max_volume"
         const val EXTRA_ICON_TYPE = "extra_icon_type"
@@ -62,7 +64,7 @@ class OverlayService : Service() {
                 }
                 
                 // DEBUG: Log received sessions
-                android.util.Log.d("OverlayService", "Received ${parcelableSessions?.size ?: 0} parcelable sessions")
+                Log.d("OverlayService", "Received ${parcelableSessions?.size ?: 0} parcelable sessions")
 
                 // Phase 3.5: Extract focused app for Smart Focus
                 val focusedAppParcelable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -82,9 +84,9 @@ class OverlayService : Service() {
                 } ?: emptyList()
                 
                 // DEBUG: Log converted sessions
-                android.util.Log.d("OverlayService", "Converted to ${sessions.size} AudioSessions")
+                Log.d("OverlayService", "Converted to ${sessions.size} AudioSessions")
                 sessions.forEachIndexed { i, s ->
-                    android.util.Log.d("OverlayService", "  [$i] ${s.appName} pkg=${s.packageName}")
+                    Log.d("OverlayService", "  [$i] ${s.appName} pkg=${s.packageName}")
                 }
 
                 // Convert focused app with icon
@@ -96,7 +98,7 @@ class OverlayService : Service() {
                     }
                     parcelable.toAudioSession(icon)
                 }
-                android.util.Log.d("OverlayService", "Focused app: ${focusedApp?.appName ?: "none"}")
+                Log.d("OverlayService", "Focused app: ${focusedApp?.appName ?: "none"}")
 
                 val volumeReceiver = intent.getParcelableExtra<ResultReceiver>(EXTRA_VOLUME_RECEIVER)
                 
@@ -133,7 +135,7 @@ class OverlayService : Service() {
                 "Volume Overlay",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps Mixer (1) overlay active"
+                description = "Keeps Amply (1) overlay active"
                 setShowBadge(false)
             }
 
@@ -144,9 +146,9 @@ class OverlayService : Service() {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Mixer (1)")
+            .setContentTitle("Amply (1)")
             .setContentText("Volume controls active")
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_media_play)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()

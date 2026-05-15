@@ -7,4 +7,4 @@
     android:canRetrieveWindowContent="false"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="0"
-    android:settingsActivity="com.mixer.one.MainActivity" />
+    android:settingsActivity="com.amply.one.MainActivity" />

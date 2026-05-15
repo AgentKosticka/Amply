@@ -1,4 +1,4 @@
-package com.mixer.one.ui.theme
+package com.agentkosticka.amply.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

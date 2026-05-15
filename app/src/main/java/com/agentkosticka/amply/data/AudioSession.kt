@@ -1,4 +1,4 @@
-package com.mixer.one.data
+package com.agentkosticka.amply.data
 
 import android.graphics.drawable.Drawable
 import android.os.Parcelable

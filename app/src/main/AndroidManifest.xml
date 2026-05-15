@@ -24,12 +24,12 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <application
-        android:name=".MixerApplication"
+        android:name=".AmplyApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_foreground"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Mixer">
+        android:theme="@style/Theme.Amply">
 
         <!-- SHIZUKU PROVIDER -->
         <provider
@@ -44,7 +44,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Mixer.Splash">
+            android:theme="@style/Theme.Amply.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Mixer (1)</string>
+    <string name="app_name">Amply (1)</string>
 
     <!-- Setup Wizard -->
-    <string name="setup_welcome_title">MIXER (1)</string>
+    <string name="setup_welcome_title">AMPLY (1)</string>
     <string name="setup_welcome_subtitle">TAKE CONTROL OF\nYOUR AUDIO MATRIX</string>
     <string name="setup_welcome_button">BEGIN</string>
 
@@ -16,13 +16,13 @@
     <string name="setup_install_start">START SHIZUKU</string>
 
     <string name="setup_permission_title">GRANT ACCESS</string>
-    <string name="setup_permission_body">Tap below to grant Mixer (1) access to Shizuku.</string>
+    <string name="setup_permission_body">Tap below to grant Amply (1) access to Shizuku.</string>
     <string name="setup_permission_button">GRANT PERMISSION</string>
     <string name="setup_permission_pending">Status: ⚠ Pending</string>
     <string name="setup_permission_granted">Status: ✓ Granted</string>
 
     <string name="setup_success_title">✓ CONNECTED</string>
-    <string name="setup_success_body">Mixer (1) is now ready to hijack your volume controls.</string>
+    <string name="setup_success_body">Amply (1) is now ready to hijack your volume controls.</string>
     <string name="setup_success_button">FINISH SETUP</string>
 
     <!-- Permissions -->
@@ -34,5 +34,5 @@
     <string name="error_shizuku_not_installed">Shizuku is not installed.</string>
 
     <!-- Accessibility Service -->
-    <string name="accessibility_service_description">Allows Mixer (1) to detect volume button presses and show a custom volume control overlay. This service does not collect or transmit any data.</string>
+    <string name="accessibility_service_description">Allows Amply (1) to detect volume button presses and show a custom volume control overlay. This service does not collect or transmit any data.</string>
 </resources>

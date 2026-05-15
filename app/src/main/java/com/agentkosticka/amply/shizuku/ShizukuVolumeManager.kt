@@ -1,4 +1,4 @@
-package com.mixer.one.shizuku
+package com.agentkosticka.amply.shizuku
 
 import android.content.ComponentName
 import android.content.ServiceConnection
@@ -23,7 +23,7 @@ class ShizukuVolumeManager {
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     private val userServiceArgs = Shizuku.UserServiceArgs(
-        ComponentName("com.mixer.one", VolumeUserService::class.java.name)
+        ComponentName("com.amply.one", VolumeUserService::class.java.name)
     )
         .daemon(false)  // Don't run as daemon - stop when unbind
         .processNameSuffix("volume_service")

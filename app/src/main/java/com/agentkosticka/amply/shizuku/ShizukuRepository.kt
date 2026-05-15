@@ -1,4 +1,4 @@
-package com.mixer.one.shizuku
+package com.agentkosticka.amply.shizuku
 
 import android.content.Context
 import android.content.pm.PackageManager
@@ -12,6 +12,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import kotlin.math.log10
 
 /**
  * Repository for managing Shizuku integration.
@@ -352,7 +353,7 @@ class ShizukuRepository(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 // Use audio_flinger to set volume for specific track
-                val volumeDb = if (volume > 0) (20 * kotlin.math.log10(volume)).coerceAtLeast(-96f) else -96f
+                val volumeDb = if (volume > 0) (20 * log10(volume)).coerceAtLeast(-96f) else -96f
 
                 val result = executeShellCommand(
                     "dumpsys media.audio_flinger --set-volume $sessionId $volumeDb"

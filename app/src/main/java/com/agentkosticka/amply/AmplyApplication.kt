@@ -1,4 +1,4 @@
-package com.mixer.one
+package com.agentkosticka.amply
 
 import android.app.Application
 import android.os.Build
@@ -6,14 +6,14 @@ import android.util.Log
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 /**
- * Application class for Mixer.
+ * Application class for Amply.
  * Initializes HiddenApiBypass to allow reflection access to hidden Android APIs
  * required for per-app volume control via AudioPlaybackConfiguration.
  */
-class MixerApplication : Application() {
+class AmplyApplication : Application() {
 
     companion object {
-        private const val TAG = "MixerApplication"
+        private const val TAG = "AmplyApplication"
     }
 
     override fun onCreate() {

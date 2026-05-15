@@ -1,4 +1,4 @@
-package com.mixer.one.service
+package com.agentkosticka.amply.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -6,12 +6,16 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
-import com.mixer.one.audio.AudioSessionManager
-import com.mixer.one.data.toParcelable
-import com.mixer.one.shizuku.ShizukuRepository
+import com.agentkosticka.amply.audio.AudioSessionManager
+import com.agentkosticka.amply.data.toParcelable
+import com.agentkosticka.amply.shizuku.ShizukuRepository
 import kotlinx.coroutines.*
 
 /**
@@ -259,8 +263,8 @@ class VolumeKeyService : AccessibilityService() {
             }
 
             // Phase 3: Create ResultReceiver for robust per-app volume control
-            val volumeReceiver = object : android.os.ResultReceiver(android.os.Handler(android.os.Looper.getMainLooper())) {
-                override fun onReceiveResult(resultCode: Int, resultData: android.os.Bundle?) {
+            val volumeReceiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
                     val sessionId = resultCode // We use resultCode as sessionId
                     val newVolume = resultData?.getFloat("volume") ?: return
                     Log.d(TAG, "VolumeReceiver: sessionId=$sessionId, volume=$newVolume")

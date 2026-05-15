@@ -1,4 +1,4 @@
-package com.mixer.one.audio
+package com.agentkosticka.amply.audio
 
 import android.annotation.SuppressLint
 import android.app.ActivityManager
@@ -7,7 +7,7 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.util.Log
-import com.mixer.one.shizuku.ShizukuRepository
+import com.agentkosticka.amply.shizuku.ShizukuRepository
 import java.lang.reflect.Method
 
 /**

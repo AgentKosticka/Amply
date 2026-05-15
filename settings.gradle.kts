@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Mixer"
+rootProject.name = "Amply"
 include(":app")

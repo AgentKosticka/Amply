@@ -1,10 +1,9 @@
-package com.mixer.one.ui.theme
+package com.agentkosticka.amply.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 
 /**
  * Nothing OS Dark Color Scheme (primary theme)
@@ -23,10 +22,10 @@ private val NothingDarkColorScheme = darkColorScheme(
 )
 
 /**
- * Mixer (1) Theme - Nothing OS inspired
+ * Amply (1) Theme - Nothing OS inspired
  */
 @Composable
-fun MixerTheme(
+fun AmplyTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {

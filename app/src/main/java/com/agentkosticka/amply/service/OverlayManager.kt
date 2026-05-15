@@ -1,4 +1,4 @@
-package com.mixer.one.service
+package com.agentkosticka.amply.service
 
 import android.content.Context
 import android.graphics.PixelFormat
@@ -27,9 +27,9 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.mixer.one.data.AudioSession
-import com.mixer.one.ui.overlay.VolumeOverlay
-import com.mixer.one.ui.theme.MixerTheme
+import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.ui.overlay.VolumeOverlay
+import com.agentkosticka.amply.ui.theme.AmplyTheme
 import kotlinx.coroutines.*
 
 /**
@@ -45,7 +45,7 @@ private class ComposeLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, Saved
     override val viewModelStore: ViewModelStore get() = store
     override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
 
-    fun performRestore(savedState: android.os.Bundle?) {
+    fun performRestore(savedState: Bundle?) {
         savedStateRegistryController.performRestore(savedState)
     }
 
@@ -226,7 +226,7 @@ object OverlayManager {
 
         // Step 8: Set compose content
         view.setContent {
-            MixerTheme {
+            AmplyTheme {
                 VolumeOverlay(
                     currentVolume = currentVolume.value,
                     maxVolume = maxVolume.value,
@@ -239,7 +239,10 @@ object OverlayManager {
                     },
                     onSessionVolumeChange = { sessionId, volume ->
                         // Phase 3: Use ResultReceiver to send data back to Service
-                        Log.d("OverlayManager", "Sending volume change via ResultReceiver: id=$sessionId vol=$volume")
+                        Log.d(
+                            "OverlayManager",
+                            "Sending volume change via ResultReceiver: id=$sessionId vol=$volume"
+                        )
                         val bundle = Bundle().apply { putFloat("volume", volume) }
                         volumeReceiver?.send(sessionId, bundle)
                             ?: Log.w("OverlayManager", "ResultReceiver is null!")

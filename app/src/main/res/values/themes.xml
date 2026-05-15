@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Nothing-style App Theme -->
-    <style name="Theme.Mixer" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.Amply" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/nothing_black</item>
         <item name="android:statusBarColor">@color/nothing_black</item>
         <item name="android:navigationBarColor">@color/nothing_black</item>
@@ -9,10 +9,10 @@
     </style>
 
     <!-- Splash Screen Theme (Android 12+ SplashScreen API) -->
-    <style name="Theme.Mixer.Splash" parent="Theme.SplashScreen">
+    <style name="Theme.Amply.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/nothing_black</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
         <item name="windowSplashScreenIconBackgroundColor">@color/nothing_red</item>
-        <item name="postSplashScreenTheme">@style/Theme.Mixer</item>
+        <item name="postSplashScreenTheme">@style/Theme.Amply</item>
     </style>
 </resources>

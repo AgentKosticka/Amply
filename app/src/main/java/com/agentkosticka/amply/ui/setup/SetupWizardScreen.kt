@@ -1,5 +1,6 @@
-package com.mixer.one.ui.setup
+package com.agentkosticka.amply.ui.setup
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -12,8 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.mixer.one.shizuku.ShizukuPermissionState
-import com.mixer.one.ui.theme.NothingColors
+import com.agentkosticka.amply.shizuku.ShizukuPermissionState
+import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.launch
 
 /**
@@ -117,7 +118,7 @@ fun WelcomeSlide(onNext: () -> Unit) {
         // App Title with red accent
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "MIXER",
+                text = "AMPLY",
                 style = MaterialTheme.typography.displayLarge,
                 color = NothingColors.White
             )
@@ -299,7 +300,7 @@ fun PermissionSlide(
         Spacer(modifier = Modifier.height(48.dp))
 
         Text(
-            text = "Tap below to grant Mixer (1) access to Shizuku.",
+            text = "Tap below to grant Amply (1) access to Shizuku.",
             style = MaterialTheme.typography.bodyLarge,
             color = NothingColors.GreyMedium,
             textAlign = TextAlign.Center
@@ -397,7 +398,7 @@ fun SuccessSlide(onFinish: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Mixer (1) is now ready to\nhijack your volume controls.",
+            text = "Amply (1) is now ready to\nhijack your volume controls.",
             style = MaterialTheme.typography.bodyLarge,
             color = NothingColors.GreyMedium,
             textAlign = TextAlign.Center
@@ -444,7 +445,7 @@ fun NothingButton(
                 contentColor = NothingColors.Black
             )
         },
-        border = if (outlined) androidx.compose.foundation.BorderStroke(1.dp, NothingColors.GreyDim) else null
+        border = if (outlined) BorderStroke(1.dp, NothingColors.GreyDim) else null
     ) {
         Text(
             text = text,

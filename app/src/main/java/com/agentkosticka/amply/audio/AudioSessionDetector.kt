@@ -1,10 +1,10 @@
-package com.mixer.one.audio
+package com.agentkosticka.amply.audio
 
 import android.content.Context
 import android.media.AudioManager
 import android.util.Log
-import com.mixer.one.data.DumpsysParseResult
-import com.mixer.one.data.RawAudioSession
+import com.agentkosticka.amply.data.DumpsysParseResult
+import com.agentkosticka.amply.data.RawAudioSession
 
 /**
  * Parses dumpsys audio output to extract active audio sessions.

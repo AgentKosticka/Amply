@@ -1,4 +1,4 @@
-package com.mixer.one.ui.overlay
+package com.agentkosticka.amply.ui.overlay
 
 import android.util.Log
 import androidx.compose.animation.*
@@ -7,7 +7,6 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -22,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
@@ -32,7 +30,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -47,14 +44,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
-import com.mixer.one.data.AudioSession
-import com.mixer.one.ui.theme.NothingColors
+import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.ui.theme.NothingColors
 
 private const val TAG = "VolumeOverlay"
 
 /**
  * Volume overlay with Nothing OS design
- * Layout: Volume pill left, mixer expands to the right (side-by-side)
+ * Layout: Volume pill left, per-app controls expand to the right (side-by-side)
  * Expand button at the bottom of the pill
  */
 @Composable
@@ -94,7 +91,7 @@ fun VolumeOverlay(
         label = "chevronRotation"
     )
 
-    // Layout: Row with pill on left, mixer on right (side-expanding)
+    // Layout: Row with pill on left, per-app controls on right (side-expanding)
     Row(
         modifier = Modifier.wrapContentSize(),
         horizontalArrangement = Arrangement.Start,
@@ -143,7 +140,7 @@ fun VolumeOverlay(
             )
         }
 
-        // Mixer Panel (expands to the right, side-by-side)
+        // Amply Panel (expands to the right, side-by-side)
         AnimatedVisibility(
             visible = isExpanded && hasActiveSessions,
             enter = slideInHorizontally(
@@ -160,7 +157,7 @@ fun VolumeOverlay(
         ) {
             Spacer(modifier = Modifier.width(10.dp))
 
-            MixerPanel(
+            AmplyPanel(
                 sessions = sessions,
                 focusedApp = focusedApp,
                 onSessionVolumeChange = { sessionId, volume ->
@@ -299,7 +296,7 @@ private fun MainVolumePill(
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Expand Mixer",
+                    contentDescription = "Expand Amply",
                     tint = if (isExpanded) NothingColors.Red else NothingColors.GreyMedium,
                     modifier = Modifier
                         .size(16.dp)
@@ -311,10 +308,10 @@ private fun MainVolumePill(
 }
 
 /**
- * Mixer Panel - Per-app volume controls
+ * Amply Panel - Per-app volume controls
  */
 @Composable
-private fun MixerPanel(
+private fun AmplyPanel(
     sessions: List<AudioSession>,
     focusedApp: AudioSession?,
     onSessionVolumeChange: (Int, Float) -> Unit,
@@ -433,7 +430,7 @@ private fun AppVolumeRow(
 
     val backgroundColor by animateColorAsState(
         targetValue = if (isFocused) 
-            NothingColors.Red.copy(alpha = 0.1f) 
+            NothingColors.Red.copy(alpha = 0.1f)
         else 
             Color(0xFF262626),
         animationSpec = tween(200),

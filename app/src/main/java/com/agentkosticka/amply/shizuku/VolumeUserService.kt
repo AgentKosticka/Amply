@@ -1,8 +1,8 @@
-package com.mixer.one.shizuku
+package com.agentkosticka.amply.shizuku
 
-import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.IBinder
+import android.os.Process
 import android.util.Log
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.lang.reflect.Method
@@ -37,7 +37,7 @@ class VolumeUserService : IVolumeService.Stub() {
     private var lastConfigs: List<AudioPlaybackConfiguration> = emptyList()
 
     init {
-        Log.d(TAG, "VolumeUserService created in process ${android.os.Process.myPid()}, uid ${android.os.Process.myUid()}")
+        Log.d(TAG, "VolumeUserService created in process ${Process.myPid()}, uid ${Process.myUid()}")
 
         // Initialize HiddenApiBypass in the service process too
         try {

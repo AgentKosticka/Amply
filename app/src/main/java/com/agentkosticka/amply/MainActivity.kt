@@ -1,4 +1,4 @@
-package com.mixer.one
+package com.agentkosticka.amply
 
 import android.content.Intent
 import android.net.Uri
@@ -14,14 +14,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.mixer.one.data.PreferencesManager
-import com.mixer.one.shizuku.ShizukuRepository
-import com.mixer.one.ui.setup.SetupViewModel
-import com.mixer.one.ui.setup.SetupWizardScreen
-import com.mixer.one.ui.theme.MixerTheme
-import com.mixer.one.ui.theme.NothingColors
+import com.agentkosticka.amply.data.PreferencesManager
+import com.agentkosticka.amply.shizuku.ShizukuRepository
+import com.agentkosticka.amply.ui.setup.SetupViewModel
+import com.agentkosticka.amply.ui.setup.SetupWizardScreen
+import com.agentkosticka.amply.ui.theme.AmplyTheme
+import com.agentkosticka.amply.ui.theme.NothingColors
 
 class MainActivity : ComponentActivity() {
 
@@ -39,7 +40,7 @@ class MainActivity : ComponentActivity() {
         preferencesManager = PreferencesManager(this)
 
         setContent {
-            MixerTheme {
+            AmplyTheme {
                 MainContent()
             }
         }
@@ -87,7 +88,7 @@ class MainActivity : ComponentActivity() {
                 // App Title with red accent - Nothing style
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "MIXER",
+                        text = "AMPLY",
                         style = MaterialTheme.typography.displayMedium,
                         color = NothingColors.White
                     )
@@ -112,7 +113,7 @@ class MainActivity : ComponentActivity() {
                 SetupStep(
                     number = "1",
                     title = "GRANT OVERLAY PERMISSION",
-                    description = "Allows Mixer to show volume controls on top of other apps",
+                    description = "Allows Amply to show volume controls on top of other apps",
                     onClick = { requestOverlayPermission() }
                 )
 
@@ -120,7 +121,7 @@ class MainActivity : ComponentActivity() {
                 SetupStep(
                     number = "2",
                     title = "ENABLE VOLUME KEY DETECTION",
-                    description = "Allows Mixer to detect volume button presses",
+                    description = "Allows Amply to detect volume button presses",
                     onClick = { openAccessibilitySettings() }
                 )
 
@@ -130,7 +131,7 @@ class MainActivity : ComponentActivity() {
                     text = "After completing both steps,\npress volume buttons to see the overlay!",
                     style = MaterialTheme.typography.bodySmall,
                     color = NothingColors.GreyDim,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
             }
         }
