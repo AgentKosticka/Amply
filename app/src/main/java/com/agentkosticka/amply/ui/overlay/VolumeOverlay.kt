@@ -1,5 +1,6 @@
 package com.agentkosticka.amply.ui.overlay
 
+import android.content.res.Configuration
 import android.media.AudioManager
 import android.util.Log
 import androidx.compose.animation.*
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -90,6 +92,7 @@ fun VolumeOverlay(
     sessions: List<AudioSession> = emptyList(),
     focusedApp: AudioSession? = null,
     overlaySide: OverlaySide = OverlaySide.LEFT,
+    availableWidthDp: Float = 0f,
     onVolumeChange: (Int) -> Unit = {},
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
     onSessionVolumeChange: (AudioSession, Float) -> Unit = { _, _ -> },
@@ -102,6 +105,22 @@ fun VolumeOverlay(
     var isExpanded by remember { mutableStateOf(false) }
     val hasActiveSessions = sessions.isNotEmpty()
     val expandToStart = overlaySide == OverlaySide.RIGHT
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val measuredAvailableWidth = if (availableWidthDp > 0f) {
+        availableWidthDp.dp
+    } else {
+        configuration.screenWidthDp.dp - 32.dp
+    }
+    val landscapeContainerWidth = measuredAvailableWidth
+        .coerceAtLeast(ExpandedPillWidth)
+    val landscapePanelWidth = (landscapeContainerWidth - ExpandedPillWidth - PanelSpacing)
+        .coerceAtLeast(120.dp)
+    val overlayContainerWidth = if (isLandscape) {
+        landscapeContainerWidth
+    } else {
+        ExpandedPillWidth
+    }
     val panelTransitionState = remember {
         MutableTransitionState(false)
     }
@@ -223,47 +242,123 @@ fun VolumeOverlay(
             animationSpec = tween(200, easing = FastOutSlowInEasing)
         ) + fadeOut(animationSpec = tween(150))
     ) {
-        Column(
-            modifier = Modifier
-                .width(ExpandedPillWidth)
-                .pointerInput(isExpanded, expandToStart) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        if (!isExpanded) {
-                            val collapsedWidth = CollapsedPillWidth.toPx()
-                            val isInsideVisiblePill = if (expandToStart) {
-                                down.position.x >= size.width - collapsedWidth
-                            } else {
-                                down.position.x <= collapsedWidth
-                            }
+        val collapsedHitTestModifier = Modifier.pointerInput(isExpanded, expandToStart, isLandscape) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                if (!isExpanded) {
+                    val collapsedWidth = CollapsedPillWidth.toPx()
+                    val isInsideVisiblePill = if (expandToStart) {
+                        down.position.x >= size.width - collapsedWidth
+                    } else {
+                        down.position.x <= collapsedWidth
+                    }
 
-                            if (!isInsideVisiblePill) {
-                                down.consume()
-                                onDismissRequest()
+                    if (!isInsideVisiblePill) {
+                        down.consume()
+                        onDismissRequest()
+                    }
+                }
+            }
+        }
+
+        if (isLandscape) {
+            Row(
+                modifier = Modifier
+                    .width(overlayContainerWidth)
+                    .then(collapsedHitTestModifier),
+                horizontalArrangement = if (expandToStart) Arrangement.End else Arrangement.Start,
+                verticalAlignment = Alignment.Top
+            ) {
+                if (expandToStart) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visibleState = panelTransitionState,
+                        enter = slideInHorizontally(
+                            initialOffsetX = { it / 2 },
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            )
+                        ) + fadeIn(animationSpec = tween(200)),
+                        exit = slideOutHorizontally(
+                            targetOffsetX = { it / 2 },
+                            animationSpec = tween(200, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(150))
+                    ) {
+                        Row(verticalAlignment = Alignment.Top) {
+                            Box(
+                                modifier = Modifier.width(landscapePanelWidth),
+                                contentAlignment = Alignment.TopEnd
+                            ) {
+                                panelBody(landscapePanelWidth)
+                            }
+                            Spacer(modifier = Modifier.width(PanelSpacing))
+                        }
+                    }
+                    Box(
+                        modifier = Modifier.width(ExpandedPillWidth),
+                        contentAlignment = Alignment.TopEnd
+                    ) {
+                        pillContent()
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier.width(ExpandedPillWidth),
+                        contentAlignment = Alignment.TopStart
+                    ) {
+                        pillContent()
+                    }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visibleState = panelTransitionState,
+                        enter = slideInHorizontally(
+                            initialOffsetX = { -it / 2 },
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            )
+                        ) + fadeIn(animationSpec = tween(200)),
+                        exit = slideOutHorizontally(
+                            targetOffsetX = { -it / 2 },
+                            animationSpec = tween(200, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(150))
+                    ) {
+                        Row(verticalAlignment = Alignment.Top) {
+                            Spacer(modifier = Modifier.width(PanelSpacing))
+                            Box(
+                                modifier = Modifier.width(landscapePanelWidth),
+                                contentAlignment = Alignment.TopStart
+                            ) {
+                                panelBody(landscapePanelWidth)
                             }
                         }
                     }
-                },
-            horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
-        ) {
-            pillContent()
-            AnimatedVisibility(
-                visibleState = panelTransitionState,
-                enter = slideInVertically(
-                    initialOffsetY = { -it / 2 },
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessMedium
-                    )
-                ) + fadeIn(animationSpec = tween(200)),
-                exit = slideOutVertically(
-                    targetOffsetY = { -it / 2 },
-                    animationSpec = tween(200, easing = FastOutSlowInEasing)
-                ) + fadeOut(animationSpec = tween(150))
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .width(overlayContainerWidth)
+                    .then(collapsedHitTestModifier),
+                horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
             ) {
-                Column {
-                    Spacer(modifier = Modifier.height(PanelSpacing))
-                    panelBody(ExpandedPillWidth)
+                pillContent()
+                AnimatedVisibility(
+                    visibleState = panelTransitionState,
+                    enter = slideInVertically(
+                        initialOffsetY = { -it / 2 },
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    ) + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutVertically(
+                        targetOffsetY = { -it / 2 },
+                        animationSpec = tween(200, easing = FastOutSlowInEasing)
+                    ) + fadeOut(animationSpec = tween(150))
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(PanelSpacing))
+                        panelBody(ExpandedPillWidth)
+                    }
                 }
             }
         }
@@ -607,6 +702,7 @@ private fun AppVolumeRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
+                modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -643,7 +739,7 @@ private fun AppVolumeRow(
                     fontWeight = FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 85.dp)
+                    modifier = Modifier.weight(1f)
                 )
             }
 

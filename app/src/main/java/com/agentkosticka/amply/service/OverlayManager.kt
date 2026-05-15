@@ -111,6 +111,7 @@ object OverlayManager {
     private val currentSessions = mutableStateOf<List<AudioSession>>(emptyList())
     private val currentOverlaySide = mutableStateOf(OverlaySide.LEFT)
     private val currentOverlayVerticalFraction = mutableFloatStateOf(0.5f)
+    private val availableOverlayWidthDp = mutableFloatStateOf(0f)
     
     // Phase 3.5: Smart Focus - the foreground app if detected
     private val focusedApp = mutableStateOf<AudioSession?>(null)
@@ -186,6 +187,7 @@ object OverlayManager {
         Log.d("OverlayManager", "show() called: volume=$volume, sessions=${sessions.size}, focused=${focusedAppSession?.appName}")
 
         // Update state
+        updateAvailableOverlayWidth(context)
         refreshSystemStreamVolumes(mediaVolumeOverride = volume)
         isMuted.value = (currentVolume.intValue == 0)
         iconType.value = newIconType
@@ -273,6 +275,7 @@ object OverlayManager {
                     sessions = currentSessions.value,
                     focusedApp = focusedApp.value, // Phase 3.5: Smart Focus
                     overlaySide = currentOverlaySide.value,
+                    availableWidthDp = availableOverlayWidthDp.floatValue,
                     onVolumeChange = { newVolume ->
                         setStreamVolume(AudioManager.STREAM_MUSIC, newVolume)
                     },
@@ -311,7 +314,7 @@ object OverlayManager {
         // Step 9: Configure window params
         // Note: Removed FLAG_NOT_FOCUSABLE to allow touch events on sliders
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            windowWidthForCurrentOrientation(context),
             WindowManager.LayoutParams.WRAP_CONTENT,
             windowType,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -470,6 +473,7 @@ object OverlayManager {
     private fun updateOverlayPosition(context: Context) {
         val container = overlayContainer ?: return
         val params = container.layoutParams as? WindowManager.LayoutParams ?: return
+        updateAvailableOverlayWidth(context)
         params.applyPosition(context)
         try {
             windowManager?.updateViewLayout(container, params)
@@ -481,15 +485,36 @@ object OverlayManager {
     private fun WindowManager.LayoutParams.applyPosition(context: Context): WindowManager.LayoutParams {
         val margin = (16 * context.resources.displayMetrics.density).toInt()
         val approximateOverlayHeight = (220 * context.resources.displayMetrics.density).toInt()
+        val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
         val maxY = (screenHeight - approximateOverlayHeight).coerceAtLeast(0)
 
-        gravity = when (currentOverlaySide.value) {
-            OverlaySide.LEFT -> Gravity.START or Gravity.TOP
-            OverlaySide.RIGHT -> Gravity.END or Gravity.TOP
+        val isLandscape = screenWidth > screenHeight
+        width = windowWidthForCurrentOrientation(context)
+        gravity = when {
+            isLandscape -> Gravity.START or Gravity.TOP
+            currentOverlaySide.value == OverlaySide.LEFT -> Gravity.START or Gravity.TOP
+            else -> Gravity.END or Gravity.TOP
         }
         x = margin
         y = (maxY * currentOverlayVerticalFraction.floatValue).toInt().coerceIn(0, maxY)
         return this
+    }
+
+    private fun updateAvailableOverlayWidth(context: Context) {
+        val density = context.resources.displayMetrics.density
+        availableOverlayWidthDp.floatValue =
+            (windowWidthForCurrentOrientation(context) / density).coerceAtLeast(216f)
+    }
+
+    private fun windowWidthForCurrentOrientation(context: Context): Int {
+        val metrics = context.resources.displayMetrics
+        val margin = (16 * metrics.density).toInt()
+        val isLandscape = metrics.widthPixels > metrics.heightPixels
+        return if (isLandscape) {
+            (metrics.widthPixels - margin * 2).coerceAtLeast((216 * metrics.density).toInt())
+        } else {
+            WindowManager.LayoutParams.WRAP_CONTENT
+        }
     }
 }
