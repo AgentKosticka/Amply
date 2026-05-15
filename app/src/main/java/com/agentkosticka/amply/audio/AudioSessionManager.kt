@@ -586,8 +586,10 @@ class AudioSessionManager(
     }
 
     fun getDefaultOverlaySessions(): List<AudioSession> =
-        _sessionState.value.sessions
+        compactSessionsByPackage(
+            _sessionState.value.sessions
             .filter { appSettingsCache[it.packageName]?.hiddenInOverlay != true }
+        )
 
     fun getExpandedOverlaySessions(now: Long = System.currentTimeMillis()): List<AudioSession> {
         val active = _sessionState.value.sessions.associateBy { it.packageName }
@@ -638,12 +640,25 @@ class AudioSessionManager(
      */
     suspend fun setSessionVolume(sessionId: Int, packageName: String?, volume: Float) {
         // Find the specific session to get its UID
-        val targetSession = _sessionState.value.sessions.find { it.sessionId == sessionId }
+        val activeSessions = _sessionState.value.sessions
+        val targetSession = activeSessions.find { it.sessionId == sessionId }
+            ?: packageName?.let { requestedPackage ->
+                activeSessions.find { it.packageName == requestedPackage }
+            }
 
         if (targetSession != null) {
             val uid = targetSession.uid
-            Log.d(TAG, "Setting volume for ${targetSession.appName} (uid=$uid, piid=$sessionId) to $volume")
-            updateLocalSessionVolume(uid, volume)
+            val targetPackage = packageName?.takeIf { it.isNotBlank() } ?: targetSession.packageName
+            val packageSessions = activeSessions.filter { it.packageName == targetPackage }
+            val targetSessions = packageSessions.ifEmpty {
+                activeSessions.filter { it.uid == uid }
+            }
+
+            Log.d(
+                TAG,
+                "Setting volume for ${targetSession.appName} (package=$targetPackage, sessions=${targetSessions.size}) to $volume"
+            )
+            updateLocalSessionVolume(targetPackage, uid, volume)
             managerScope.launch {
                 persistSessionVolume(targetSession, volume)
             }
@@ -653,19 +668,11 @@ class AudioSessionManager(
             // ==============================================
             if (shizukuVolumeManager.isConnected.value) {
                 val gain = toLogarithmicGain(volume)
-                val success = shizukuVolumeManager.setPlayerVolume(sessionId, gain)
-                if (success) {
-                    Log.d(TAG, "✓ Volume set to $gain (linear=$volume) via ShizukuVolumeManager")
-
-                    // Also set for all other players of the same app (same UID)
-                    val otherSessionIds = _sessionState.value.sessions
-                        .filter { it.uid == uid && it.sessionId != sessionId }
-                        .map { it.sessionId }
-
-                    for (otherPiid in otherSessionIds) {
-                        shizukuVolumeManager.setPlayerVolume(otherPiid, gain)
-                    }
-
+                val results = targetSessions.map { session ->
+                    shizukuVolumeManager.setPlayerVolume(session.sessionId, gain)
+                }
+                if (results.any { it }) {
+                    Log.d(TAG, "✓ Volume set to $gain (linear=$volume) for ${results.count { it }}/${targetSessions.size} players via ShizukuVolumeManager")
                     return
                 } else {
                     Log.w(TAG, "ShizukuVolumeManager failed, trying fallbacks...")
@@ -676,9 +683,11 @@ class AudioSessionManager(
             // FALLBACK 1: Use PlayerVolumeController (local reflection)
             // ==============================================
             val gain = toLogarithmicGain(volume)
-            val success = playerVolumeController.setPlayerVolumeByPiid(sessionId, gain)
-            if (success) {
-                Log.d(TAG, "✓ Volume set via PlayerVolumeController (gain=$gain)")
+            val localSuccessCount = targetSessions.count { session ->
+                playerVolumeController.setPlayerVolumeByPiid(session.sessionId, gain)
+            }
+            if (localSuccessCount > 0) {
+                Log.d(TAG, "✓ Volume set for $localSuccessCount/${targetSessions.size} players via PlayerVolumeController (gain=$gain)")
                 return
             }
 
@@ -686,14 +695,12 @@ class AudioSessionManager(
             // FALLBACK 2: Use Shizuku shell commands (legacy)
             // ==============================================
             if (shizukuRepository.permissionState.value == ShizukuPermissionState.GRANTED) {
-                val allUidSessions = _sessionState.value.sessions.filter { it.uid == uid }
-
-                val results = allUidSessions.map { session ->
+                val results = targetSessions.map { session ->
                     shizukuRepository.setAppVolume(session.sessionId, session.uid, volume)
                 }
 
                 if (results.any { it }) {
-                    Log.d(TAG, "Volume set via Shizuku shell fallback for ${targetSession.appName}")
+                    Log.d(TAG, "Volume set via Shizuku shell fallback for ${targetSession.appName} (${results.count { it }}/${targetSessions.size} players)")
                 } else {
                     Log.e(TAG, "FAILED to set volume for ${targetSession.appName}")
                 }
@@ -715,12 +722,12 @@ class AudioSessionManager(
     /**
      * Update local session state with new volume
      */
-    private fun updateLocalSessionVolume(uid: Int, volume: Float) {
+    private fun updateLocalSessionVolume(packageName: String, uid: Int, volume: Float) {
         // Update persisted volume cache
         uidVolumeCache[uid] = volume
 
         val updatedSessions = _sessionState.value.sessions.map {
-            if (it.uid == uid) {
+            if (it.packageName == packageName || it.uid == uid) {
                 it.copy(volume = volume)
             } else {
                 it
@@ -816,6 +823,22 @@ class AudioSessionManager(
                 }
             }
         }
+    }
+
+    private fun compactSessionsByPackage(sessions: List<AudioSession>): List<AudioSession> {
+        val compacted = LinkedHashMap<String, AudioSession>()
+        sessions.forEach { session ->
+            val existing = compacted[session.packageName]
+            compacted[session.packageName] = if (existing == null) {
+                session
+            } else {
+                existing.copy(
+                    volume = getPersistedVolume(existing.packageName, existing.uid),
+                    lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, session.lastSeenTimestamp)
+                )
+            }
+        }
+        return compacted.values.toList()
     }
 
     private fun AppSettings.toSyntheticSession(): AudioSession {
