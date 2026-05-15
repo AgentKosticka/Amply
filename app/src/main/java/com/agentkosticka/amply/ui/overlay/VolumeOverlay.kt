@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -69,7 +70,8 @@ fun VolumeOverlay(
     onMuteToggle: () -> Unit = {},
     onInteraction: () -> Unit = {},
     onTouchStart: () -> Unit = {},
-    onTouchEnd: () -> Unit = {}
+    onTouchEnd: () -> Unit = {},
+    onDismissRequest: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     val hasActiveSessions = sessions.isNotEmpty() || expandedSessions.isNotEmpty()
@@ -168,6 +170,22 @@ fun VolumeOverlay(
                         .width(if (hasActiveSessions) 274.dp else 54.dp)
                         .wrapContentHeight()
                 ) {
+                    if (hasActiveSessions && !panelTransitionState.currentState && !panelTransitionState.targetState) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .width(220.dp)
+                                .height(360.dp)
+                                .clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        onDismissRequest()
+                                    }
+                                )
+                        )
+                    }
+
                     Row(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

@@ -275,6 +275,9 @@ object OverlayManager {
                     },
                     onTouchEnd = {
                         scheduleHide(2500L) // Start timer when touch ends
+                    },
+                    onDismissRequest = {
+                        hide()
                     }
                 )
             }
