@@ -386,10 +386,8 @@ private fun AmplyPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             sessions.forEach { session ->
-                val isFocused = focusedApp?.uid == session.uid
                 AppVolumeRow(
                     session = session,
-                    isFocused = isFocused,
                     onVolumeChange = { newVolume ->
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         Log.d(TAG, "AppVolumeRow: ${session.appName} volume=$newVolume")
@@ -416,7 +414,6 @@ private fun AmplyPanel(
 @Composable
 private fun AppVolumeRow(
     session: AudioSession,
-    isFocused: Boolean = false,
     onVolumeChange: (Float) -> Unit
 ) {
     var localVolume by remember(session.sessionId) { mutableStateOf(session.volume) }
@@ -429,10 +426,7 @@ private fun AppVolumeRow(
     }
 
     val backgroundColor by animateColorAsState(
-        targetValue = if (isFocused) 
-            NothingColors.Red.copy(alpha = 0.1f)
-        else 
-            Color(0xFF262626),
+        Color(0xFF262626),
         animationSpec = tween(200),
         label = "rowBackground"
     )
@@ -487,19 +481,11 @@ private fun AppVolumeRow(
                     text = session.appName,
                     color = NothingColors.White,
                     fontSize = 11.sp,
-                    fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Normal,
+                    fontWeight = FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = 85.dp)
                 )
-                
-                if (isFocused) {
-                    Text(
-                        text = "★",
-                        color = NothingColors.Red,
-                        fontSize = 9.sp
-                    )
-                }
             }
 
             Text(
