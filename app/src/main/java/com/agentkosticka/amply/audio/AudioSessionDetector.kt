@@ -353,7 +353,7 @@ class AudioSessionDetector(private val context: Context) {
                     }
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // If we can't check, assume it's okay
         }
 

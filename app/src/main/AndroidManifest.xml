@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <!-- Shizuku Permission -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -18,10 +25,6 @@
 
     <!-- Post Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Query All Packages (Android 11+) - Required to get package names from UIDs -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:name=".AmplyApplication"

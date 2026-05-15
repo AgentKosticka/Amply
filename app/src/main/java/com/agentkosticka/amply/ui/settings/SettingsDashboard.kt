@@ -465,7 +465,7 @@ private fun AppSettingsRow(
     val icon = remember(app.packageName) {
         try {
             context.packageManager.getApplicationIcon(app.packageName)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

@@ -55,7 +55,7 @@ class AudioSessionManager(
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     // Session state observable
-    private val _sessionState = MutableStateFlow(AudioSessionState.Companion.empty())
+    private val _sessionState = MutableStateFlow(AudioSessionState.empty())
     val sessionState: StateFlow<AudioSessionState> = _sessionState.asStateFlow()
 
     // Polling job
@@ -394,7 +394,7 @@ class AudioSessionManager(
             val appName = packageManager.getApplicationLabel(appInfo).toString()
             val appIcon = try {
                 packageManager.getApplicationIcon(packageName)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             }
 
@@ -415,7 +415,7 @@ class AudioSessionManager(
                 volume = persistedVolume,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
-        } catch (e: PackageManager.NameNotFoundException) {
+        } catch (_: PackageManager.NameNotFoundException) {
             Log.w(TAG, "Package not found for player uid=${player.uid}")
             null
         } catch (e: Exception) {
@@ -469,7 +469,7 @@ class AudioSessionManager(
             val appName = packageManager.getApplicationLabel(appInfo).toString()
             val appIcon = try {
                 packageManager.getApplicationIcon(packageName)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             }
 
@@ -490,7 +490,7 @@ class AudioSessionManager(
                 volume = persistedVolume,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
-        } catch (e: PackageManager.NameNotFoundException) {
+        } catch (_: PackageManager.NameNotFoundException) {
             Log.w(TAG, "Package not found for privileged playback uid=${playback.uid}")
             null
         } catch (e: Exception) {
@@ -545,7 +545,7 @@ class AudioSessionManager(
             val appName = packageManager.getApplicationLabel(appInfo).toString()
             val appIcon = try {
                 packageManager.getApplicationIcon(packageName)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             }
 
@@ -569,7 +569,7 @@ class AudioSessionManager(
                 volume = persistedVolume,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
-        } catch (e: PackageManager.NameNotFoundException) {
+        } catch (_: PackageManager.NameNotFoundException) {
             Log.w(TAG, "Package not found for UID ${raw.uid}")
             null
         } catch (e: Exception) {
@@ -829,14 +829,11 @@ class AudioSessionManager(
         val compacted = LinkedHashMap<String, AudioSession>()
         sessions.forEach { session ->
             val existing = compacted[session.packageName]
-            compacted[session.packageName] = if (existing == null) {
-                session
-            } else {
-                existing.copy(
-                    volume = getPersistedVolume(existing.packageName, existing.uid),
-                    lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, session.lastSeenTimestamp)
-                )
-            }
+            compacted[session.packageName] = existing?.copy(
+                volume = getPersistedVolume(existing.packageName, existing.uid),
+                lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, session.lastSeenTimestamp)
+            )
+                ?: session
         }
         return compacted.values.toList()
     }
@@ -844,7 +841,7 @@ class AudioSessionManager(
     private fun AppSettings.toSyntheticSession(): AudioSession {
         val icon = try {
             packageManager.getApplicationIcon(packageName)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
 

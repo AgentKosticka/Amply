@@ -3,15 +3,16 @@ package com.agentkosticka.amply.service
 import android.content.Context
 import android.graphics.PixelFormat
 import android.media.AudioManager
-import android.os.Build
-import android.os.Bundle // Added import
-import android.os.ResultReceiver // Added import
+import android.os.Bundle
+import android.os.ResultReceiver
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.runtime.Recomposer
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.ComposeView
@@ -32,6 +33,7 @@ import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import kotlinx.coroutines.*
+import java.lang.ref.WeakReference
 
 /**
  * Self-contained Lifecycle Owner for ComposeView in Service context
@@ -60,13 +62,31 @@ private class ComposeLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, Saved
     }
 }
 
+private class OverlayFrameLayout(context: Context) : FrameLayout(context) {
+    var onOutsideTouch: (() -> Unit)? = null
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_OUTSIDE) {
+            performClick()
+            onOutsideTouch?.invoke()
+            return true
+        }
+        return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+}
+
 /**
  * Manages the floating volume overlay using WindowManager
  * CRITICAL FIX: Self-contained lifecycle and proper window token management
  */
 object OverlayManager {
     private var windowManager: WindowManager? = null
-    private var overlayContainer: FrameLayout? = null
+    private var overlayContainerRef: WeakReference<FrameLayout>? = null
     private var composeView: ComposeView? = null
     private var lifecycleOwner: ComposeLifecycleOwner? = null
     private var recomposer: Recomposer? = null
@@ -78,13 +98,13 @@ object OverlayManager {
     private var removeJob: Job? = null
 
     // State - persists across hide/show cycles
-    private val currentVolume = mutableStateOf(0)
-    private val maxVolume = mutableStateOf(30)
+    private val currentVolume = mutableIntStateOf(0)
+    private val maxVolume = mutableIntStateOf(30)
     private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
     private val currentSessions = mutableStateOf<List<AudioSession>>(emptyList())
     private val currentOverlaySide = mutableStateOf(OverlaySide.LEFT)
-    private val currentOverlayVerticalFraction = mutableStateOf(0.5f)
+    private val currentOverlayVerticalFraction = mutableFloatStateOf(0.5f)
     
     // Phase 3.5: Smart Focus - the foreground app if detected
     private val focusedApp = mutableStateOf<AudioSession?>(null)
@@ -95,6 +115,9 @@ object OverlayManager {
     // Phase 3: ResultReceiver for robust IPC volume control
     private var volumeReceiver: ResultReceiver? = null
     private val overlayVisible = mutableStateOf(false)
+
+    private val overlayContainer: FrameLayout?
+        get() = overlayContainerRef?.get()
 
     /**
      * Set the callback for per-app volume changes
@@ -152,21 +175,21 @@ object OverlayManager {
         }
         if (audioManager == null) {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            maxVolume.value = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 30
+            maxVolume.intValue = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 30
         }
 
         // DEBUG: Log incoming state
         Log.d("OverlayManager", "show() called: volume=$volume, sessions=${sessions.size}, focused=${focusedAppSession?.appName}")
 
         // Update state
-        currentVolume.value = volume
+        currentVolume.intValue = volume
         isMuted.value = (volume == 0)
         iconType.value = newIconType
         currentSessions.value = sessions
         focusedApp.value = focusedAppSession
         this.volumeReceiver = volumeReceiver // Update the receiver property
         currentOverlaySide.value = overlaySide
-        currentOverlayVerticalFraction.value = overlayVerticalFraction.coerceIn(0f, 1f)
+        currentOverlayVerticalFraction.floatValue = overlayVerticalFraction.coerceIn(0f, 1f)
         
         // DEBUG: Verify state was set
         Log.d("OverlayManager", "State updated: currentSessions.value has ${currentSessions.value.size} items")
@@ -194,15 +217,8 @@ object OverlayManager {
         lifecycleOwner = owner
 
         // Step 2: Create wrapper FrameLayout - this holds the lifecycle for the view tree
-        val container = FrameLayout(context).apply {
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                    hide()
-                    true
-                } else {
-                    false
-                }
-            }
+        val container = OverlayFrameLayout(context).apply {
+            onOutsideTouch = { hide() }
         }
 
         // Step 3: Set lifecycle owners on the CONTAINER (parent view)
@@ -237,8 +253,8 @@ object OverlayManager {
         view.setContent {
             AmplyTheme {
                 VolumeOverlay(
-                    currentVolume = currentVolume.value,
-                    maxVolume = maxVolume.value,
+                    currentVolume = currentVolume.intValue,
+                    maxVolume = maxVolume.intValue,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
                     sessions = currentSessions.value,
@@ -279,7 +295,7 @@ object OverlayManager {
             }
         }
 
-        overlayContainer = container
+        overlayContainerRef = WeakReference(container)
         composeView = view
 
         // Step 9: Configure window params
@@ -287,17 +303,10 @@ object OverlayManager {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            },
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
         ).applyPosition(context)
 
@@ -311,7 +320,7 @@ object OverlayManager {
             recomposer = null
             lifecycleOwner?.destroy()
             lifecycleOwner = null
-            overlayContainer = null
+            overlayContainerRef = null
             composeView = null
         }
     }
@@ -351,7 +360,7 @@ object OverlayManager {
         // Cleanup lifecycle
         lifecycleOwner?.destroy()
         lifecycleOwner = null
-        overlayContainer = null
+        overlayContainerRef = null
         composeView = null
         overlayVisible.value = false
         removeJob = null
@@ -361,7 +370,7 @@ object OverlayManager {
      * Update volume from overlay interaction
      */
     private fun setVolume(newVolume: Int) {
-        currentVolume.value = newVolume
+        currentVolume.intValue = newVolume
         audioManager?.setStreamVolume(
             AudioManager.STREAM_MUSIC,
             newVolume,
@@ -373,9 +382,9 @@ object OverlayManager {
      * Smart mute toggle: 0 → 70%, any → 0
      */
     private fun toggleMute() {
-        if (currentVolume.value == 0) {
+        if (currentVolume.intValue == 0) {
             // Unmute: Restore to 70%
-            val restoreVolume = (maxVolume.value * 0.7f).toInt()
+            val restoreVolume = (maxVolume.intValue * 0.7f).toInt()
             setVolume(restoreVolume)
         } else {
             // Mute: Set to 0
@@ -442,7 +451,7 @@ object OverlayManager {
             OverlaySide.RIGHT -> Gravity.END or Gravity.TOP
         }
         x = margin
-        y = (maxY * currentOverlayVerticalFraction.value).toInt().coerceIn(0, maxY)
+        y = (maxY * currentOverlayVerticalFraction.floatValue).toInt().coerceIn(0, maxY)
         return this
     }
 }

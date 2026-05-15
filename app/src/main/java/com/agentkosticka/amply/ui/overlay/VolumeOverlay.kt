@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
@@ -477,7 +476,7 @@ private fun AppVolumeRow(
     session: AudioSession,
     onVolumeChange: (Float) -> Unit
 ) {
-    var localVolume by remember(session.sessionId) { mutableStateOf(session.volume) }
+    var localVolume by remember(session.sessionId) { mutableFloatStateOf(session.volume) }
     val volumePercent = (localVolume * 100).toInt()
 
     val backgroundColor by animateColorAsState(

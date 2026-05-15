@@ -5,7 +5,6 @@ import android.content.Intent
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -97,9 +96,7 @@ class VolumeKeyService : AccessibilityService() {
         maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 30
 
         // Register audio device callback
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
-        }
+        audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
 
         // Initial icon type detection
         updateIconType()
@@ -320,25 +317,20 @@ class VolumeKeyService : AccessibilityService() {
      * Detect connected audio devices and update icon type
      */
     private fun updateIconType() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val devices = audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: return
+        val devices = audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: return
 
-            // Priority: Bluetooth > Wired > Default
-            currentIconType = when {
-                devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                             it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                             it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO } -> "BLUETOOTH"
+        // Priority: Bluetooth > Wired > Default
+        currentIconType = when {
+            devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                         it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                         it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO } -> "BLUETOOTH"
 
-                devices.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                             it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                             it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                             it.type == AudioDeviceInfo.TYPE_USB_DEVICE } -> "HEADPHONE"
+            devices.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                         it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                         it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                         it.type == AudioDeviceInfo.TYPE_USB_DEVICE } -> "HEADPHONE"
 
-                else -> "MUSIC"
-            }
-        } else {
-            // Fallback for older Android versions
-            currentIconType = "MUSIC"
+            else -> "MUSIC"
         }
     }
 
@@ -361,9 +353,7 @@ class VolumeKeyService : AccessibilityService() {
         serviceScope.cancel()
 
         // Unregister audio device callback
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
-        }
+        audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
 
         // Phase 3: Cleanup audio session management
         audioSessionManager?.cleanup()

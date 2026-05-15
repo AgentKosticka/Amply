@@ -1,7 +1,6 @@
 package com.agentkosticka.amply
 
 import android.app.Application
-import android.os.Build
 import android.util.Log
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
@@ -19,19 +18,17 @@ class AmplyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize HiddenApiBypass on Android P+ (API 28+)
+        // Initialize HiddenApiBypass. The app's minSdk is already above Android P.
         // This allows us to access hidden APIs like:
         // - AudioPlaybackConfiguration.getPlayerProxy()
         // - AudioPlaybackConfiguration.getClientUid()
         // - PlayerProxy.setVolume()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                // Exempt all hidden APIs (empty string matches all - from VolumeManager)
-                HiddenApiBypass.addHiddenApiExemptions("")
-                Log.d(TAG, "HiddenApiBypass initialized successfully")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize HiddenApiBypass", e)
-            }
+        try {
+            // Exempt all hidden APIs (empty string matches all - from VolumeManager)
+            HiddenApiBypass.addHiddenApiExemptions("")
+            Log.d(TAG, "HiddenApiBypass initialized successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize HiddenApiBypass", e)
         }
     }
 }

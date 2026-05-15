@@ -24,11 +24,7 @@ interface IVolumeService : IInterface {
         fun asInterface(binder: IBinder?): IVolumeService? {
             if (binder == null) return null
             val iin = binder.queryLocalInterface(DESCRIPTOR)
-            return if (iin is IVolumeService) {
-                iin
-            } else {
-                Proxy(binder)
-            }
+            return iin as? IVolumeService ?: Proxy(binder)
         }
     }
 

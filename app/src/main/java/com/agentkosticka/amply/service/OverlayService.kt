@@ -1,16 +1,16 @@
 package com.agentkosticka.amply.service
 
-import android.R
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.os.Build
 import android.os.IBinder
 import android.os.ResultReceiver
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.IntentCompat
+import com.agentkosticka.amply.R
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.data.ParcelableAudioSession
 import com.agentkosticka.amply.data.toAudioSession
@@ -49,7 +49,6 @@ class OverlayService : Service() {
         createNotificationChannel()
     }
 
-    @Suppress("DEPRECATION")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
@@ -60,27 +59,27 @@ class OverlayService : Service() {
                 val iconType = intent.getStringExtra(EXTRA_ICON_TYPE) ?: "MUSIC"
 
                 // Extract sessions (Phase 3)
-                val parcelableSessions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableArrayListExtra(EXTRA_SESSIONS, ParcelableAudioSession::class.java)
-                } else {
-                    intent.getParcelableArrayListExtra(EXTRA_SESSIONS)
-                }
+                val parcelableSessions = IntentCompat.getParcelableArrayListExtra(
+                    intent,
+                    EXTRA_SESSIONS,
+                    ParcelableAudioSession::class.java
+                )
                 
                 // DEBUG: Log received sessions
                 Log.d("OverlayService", "Received ${parcelableSessions?.size ?: 0} parcelable sessions")
 
                 // Phase 3.5: Extract focused app for Smart Focus
-                val focusedAppParcelable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_FOCUSED_APP, ParcelableAudioSession::class.java)
-                } else {
-                    intent.getParcelableExtra(EXTRA_FOCUSED_APP)
-                }
+                val focusedAppParcelable = IntentCompat.getParcelableExtra(
+                    intent,
+                    EXTRA_FOCUSED_APP,
+                    ParcelableAudioSession::class.java
+                )
 
                 // Convert to AudioSession with icons loaded
                 val sessions = parcelableSessions?.map { parcelable ->
                     val icon = try {
                         packageManager.getApplicationIcon(parcelable.packageName)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
                     parcelable.toAudioSession(icon)
@@ -96,14 +95,18 @@ class OverlayService : Service() {
                 val focusedApp = focusedAppParcelable?.let { parcelable ->
                     val icon = try {
                         packageManager.getApplicationIcon(parcelable.packageName)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
                     parcelable.toAudioSession(icon)
                 }
                 Log.d("OverlayService", "Focused app: ${focusedApp?.appName ?: "none"}")
 
-                val volumeReceiver = intent.getParcelableExtra<ResultReceiver>(EXTRA_VOLUME_RECEIVER)
+                val volumeReceiver = IntentCompat.getParcelableExtra(
+                    intent,
+                    EXTRA_VOLUME_RECEIVER,
+                    ResultReceiver::class.java
+                )
                 val overlaySide = OverlaySide.fromStored(intent.getStringExtra(EXTRA_OVERLAY_SIDE))
                 val overlayVerticalFraction = intent.getFloatExtra(EXTRA_OVERLAY_VERTICAL_FRACTION, 0.5f)
                 
@@ -144,26 +147,24 @@ class OverlayService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Volume Overlay",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Keeps Amply (1) overlay active"
-                setShowBadge(false)
-            }
-
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Volume Overlay",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Keeps Amply (1) overlay active"
+            setShowBadge(false)
         }
+
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.createNotificationChannel(channel)
     }
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Amply (1)")
             .setContentText("Volume controls active")
-            .setSmallIcon(R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_amply_logo_monochrome)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()

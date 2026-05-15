@@ -94,7 +94,6 @@ class VolumeUserService : IVolumeService.Stub() {
     /**
      * Get active playback configurations directly from IAudioService
      */
-    @Suppress("UNCHECKED_CAST")
     private fun getActivePlaybackConfigurations(): List<AudioPlaybackConfiguration> {
         val service = audioService
         val method = getActivePlaybackConfigsMethod
@@ -107,7 +106,7 @@ class VolumeUserService : IVolumeService.Stub() {
         return try {
             val result = method.invoke(service)
             Log.d(TAG, "getActivePlaybackConfigurations returned: ${result?.javaClass?.name}")
-            result as? List<AudioPlaybackConfiguration> ?: emptyList()
+            (result as? List<*>)?.filterIsInstance<AudioPlaybackConfiguration>() ?: emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get playback configurations: ${e.message}")
             e.printStackTrace()
@@ -231,7 +230,7 @@ class VolumeUserService : IVolumeService.Stub() {
                 getPlayerProxyMethod = apcClass.getDeclaredMethod("getPlayerProxy")
                 getPlayerProxyMethod?.isAccessible = true
                 Log.d(TAG, "Found getPlayerProxy method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getPlayerProxy method not found")
             }
 
@@ -240,7 +239,7 @@ class VolumeUserService : IVolumeService.Stub() {
                 getClientUidMethod = apcClass.getDeclaredMethod("getClientUid")
                 getClientUidMethod?.isAccessible = true
                 Log.d(TAG, "Found getClientUid method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getClientUid method not found")
             }
 
@@ -249,7 +248,7 @@ class VolumeUserService : IVolumeService.Stub() {
                 getClientPidMethod = apcClass.getDeclaredMethod("getClientPid")
                 getClientPidMethod?.isAccessible = true
                 Log.d(TAG, "Found getClientPid method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getClientPid method not found")
             }
 
@@ -258,7 +257,7 @@ class VolumeUserService : IVolumeService.Stub() {
                 getPlayerInterfaceIdMethod = apcClass.getDeclaredMethod("getPlayerInterfaceId")
                 getPlayerInterfaceIdMethod?.isAccessible = true
                 Log.d(TAG, "Found getPlayerInterfaceId method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getPlayerInterfaceId method not found")
             }
 
@@ -276,7 +275,7 @@ class VolumeUserService : IVolumeService.Stub() {
                     setVolumeMethod = playerProxyClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType)
                     setVolumeMethod?.isAccessible = true
                     Log.d(TAG, "Found setVolume(float) method")
-                } catch (e: NoSuchMethodException) {
+                } catch (_: NoSuchMethodException) {
                     Log.w(TAG, "setVolume(float) not found")
                 }
             } catch (e: ClassNotFoundException) {
@@ -293,7 +292,7 @@ class VolumeUserService : IVolumeService.Stub() {
     private fun getPlayerInterfaceId(config: AudioPlaybackConfiguration): Int {
         return try {
             getPlayerInterfaceIdMethod?.invoke(config) as? Int ?: config.hashCode()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             config.hashCode()
         }
     }
@@ -301,7 +300,7 @@ class VolumeUserService : IVolumeService.Stub() {
     private fun getClientUid(config: AudioPlaybackConfiguration): Int {
         return try {
             getClientUidMethod?.invoke(config) as? Int ?: -1
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             -1
         }
     }
@@ -309,7 +308,7 @@ class VolumeUserService : IVolumeService.Stub() {
     private fun getClientPid(config: AudioPlaybackConfiguration): Int {
         return try {
             getClientPidMethod?.invoke(config) as? Int ?: -1
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             -1
         }
     }
@@ -319,7 +318,7 @@ class VolumeUserService : IVolumeService.Stub() {
             val method = AudioPlaybackConfiguration::class.java.getDeclaredMethod("getPlayerState")
             method.isAccessible = true
             method.invoke(config) as? Int ?: 0
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             0
         }
     }

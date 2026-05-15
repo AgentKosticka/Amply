@@ -61,7 +61,7 @@ class ShizukuRepository(private val context: Context) {
         return try {
             context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
             true
-        } catch (e: PackageManager.NameNotFoundException) {
+        } catch (_: PackageManager.NameNotFoundException) {
             false
         }
     }
@@ -72,7 +72,7 @@ class ShizukuRepository(private val context: Context) {
     fun isShizukuRunning(): Boolean {
         return try {
             Shizuku.pingBinder()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -203,7 +203,7 @@ class ShizukuRepository(private val context: Context) {
 
         for (serviceName in serviceNames) {
             val result = executeShellCommand("dumpsys $serviceName")
-            if (result != null && result.isNotBlank() && !result.contains("Can't find service")) {
+            if (!result.isNullOrBlank() && !result.contains("Can't find service")) {
                 Log.d(TAG, "Successfully got output from: $serviceName")
                 return result
             }

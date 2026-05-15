@@ -2,13 +2,5 @@
 <resources>
     <!-- Nothing OS Color Palette -->
     <color name="nothing_black">#000000</color>
-    <color name="nothing_white">#FFFFFF</color>
-    <color name="nothing_red">#D71920</color>
     <color name="nothing_grey_container">#1A1A1A</color>
-    <color name="nothing_grey_dim">#404040</color>
-    <color name="nothing_grey_medium">#808080</color>
-
-    <!-- System -->
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
 </resources>

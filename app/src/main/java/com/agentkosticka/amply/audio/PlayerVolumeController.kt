@@ -1,11 +1,9 @@
 package com.agentkosticka.amply.audio
 
-import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
-import android.os.Build
 import android.util.Log
 import com.agentkosticka.amply.shizuku.ShizukuRepository
 import java.lang.reflect.Method
@@ -62,7 +60,6 @@ class PlayerVolumeController(
      *
      * @return List of ActivePlayer objects with volume control capability
      */
-    @SuppressLint("DiscouragedPrivateApi")
     fun getActivePlayers(): List<ActivePlayer> {
         val players = mutableListOf<ActivePlayer>()
 
@@ -115,11 +112,7 @@ class PlayerVolumeController(
                     val playerProxy = getPlayerProxy(config)
 
                     // Get player state
-                    val playerState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        getPlayerState(config)
-                    } else {
-                        1 // Assume started on older versions
-                    }
+                    val playerState = getPlayerState(config)
 
                     // Log full config info for debugging
                     Log.d(TAG, "Config (local): piid=$piid, uid=$clientUid, session=$sessionId, " +
@@ -156,7 +149,6 @@ class PlayerVolumeController(
      * Initialize reflection methods for PlayerProxy access
      * Tries multiple method signatures for compatibility across Android versions
      */
-    @SuppressLint("DiscouragedPrivateApi", "PrivateApi")
     private fun initializeReflection() {
         try {
             val apcClass = AudioPlaybackConfiguration::class.java
@@ -166,7 +158,7 @@ class PlayerVolumeController(
                 getPlayerProxyMethod = apcClass.getDeclaredMethod("getPlayerProxy")
                 getPlayerProxyMethod?.isAccessible = true
                 Log.d(TAG, "Found getPlayerProxy method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getPlayerProxy method not found")
             }
 
@@ -175,7 +167,7 @@ class PlayerVolumeController(
                 getClientUidMethod = apcClass.getDeclaredMethod("getClientUid")
                 getClientUidMethod?.isAccessible = true
                 Log.d(TAG, "Found getClientUid method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getClientUid method not found")
             }
 
@@ -184,7 +176,7 @@ class PlayerVolumeController(
                 getClientPidMethod = apcClass.getDeclaredMethod("getClientPid")
                 getClientPidMethod?.isAccessible = true
                 Log.d(TAG, "Found getClientPid method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getClientPid method not found")
             }
 
@@ -193,7 +185,7 @@ class PlayerVolumeController(
                 getPlayerInterfaceIdMethod = apcClass.getDeclaredMethod("getPlayerInterfaceId")
                 getPlayerInterfaceIdMethod?.isAccessible = true
                 Log.d(TAG, "Found getPlayerInterfaceId method")
-            } catch (e: NoSuchMethodException) {
+            } catch (_: NoSuchMethodException) {
                 Log.w(TAG, "getPlayerInterfaceId method not found")
             }
 
@@ -211,13 +203,13 @@ class PlayerVolumeController(
                     setVolumeMethod = playerProxyClass.getDeclaredMethod("setVolume", Float::class.javaPrimitiveType)
                     setVolumeMethod?.isAccessible = true
                     Log.d(TAG, "Found setVolume(float) method")
-                } catch (e: NoSuchMethodException) {
+                } catch (_: NoSuchMethodException) {
                     // Try Float wrapper class
                     try {
                         setVolumeMethod = playerProxyClass.getDeclaredMethod("setVolume", Float::class.java)
                         setVolumeMethod?.isAccessible = true
                         Log.d(TAG, "Found setVolume(Float) method")
-                    } catch (e2: NoSuchMethodException) {
+                    } catch (_: NoSuchMethodException) {
                         Log.w(TAG, "setVolume(float) not found")
                     }
                 }
@@ -231,7 +223,7 @@ class PlayerVolumeController(
                     )
                     setVolumeStereoMethod?.isAccessible = true
                     Log.d(TAG, "Found setVolume(float, float) method")
-                } catch (e: NoSuchMethodException) {
+                } catch (_: NoSuchMethodException) {
                     Log.w(TAG, "setVolume(float, float) not found")
                 }
 
@@ -253,7 +245,6 @@ class PlayerVolumeController(
     /**
      * Get PlayerProxy from AudioPlaybackConfiguration via reflection
      */
-    @SuppressLint("DiscouragedPrivateApi")
     private fun getPlayerProxy(config: AudioPlaybackConfiguration): Any? {
         return try {
             val proxy = getPlayerProxyMethod?.invoke(config)
@@ -269,7 +260,6 @@ class PlayerVolumeController(
     /**
      * Get session ID from AudioPlaybackConfiguration
      */
-    @SuppressLint("DiscouragedPrivateApi")
     private fun getSessionId(config: AudioPlaybackConfiguration): Int {
         return try {
             // Try getAudioSessionId method (available in some versions)
@@ -277,17 +267,9 @@ class PlayerVolumeController(
                 .getDeclaredMethod("getAudioSessionId")
             method.isAccessible = true
             method.invoke(config) as? Int ?: 0
-        } catch (e: NoSuchMethodException) {
-            // Fallback: try to get from audio attributes or use hashcode
-            try {
-                val sessionIdField = AudioPlaybackConfiguration::class.java
-                    .getDeclaredField("mSessionId")
-                sessionIdField.isAccessible = true
-                sessionIdField.getInt(config)
-            } catch (e2: Exception) {
-                config.hashCode() // Use hashcode as fallback ID
-            }
-        } catch (e: Exception) {
+        } catch (_: NoSuchMethodException) {
+            config.hashCode()
+        } catch (_: Exception) {
             config.hashCode()
         }
     }
@@ -295,7 +277,6 @@ class PlayerVolumeController(
     /**
      * Get player interface ID (piid) from AudioPlaybackConfiguration
      */
-    @SuppressLint("DiscouragedPrivateApi")
     private fun getPlayerInterfaceId(config: AudioPlaybackConfiguration): Int {
         // Try cached method first
         if (getPlayerInterfaceIdMethod != null) {
@@ -309,17 +290,6 @@ class PlayerVolumeController(
             }
         }
 
-        // Fallback: try field access
-        try {
-            val piidField = AudioPlaybackConfiguration::class.java
-                .getDeclaredField("mPlayerIId")
-            piidField.isAccessible = true
-            return piidField.getInt(config)
-        } catch (e: Exception) {
-            Log.w(TAG, "mPlayerIId field access failed: ${e.message}")
-        }
-
-        // Use hashcode as last resort
         return config.hashCode()
     }
 
@@ -327,7 +297,6 @@ class PlayerVolumeController(
      * Get client UID from AudioPlaybackConfiguration
      * Uses VolumeManager approach: Try PID first, then map to UID via ActivityManager
      */
-    @SuppressLint("DiscouragedPrivateApi")
     private fun getClientUid(config: AudioPlaybackConfiguration): Int {
         // ================================================
         // APPROACH 1: Try getClientUid directly
@@ -388,38 +357,6 @@ class PlayerVolumeController(
             Log.w(TAG, "getClientPidMethod is null")
         }
 
-        // ================================================
-        // APPROACH 3: Field access fallbacks
-        // ================================================
-        try {
-            val uidField = AudioPlaybackConfiguration::class.java
-                .getDeclaredField("mClientUid")
-            uidField.isAccessible = true
-            val uid = uidField.getInt(config)
-            if (uid > 0) {
-                Log.d(TAG, "Got UID via mClientUid field: $uid")
-                return uid
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "mClientUid field access failed: ${e.message}")
-        }
-
-        try {
-            val pidField = AudioPlaybackConfiguration::class.java
-                .getDeclaredField("mClientPid")
-            pidField.isAccessible = true
-            val pid = pidField.getInt(config)
-            if (pid > 0) {
-                val uid = mapPidToUid(pid)
-                if (uid > 0) {
-                    Log.d(TAG, "Got UID via mClientPid field mapping: $uid")
-                    return uid
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "mClientPid field access failed: ${e.message}")
-        }
-
         return -1 // Return -1 to indicate failure
     }
 
@@ -427,7 +364,6 @@ class PlayerVolumeController(
      * Map a PID to UID using ActivityManager.getRunningAppProcesses()
      * This is the VolumeManager approach
      */
-    @Suppress("DEPRECATION")
     private fun mapPidToUid(pid: Int): Int {
         try {
             val processes = activityManager.runningAppProcesses ?: return -1
@@ -448,14 +384,13 @@ class PlayerVolumeController(
      * Get player state from AudioPlaybackConfiguration (API 28+)
      * States: 0=idle, 1=configured, 2=started, 3=paused, 4=stopped, 5=released
      */
-    @SuppressLint("DiscouragedPrivateApi")
     private fun getPlayerState(config: AudioPlaybackConfiguration): Int {
         return try {
             val method = AudioPlaybackConfiguration::class.java
                 .getDeclaredMethod("getPlayerState")
             method.isAccessible = true
             method.invoke(config) as? Int ?: 0
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Assume started if we can't get state
             2
         }
@@ -482,7 +417,6 @@ class PlayerVolumeController(
      * @param volume Volume level from 0.0 (mute) to 1.0 (full)
      * @return true if volume was set successfully
      */
-    @SuppressLint("DiscouragedPrivateApi")
     fun setPlayerVolume(playerProxy: Any?, volume: Float): Boolean {
         if (playerProxy == null) {
             Log.w(TAG, "Cannot set volume: playerProxy is null")

@@ -2,7 +2,7 @@ package com.agentkosticka.amply.ui.setup
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.agentkosticka.amply.data.PreferencesManager
@@ -19,8 +19,9 @@ import kotlinx.coroutines.launch
 class SetupViewModel(
     private val shizukuRepository: ShizukuRepository,
     private val preferencesManager: PreferencesManager,
-    private val context: Context
+    context: Context
 ) : ViewModel() {
+    private val appContext = context.applicationContext
 
     private val _currentPage = MutableStateFlow(0)
     val currentPage: StateFlow<Int> = _currentPage.asStateFlow()
@@ -44,20 +45,20 @@ class SetupViewModel(
      */
     fun openShizukuDownload() {
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("https://github.com/RikkaApps/Shizuku/releases")
+            data = "https://github.com/RikkaApps/Shizuku/releases".toUri()
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(intent)
+        appContext.startActivity(intent)
     }
 
     /**
      * Opens the Shizuku app (to start the service)
      */
     fun openShizukuApp() {
-        val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+        val intent = appContext.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
         if (intent != null) {
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            context.startActivity(intent)
+            appContext.startActivity(intent)
         }
     }
 
