@@ -60,6 +60,7 @@ private val ExpandedPillWidth = 216.dp
 private val PanelSpacing = 16.dp
 private val ExpandControlHeight = 48.dp
 private val ExpandControlIconSize = 16.dp
+private val ExpandControlSideInset = (CollapsedPillWidth - ExpandControlHeight) / 2
 
 private data class OverlayStreamVolume(
     val streamType: Int,
@@ -222,29 +223,9 @@ fun VolumeOverlay(
             animationSpec = tween(200, easing = FastOutSlowInEasing)
         ) + fadeOut(animationSpec = tween(150))
     ) {
-        // Layout: pill stays stable; side panel slides as a whole without resizing its contents.
-        val containerTargetWidth = if (expandToStart) {
-            ExpandedPillWidth
-        } else {
-            if (
-                isExpanded ||
-                panelTransitionState.currentState ||
-                panelTransitionState.targetState
-            ) {
-                ExpandedPillWidth
-            } else {
-                CollapsedPillWidth
-            }
-        }
-        val containerWidth by animateDpAsState(
-            targetValue = containerTargetWidth,
-            animationSpec = tween(250, easing = FastOutSlowInEasing),
-            label = "overlayContainerWidth"
-        )
-
         Column(
             modifier = Modifier
-                .width(containerWidth)
+                .width(ExpandedPillWidth)
                 .pointerInput(isExpanded, expandToStart) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -310,7 +291,7 @@ private fun MainVolumePill(
         label = "mainPillWidth"
     )
     val arrowWidth by animateDpAsState(
-        targetValue = if (isExpanded) ExpandedPillWidth - 12.dp else ExpandControlHeight,
+        targetValue = if (isExpanded) ExpandedPillWidth - (ExpandControlSideInset * 2) else ExpandControlHeight,
         animationSpec = tween(250, easing = FastOutSlowInEasing),
         label = "expandArrowWidth"
     )
