@@ -3,7 +3,6 @@ package com.agentkosticka.amply.ui.overlay
 import android.util.Log
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
@@ -33,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -45,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.ui.theme.NothingColors
 
 private const val TAG = "VolumeOverlay"
@@ -61,16 +61,22 @@ fun VolumeOverlay(
     visible: Boolean = true,
     iconType: String = "MUSIC",
     sessions: List<AudioSession> = emptyList(),
+    expandedSessions: List<AudioSession> = sessions,
     focusedApp: AudioSession? = null,
+    overlaySide: OverlaySide = OverlaySide.LEFT,
     onVolumeChange: (Int) -> Unit = {},
-    onSessionVolumeChange: (Int, Float) -> Unit = { _, _ -> },
+    onSessionVolumeChange: (AudioSession, Float) -> Unit = { _, _ -> },
     onMuteToggle: () -> Unit = {},
     onInteraction: () -> Unit = {},
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
-    val hasActiveSessions = sessions.isNotEmpty()
+    val hasActiveSessions = sessions.isNotEmpty() || expandedSessions.isNotEmpty()
+    val expandToStart = overlaySide == OverlaySide.RIGHT
+    val panelTransitionState = remember {
+        MutableTransitionState(false)
+    }
     val pillTransitionState = remember {
         MutableTransitionState(false).apply {
             targetState = visible
@@ -84,94 +90,133 @@ fun VolumeOverlay(
         }
     }
 
+    LaunchedEffect(isExpanded, hasActiveSessions) {
+        panelTransitionState.targetState = isExpanded && hasActiveSessions
+    }
+
     // Chevron rotation animation
     val chevronRotation by animateFloatAsState(
-        targetValue = if (isExpanded) 180f else 0f,
+        targetValue = if (expandToStart) {
+            if (isExpanded) 0f else 180f
+        } else {
+            if (isExpanded) 180f else 0f
+        },
         animationSpec = tween(250, easing = FastOutSlowInEasing),
         label = "chevronRotation"
     )
 
-    // Layout: Row with pill on left, per-app controls on right (side-expanding)
-    Row(
-        modifier = Modifier.wrapContentSize(),
-        horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.Top
+    val pillContent: @Composable () -> Unit = {
+        MainVolumePill(
+            currentVolume = currentVolume,
+            maxVolume = maxVolume,
+            iconType = iconType,
+            hasActiveSessions = hasActiveSessions,
+            isExpanded = isExpanded,
+            chevronRotation = chevronRotation,
+            onVolumeChange = onVolumeChange,
+            onMuteToggle = onMuteToggle,
+            onExpandToggle = {
+                isExpanded = !isExpanded
+                onInteraction()
+            },
+            onInteraction = onInteraction
+        )
+    }
+
+    val panelBody: @Composable () -> Unit = {
+        AmplyPanel(
+            sessions = sessions,
+            expandedSessions = expandedSessions,
+            focusedApp = focusedApp,
+            onSessionVolumeChange = { session, volume ->
+                Log.d(TAG, "Session volume change: sessionId=${session.sessionId}, volume=$volume")
+                onInteraction()
+                onSessionVolumeChange(session, volume)
+            },
+            onClose = {
+                isExpanded = false
+                onInteraction()
+            },
+            onTouchStart = onTouchStart,
+            onTouchEnd = onTouchEnd
+        )
+    }
+
+    AnimatedVisibility(
+        visibleState = pillTransitionState,
+        enter = slideInHorizontally(
+            initialOffsetX = { if (expandToStart) it / 2 else -it / 2 },
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            )
+        ) + fadeIn(animationSpec = tween(200)),
+        exit = slideOutHorizontally(
+            targetOffsetX = { if (expandToStart) it / 2 else -it / 2 },
+            animationSpec = tween(200, easing = FastOutSlowInEasing)
+        ) + fadeOut(animationSpec = tween(150))
     ) {
-        // Main Volume Pill
-        AnimatedVisibility(
-            visibleState = pillTransitionState,
-            enter = slideInHorizontally(
-                initialOffsetX = { -it / 2 },
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium
-                )
-            ) + scaleIn(
-                initialScale = 0.88f,
-                transformOrigin = TransformOrigin(0f, 0.5f),
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium
-                )
-            ) + fadeIn(animationSpec = tween(200)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { -it / 2 },
-                animationSpec = tween(200, easing = FastOutSlowInEasing)
-            ) + scaleOut(
-                targetScale = 0.88f,
-                transformOrigin = TransformOrigin(0f, 0.5f),
-                animationSpec = tween(200, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(150))
+        // Layout: pill stays stable; side panel slides as a whole without resizing its contents.
+        Row(
+            modifier = Modifier.wrapContentSize(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.Top
         ) {
-            MainVolumePill(
-                currentVolume = currentVolume,
-                maxVolume = maxVolume,
-                iconType = iconType,
-                hasActiveSessions = hasActiveSessions,
-                isExpanded = isExpanded,
-                chevronRotation = chevronRotation,
-                onVolumeChange = onVolumeChange,
-                onMuteToggle = onMuteToggle,
-                onExpandToggle = {
-                    isExpanded = !isExpanded
-                    onInteraction()
-                },
-                onInteraction = onInteraction
-            )
-        }
-
-        // Amply Panel (expands to the right, side-by-side)
-        AnimatedVisibility(
-            visible = isExpanded && hasActiveSessions,
-            enter = slideInHorizontally(
-                initialOffsetX = { -it },
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium
-                )
-            ) + fadeIn(animationSpec = tween(200)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { -it },
-                animationSpec = tween(200, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(150))
-        ) {
-            Spacer(modifier = Modifier.width(10.dp))
-
-            AmplyPanel(
-                sessions = sessions,
-                focusedApp = focusedApp,
-                onSessionVolumeChange = { sessionId, volume ->
-                    Log.d(TAG, "Session volume change: sessionId=$sessionId, volume=$volume")
-                    onInteraction()
-                    onSessionVolumeChange(sessionId, volume)
-                },
-                onClose = {
-                    isExpanded = false
-                    onInteraction()
-                },
-                onTouchStart = onTouchStart,
-                onTouchEnd = onTouchEnd
-            )
+            if (expandToStart) {
+                Box(
+                    modifier = Modifier
+                        .width(if (hasActiveSessions) 274.dp else 54.dp)
+                        .wrapContentHeight()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        AnimatedVisibility(
+                            visibleState = panelTransitionState,
+                            enter = slideInHorizontally(
+                                initialOffsetX = { it },
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMedium
+                                )
+                            ) + fadeIn(animationSpec = tween(200)),
+                            exit = slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(200, easing = FastOutSlowInEasing)
+                            ) + fadeOut(animationSpec = tween(150))
+                        ) {
+                            panelBody()
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        pillContent()
+                    }
+                }
+            } else {
+                pillContent()
+                AnimatedVisibility(
+                    visible = isExpanded && hasActiveSessions,
+                    enter = slideInHorizontally(
+                        initialOffsetX = { -it },
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    ) + fadeIn(animationSpec = tween(200)),
+                    exit = slideOutHorizontally(
+                        targetOffsetX = { -it },
+                        animationSpec = tween(200, easing = FastOutSlowInEasing)
+                    ) + fadeOut(animationSpec = tween(150))
+                ) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Spacer(modifier = Modifier.width(10.dp))
+                        panelBody()
+                    }
+                }
+            }
         }
     }
 }
@@ -313,13 +358,17 @@ private fun MainVolumePill(
 @Composable
 private fun AmplyPanel(
     sessions: List<AudioSession>,
+    expandedSessions: List<AudioSession>,
     focusedApp: AudioSession?,
-    onSessionVolumeChange: (Int, Float) -> Unit,
+    onSessionVolumeChange: (AudioSession, Float) -> Unit,
     onClose: () -> Unit,
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
+    var showExpanded by remember { mutableStateOf(false) }
+    val displayedSessions = if (showExpanded) expandedSessions else sessions
+    val hasMoreApps = expandedSessions.size > sessions.size
 
     Column(
         modifier = Modifier
@@ -385,13 +434,13 @@ private fun AmplyPanel(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            sessions.forEach { session ->
+            displayedSessions.forEach { session ->
                 AppVolumeRow(
                     session = session,
                     onVolumeChange = { newVolume ->
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         Log.d(TAG, "AppVolumeRow: ${session.appName} volume=$newVolume")
-                        onSessionVolumeChange(session.sessionId, newVolume)
+                        onSessionVolumeChange(session, newVolume)
                     }
                 )
             }
@@ -400,7 +449,7 @@ private fun AmplyPanel(
         // Footer
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "${sessions.size} ${if (sessions.size == 1) "app" else "apps"}",
+            text = "${displayedSessions.size} ${if (displayedSessions.size == 1) "app" else "apps"}",
             color = NothingColors.GreyDim,
             fontSize = 9.sp
         )
@@ -409,7 +458,7 @@ private fun AmplyPanel(
 
 /**
  * Individual app volume row
- * OPTIMIZED: Debounced volume changes to reduce IPC calls
+ * Updates the backend immediately on every drag or tap.
  */
 @Composable
 private fun AppVolumeRow(
@@ -418,12 +467,6 @@ private fun AppVolumeRow(
 ) {
     var localVolume by remember(session.sessionId) { mutableStateOf(session.volume) }
     val volumePercent = (localVolume * 100).toInt()
-    
-    // Debounce: Only trigger actual volume change after 80ms of no movement
-    LaunchedEffect(localVolume) {
-        delay(80L)
-        onVolumeChange(localVolume)
-    }
 
     val backgroundColor by animateColorAsState(
         Color(0xFF262626),
@@ -497,12 +540,12 @@ private fun AppVolumeRow(
             )
         }
 
-        // Horizontal slider - only updates local state, debounce handles API call
+        // Horizontal slider - updates local state and backend immediately
         HorizontalDotSlider(
             volume = localVolume,
             onVolumeChange = { newVolume ->
                 localVolume = newVolume
-                // NOTE: Actual API call is debounced via LaunchedEffect above
+                onVolumeChange(newVolume)
             },
             modifier = Modifier.fillMaxWidth()
         )

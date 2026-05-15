@@ -28,6 +28,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import kotlinx.coroutines.*
@@ -82,6 +83,9 @@ object OverlayManager {
     private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
     private val currentSessions = mutableStateOf<List<AudioSession>>(emptyList())
+    private val expandedSessions = mutableStateOf<List<AudioSession>>(emptyList())
+    private val currentOverlaySide = mutableStateOf(OverlaySide.LEFT)
+    private val currentOverlayVerticalFraction = mutableStateOf(0.5f)
     
     // Phase 3.5: Smart Focus - the foreground app if detected
     private val focusedApp = mutableStateOf<AudioSession?>(null)
@@ -135,8 +139,11 @@ object OverlayManager {
         volume: Int,
         newIconType: String = "MUSIC",
         sessions: List<AudioSession> = emptyList(),
+        expandedSessions: List<AudioSession> = sessions,
         focusedAppSession: AudioSession? = null,
-        volumeReceiver: ResultReceiver? = null
+        volumeReceiver: ResultReceiver? = null,
+        overlaySide: OverlaySide = OverlaySide.LEFT,
+        overlayVerticalFraction: Float = 0.5f
     ) {
         removeJob?.cancel()
         removeJob = null
@@ -158,14 +165,19 @@ object OverlayManager {
         isMuted.value = (volume == 0)
         iconType.value = newIconType
         currentSessions.value = sessions
+        this.expandedSessions.value = expandedSessions
         focusedApp.value = focusedAppSession
         this.volumeReceiver = volumeReceiver // Update the receiver property
+        currentOverlaySide.value = overlaySide
+        currentOverlayVerticalFraction.value = overlayVerticalFraction.coerceIn(0f, 1f)
         
         // DEBUG: Verify state was set
         Log.d("OverlayManager", "State updated: currentSessions.value has ${currentSessions.value.size} items")
 
         if (overlayContainer == null) {
             createOverlay(context)
+        } else {
+            updateOverlayPosition(context)
         }
         overlayVisible.value = true
 
@@ -233,18 +245,23 @@ object OverlayManager {
                     visible = overlayVisible.value,
                     iconType = iconType.value,
                     sessions = currentSessions.value,
+                    expandedSessions = expandedSessions.value,
                     focusedApp = focusedApp.value, // Phase 3.5: Smart Focus
+                    overlaySide = currentOverlaySide.value,
                     onVolumeChange = { newVolume ->
                         setVolume(newVolume)
                     },
-                    onSessionVolumeChange = { sessionId, volume ->
+                    onSessionVolumeChange = { session, volume ->
                         // Phase 3: Use ResultReceiver to send data back to Service
                         Log.d(
                             "OverlayManager",
-                            "Sending volume change via ResultReceiver: id=$sessionId vol=$volume"
+                            "Sending volume change via ResultReceiver: id=${session.sessionId} pkg=${session.packageName} vol=$volume"
                         )
-                        val bundle = Bundle().apply { putFloat("volume", volume) }
-                        volumeReceiver?.send(sessionId, bundle)
+                        val bundle = Bundle().apply {
+                            putFloat("volume", volume)
+                            putString("package_name", session.packageName)
+                        }
+                        volumeReceiver?.send(session.sessionId, bundle)
                             ?: Log.w("OverlayManager", "ResultReceiver is null!")
                     },
                     onMuteToggle = {
@@ -283,11 +300,7 @@ object OverlayManager {
                     @Suppress("DEPRECATION")
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            x = 16 // 16dp from left edge
-            y = 0  // Centered vertically
-        }
+        ).applyPosition(context)
 
         // Step 10: Add CONTAINER to window manager
         try {
@@ -406,5 +419,31 @@ object OverlayManager {
         managerScope.cancel()
         windowManager = null
         audioManager = null
+    }
+
+    private fun updateOverlayPosition(context: Context) {
+        val container = overlayContainer ?: return
+        val params = container.layoutParams as? WindowManager.LayoutParams ?: return
+        params.applyPosition(context)
+        try {
+            windowManager?.updateViewLayout(container, params)
+        } catch (e: Exception) {
+            Log.w("OverlayManager", "Failed to update overlay position", e)
+        }
+    }
+
+    private fun WindowManager.LayoutParams.applyPosition(context: Context): WindowManager.LayoutParams {
+        val margin = (16 * context.resources.displayMetrics.density).toInt()
+        val approximateOverlayHeight = (220 * context.resources.displayMetrics.density).toInt()
+        val screenHeight = context.resources.displayMetrics.heightPixels
+        val maxY = (screenHeight - approximateOverlayHeight).coerceAtLeast(0)
+
+        gravity = when (currentOverlaySide.value) {
+            OverlaySide.LEFT -> Gravity.START or Gravity.TOP
+            OverlaySide.RIGHT -> Gravity.END or Gravity.TOP
+        }
+        x = margin
+        y = (maxY * currentOverlayVerticalFraction.value).toInt().coerceIn(0, maxY)
+        return this
     }
 }

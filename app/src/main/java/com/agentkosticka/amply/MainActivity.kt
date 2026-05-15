@@ -22,6 +22,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.agentkosticka.amply.R
 import com.agentkosticka.amply.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.ShizukuRepository
+import com.agentkosticka.amply.ui.settings.SettingsDashboard
 import com.agentkosticka.amply.ui.setup.SetupViewModel
 import com.agentkosticka.amply.ui.setup.SetupWizardScreen
 import com.agentkosticka.amply.ui.theme.AmplyTheme
@@ -77,73 +78,11 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun MainAppScreen() {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NothingColors.Black)
-                .padding(32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_amply_logo),
-                    contentDescription = "Amply logo",
-                    modifier = Modifier.size(96.dp)
-                )
-
-                // App Title with red accent - Nothing style
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "AMPLY",
-                        style = MaterialTheme.typography.displayMedium,
-                        color = NothingColors.White
-                    )
-                    Text(
-                        text = "(1)",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = NothingColors.Red
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "ACTIVATE VOLUME OVERLAY",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = NothingColors.GreyMedium
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Step 1: Overlay Permission
-                SetupStep(
-                    number = "1",
-                    title = "GRANT OVERLAY PERMISSION",
-                    description = "Allows Amply to show volume controls on top of other apps",
-                    onClick = { requestOverlayPermission() }
-                )
-
-                // Step 2: Accessibility Service
-                SetupStep(
-                    number = "2",
-                    title = "ENABLE VOLUME KEY DETECTION",
-                    description = "Allows Amply to detect volume button presses",
-                    onClick = { openAccessibilitySettings() }
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Text(
-                    text = "After completing both steps,\npress volume buttons to see the overlay!",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = NothingColors.GreyDim,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
+        SettingsDashboard(
+            preferencesManager = preferencesManager,
+            onOverlayPermissionClick = { requestOverlayPermission() },
+            onAccessibilityClick = { openAccessibilitySettings() }
+        )
     }
 
     @Composable

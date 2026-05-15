@@ -14,6 +14,8 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.agentkosticka.amply.audio.AudioSessionManager
+import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.data.PreferencesManager
 import com.agentkosticka.amply.data.toParcelable
 import com.agentkosticka.amply.shizuku.ShizukuRepository
 import kotlinx.coroutines.*
@@ -48,6 +50,9 @@ class VolumeKeyService : AccessibilityService() {
     // Phase 3: Audio session management
     private var shizukuRepository: ShizukuRepository? = null
     private var audioSessionManager: AudioSessionManager? = null
+    private var preferencesManager: PreferencesManager? = null
+    private var overlaySide: OverlaySide = OverlaySide.LEFT
+    private var overlayVerticalFraction: Float = 0.5f
 
     // Audio device callback for dynamic icon updates
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -101,9 +106,20 @@ class VolumeKeyService : AccessibilityService() {
 
         // Phase 3: Initialize audio session management
         try {
+            preferencesManager = PreferencesManager(this)
             shizukuRepository = ShizukuRepository(this)
-            audioSessionManager = AudioSessionManager(this, shizukuRepository!!)
+            audioSessionManager = AudioSessionManager(this, shizukuRepository!!, preferencesManager!!)
             audioSessionManager?.startPolling()
+            serviceScope.launch {
+                preferencesManager?.overlaySide?.collect { side ->
+                    overlaySide = side
+                }
+            }
+            serviceScope.launch {
+                preferencesManager?.overlayVerticalFraction?.collect { fraction ->
+                    overlayVerticalFraction = fraction
+                }
+            }
             Log.d(TAG, "AudioSessionManager initialized and polling started")
             
             // Set up per-app volume callback
@@ -229,10 +245,11 @@ class VolumeKeyService : AccessibilityService() {
         ensureCallbackRegistered()
         
         // Get current sessions from AudioSessionManager
-        val sessions = audioSessionManager?.getCurrentSessions() ?: emptyList()
+        val sessions = audioSessionManager?.getDefaultOverlaySessions() ?: emptyList()
+        val expandedSessions = audioSessionManager?.getExpandedOverlaySessions() ?: sessions
         
         // DEBUG: Log session count
-        Log.d(TAG, "showOverlay: volume=$volume, sessions=${sessions.size}, foreground=$foregroundPackage")
+        Log.d(TAG, "showOverlay: volume=$volume, sessions=${sessions.size}, expanded=${expandedSessions.size}, foreground=$foregroundPackage")
         sessions.forEachIndexed { index, session ->
             Log.d(TAG, "  Session[$index]: ${session.appName} (uid=${session.uid}, pkg=${session.packageName})")
         }
@@ -256,6 +273,11 @@ class VolumeKeyService : AccessibilityService() {
             } else {
                 Log.w(TAG, "  WARNING: No sessions to pass to overlay!")
             }
+
+            if (expandedSessions.isNotEmpty()) {
+                val parcelableExpandedSessions = ArrayList(expandedSessions.map { it.toParcelable() })
+                putParcelableArrayListExtra(OverlayService.EXTRA_EXPANDED_SESSIONS, parcelableExpandedSessions)
+            }
             
             // Phase 3.5: Pass focused app for Smart Focus
             focusedApp?.let {
@@ -267,14 +289,17 @@ class VolumeKeyService : AccessibilityService() {
                 override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
                     val sessionId = resultCode // We use resultCode as sessionId
                     val newVolume = resultData?.getFloat("volume") ?: return
-                    Log.d(TAG, "VolumeReceiver: sessionId=$sessionId, volume=$newVolume")
+                    val packageName = resultData.getString("package_name")
+                    Log.d(TAG, "VolumeReceiver: sessionId=$sessionId, package=$packageName, volume=$newVolume")
                     
                     serviceScope.launch {
-                        audioSessionManager?.setSessionVolume(sessionId, newVolume)
+                        audioSessionManager?.setSessionVolume(sessionId, packageName, newVolume)
                     }
                 }
             }
             putExtra(OverlayService.EXTRA_VOLUME_RECEIVER, volumeReceiver)
+            putExtra(OverlayService.EXTRA_OVERLAY_SIDE, overlaySide.name)
+            putExtra(OverlayService.EXTRA_OVERLAY_VERTICAL_FRACTION, overlayVerticalFraction)
         }
         
         // Start the overlay service
@@ -291,6 +316,8 @@ class VolumeKeyService : AccessibilityService() {
             putExtra(OverlayService.EXTRA_VOLUME, volume)
             putExtra(OverlayService.EXTRA_MAX_VOLUME, maxVolume)
             putExtra(OverlayService.EXTRA_ICON_TYPE, currentIconType)
+            putExtra(OverlayService.EXTRA_OVERLAY_SIDE, overlaySide.name)
+            putExtra(OverlayService.EXTRA_OVERLAY_VERTICAL_FRACTION, overlayVerticalFraction)
         }
         startService(intent)
     }
@@ -329,7 +356,7 @@ class VolumeKeyService : AccessibilityService() {
         OverlayManager.setSessionVolumeCallback { sessionId, newVolume ->
             Log.d(TAG, "Per-app volume callback invoked: sessionId=$sessionId, volume=$newVolume")
             serviceScope.launch {
-                audioSessionManager?.setSessionVolume(sessionId, newVolume)
+                audioSessionManager?.setSessionVolume(sessionId, null, newVolume)
             }
         }
     }
