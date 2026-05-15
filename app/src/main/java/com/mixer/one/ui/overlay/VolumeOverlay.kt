@@ -377,19 +377,6 @@ private fun MixerPanel(
                     }
                 }
             }
-
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Close",
-                tint = NothingColors.GreyDim,
-                modifier = Modifier
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .clickable {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onClose()
-                    }
-            )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
