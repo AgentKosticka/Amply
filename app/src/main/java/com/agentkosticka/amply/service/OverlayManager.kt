@@ -84,6 +84,9 @@ private class OverlayFrameLayout(context: Context) : FrameLayout(context) {
  * CRITICAL FIX: Self-contained lifecycle and proper window token management
  */
 object OverlayManager {
+    private const val COLLAPSED_AUTO_HIDE_DELAY_MS = 2500L
+    private const val EXPANDED_AUTO_HIDE_DELAY_MS = 6000L
+
     private var windowManager: WindowManager? = null
     private var overlayContainerRef: WeakReference<FrameLayout>? = null
     private var composeView: ComposeView? = null
@@ -119,6 +122,7 @@ object OverlayManager {
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onSessionVolumeChangeCallback: ((Int, String?, Float) -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
+    private var isOverlayExpanded = false
 
     private val overlayContainer: FrameLayout?
         get() = overlayContainerRef?.get()
@@ -211,7 +215,7 @@ object OverlayManager {
         overlayVisible.value = true
 
         // Reset auto-hide timer
-        scheduleHide()
+        scheduleHide(currentAutoHideDelayMs())
     }
 
     /**
@@ -293,13 +297,17 @@ object OverlayManager {
                         toggleMute()
                     },
                     onInteraction = {
-                        scheduleHide() // Reset timer on interaction
+                        scheduleHide(currentAutoHideDelayMs()) // Reset timer on interaction
                     },
                     onTouchStart = {
                         cancelAutoHide() // Stop timer while user is touching
                     },
                     onTouchEnd = {
-                        scheduleHide(2500L) // Start timer when touch ends
+                        scheduleHide(currentAutoHideDelayMs()) // Start timer when touch ends
+                    },
+                    onExpandedChange = { expanded ->
+                        isOverlayExpanded = expanded
+                        scheduleHide(currentAutoHideDelayMs())
                     },
                     onDismissRequest = {
                         hide()
@@ -378,6 +386,7 @@ object OverlayManager {
         composeView = null
         currentWindowType = null
         overlayVisible.value = false
+        isOverlayExpanded = false
         removeJob = null
     }
 
@@ -429,9 +438,9 @@ object OverlayManager {
 
     /**
      * Schedule auto-hide after delay
-     * @param delayMs Delay in milliseconds before hiding (default 2500ms)
+     * @param delayMs Delay in milliseconds before hiding
      */
-    private fun scheduleHide(delayMs: Long = 2500L) {
+    private fun scheduleHide(delayMs: Long = COLLAPSED_AUTO_HIDE_DELAY_MS) {
         hideJob?.cancel()
         hideJob = managerScope.launch {
             delay(delayMs)
@@ -446,6 +455,9 @@ object OverlayManager {
         hideJob?.cancel()
         hideJob = null
     }
+
+    private fun currentAutoHideDelayMs(): Long =
+        if (isOverlayExpanded) EXPANDED_AUTO_HIDE_DELAY_MS else COLLAPSED_AUTO_HIDE_DELAY_MS
 
     /**
      * Check if overlay is showing

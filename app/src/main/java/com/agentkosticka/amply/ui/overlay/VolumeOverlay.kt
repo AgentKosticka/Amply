@@ -100,6 +100,7 @@ fun VolumeOverlay(
     onInteraction: () -> Unit = {},
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {},
+    onExpandedChange: (Boolean) -> Unit = {},
     onDismissRequest: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -133,6 +134,7 @@ fun VolumeOverlay(
         pillTransitionState.targetState = visible
         if (!visible) {
             isExpanded = false
+            onExpandedChange(false)
         }
     }
 
@@ -201,7 +203,9 @@ fun VolumeOverlay(
             },
             onMuteToggle = onMuteToggle,
             onExpandToggle = {
-                isExpanded = !isExpanded
+                val nextExpanded = !isExpanded
+                isExpanded = nextExpanded
+                onExpandedChange(nextExpanded)
                 onInteraction()
             },
             onInteraction = onInteraction
@@ -220,6 +224,7 @@ fun VolumeOverlay(
             },
             onClose = {
                 isExpanded = false
+                onExpandedChange(false)
                 onInteraction()
             },
             onTouchStart = onTouchStart,
