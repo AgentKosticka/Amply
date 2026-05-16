@@ -10,9 +10,7 @@ import android.util.LruCache
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
-import com.agentkosticka.amply.data.DumpsysParseResult
 import com.agentkosticka.amply.data.PreferencesManager
-import com.agentkosticka.amply.data.RawAudioSession
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.ShizukuRepository
 import com.agentkosticka.amply.shizuku.ShizukuVolumeManager
@@ -40,6 +38,7 @@ class AudioSessionManager(
         private const val TAG = "AudioSessionManager"
         private const val POLL_INTERVAL_MS = 1500L // Optimized: Real-time callback handles immediate updates
         private const val CACHE_SIZE = 50
+        private const val PLAYER_STATE_STARTED = 2
     }
 
     // NEW: ShizukuVolumeManager for privileged access via UserService
@@ -48,8 +47,6 @@ class AudioSessionManager(
     // Fallback: PlayerVolumeController for local reflection (usually returns -1 for uid)
     private val playerVolumeController = PlayerVolumeController(context, shizukuRepository)
 
-    // Fallback detector (dumpsys-based)
-    private val detector = AudioSessionDetector(context)
     private val packageManager: PackageManager = context.packageManager
     private val audioManager: AudioManager =
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -225,6 +222,7 @@ class AudioSessionManager(
         // ==============================================
         if (shizukuVolumeManager.isConnected.value) {
             val privilegedPlaybacks = shizukuVolumeManager.getActivePlaybacks()
+                .filter { it.state == PLAYER_STATE_STARTED }
 
             if (privilegedPlaybacks.isNotEmpty()) {
                 // Build UID-to-package map
@@ -244,6 +242,14 @@ class AudioSessionManager(
                 )
                 return
             }
+
+            _sessionState.value = AudioSessionState(
+                sessions = emptyList(),
+                globalVolume = globalVolume,
+                maxVolume = maxVolume,
+                timestamp = System.currentTimeMillis()
+            )
+            return
         }
 
         // ==============================================
@@ -291,62 +297,12 @@ class AudioSessionManager(
             }
         }
 
-        // ==============================================
-        // FALLBACK: Dumpsys-based detection (legacy)
-        // Used when PlayerVolumeController finds no players
-        // ==============================================
-        Log.d(TAG, "Falling back to dumpsys-based detection")
-
-        // Check if Shizuku is available for dumpsys
-        if (shizukuRepository.permissionState.value != ShizukuPermissionState.GRANTED) {
-            // No Shizuku = no sessions (single slider mode)
-            _sessionState.value = AudioSessionState(
-                sessions = emptyList(),
-                globalVolume = globalVolume,
-                maxVolume = maxVolume,
-                timestamp = System.currentTimeMillis()
-            )
-            return
-        }
-
-        // Try audio dumpsys
-        var rawSessions: List<RawAudioSession> = emptyList()
-        val audioOutput = shizukuRepository.dumpAudioFlinger()
-        if (audioOutput != null) {
-            val parseResult = detector.parseDumpsysOutput(audioOutput)
-            if (parseResult is DumpsysParseResult.Success && parseResult.sessions.isNotEmpty()) {
-                rawSessions = parseResult.sessions
-                Log.d(TAG, "Fallback: Got ${rawSessions.size} sessions from dumpsys")
-            }
-        }
-
-        // Try media_session as fallback
-        if (rawSessions.isEmpty()) {
-            val mediaOutput = shizukuRepository.dumpMediaSession()
-            if (mediaOutput != null) {
-                rawSessions = detector.parseMediaSessionOutput(mediaOutput)
-            }
-        }
-
-        // Build UID-to-package map
-        val uidPackageMap = shizukuRepository.getUidPackageMap()
-
-        // Enrich with app metadata
-        val enrichedSessions = rawSessions.mapNotNull { raw ->
-            enrichSessionWithMetadata(raw, uidPackageMap)
-        }
-        applyPersistedVolumes(enrichedSessions)
-
         _sessionState.value = AudioSessionState(
-            sessions = enrichedSessions,
+            sessions = emptyList(),
             globalVolume = globalVolume,
             maxVolume = maxVolume,
             timestamp = System.currentTimeMillis()
         )
-
-        if (enrichedSessions.isNotEmpty()) {
-            Log.d(TAG, "Fallback detected ${enrichedSessions.size} sessions")
-        }
     }
 
     /**
@@ -500,85 +456,6 @@ class AudioSessionManager(
     }
 
     /**
-     * Enrich raw session with app metadata (name, icon)
-     * Uses uidPackageMap (from Shizuku) as primary lookup, falls back to PackageManager
-     */
-    private fun enrichSessionWithMetadata(
-        raw: RawAudioSession,
-        uidPackageMap: Map<Int, String>
-    ): AudioSession? {
-        return try {
-            // Check cache first
-            val cached = appMetadataCache.get(raw.uid)
-            if (cached != null) {
-                Log.d(TAG, "Cache hit for UID ${raw.uid}: ${cached.appName}")
-                val persistedVolume = getPersistedVolume(cached.packageName, raw.uid)
-                recordSeenApp(cached.packageName, cached.appName, raw.uid, persistedVolume)
-                return AudioSession(
-                    sessionId = raw.sessionId,
-                    uid = raw.uid,
-                    packageName = cached.packageName,
-                    appName = cached.appName,
-                    appIcon = cached.appIcon,
-                    streamType = raw.streamType,
-                    volume = persistedVolume,
-                    lastSeenTimestamp = System.currentTimeMillis()
-                )
-            }
-
-            // Primary: Use UID package map from Shizuku (more reliable)
-            var packageName = uidPackageMap[raw.uid]
-            
-            // Fallback: Try PackageManager (may fail without QUERY_ALL_PACKAGES)
-            if (packageName == null) {
-                val packages = packageManager.getPackagesForUid(raw.uid)
-                packageName = packages?.firstOrNull()
-            }
-            
-            if (packageName == null) {
-                Log.w(TAG, "No package found for UID ${raw.uid}, skipping")
-                return null
-            }
-
-            // Get app info
-            val appInfo = packageManager.getApplicationInfo(packageName, 0)
-            val appName = packageManager.getApplicationLabel(appInfo).toString()
-            val appIcon = try {
-                packageManager.getApplicationIcon(packageName)
-            } catch (_: Exception) {
-                null
-            }
-
-            Log.d(TAG, "Enriched UID ${raw.uid}: $appName ($packageName)")
-
-            // Cache the metadata
-            appMetadataCache.put(
-                raw.uid,
-                AppMetadata(packageName, appName, appIcon)
-            )
-            val persistedVolume = getPersistedVolume(packageName, raw.uid)
-            recordSeenApp(packageName, appName, raw.uid, persistedVolume)
-
-            AudioSession(
-                sessionId = raw.sessionId,
-                uid = raw.uid,
-                packageName = packageName,
-                appName = appName,
-                appIcon = appIcon,
-                streamType = raw.streamType,
-                volume = persistedVolume,
-                lastSeenTimestamp = System.currentTimeMillis()
-            )
-        } catch (_: PackageManager.NameNotFoundException) {
-            Log.w(TAG, "Package not found for UID ${raw.uid}")
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "Error enriching session for UID ${raw.uid}", e)
-            null
-        }
-    }
-
-    /**
      * Get current session list (snapshot)
      */
     fun getCurrentSessions(): List<AudioSession> {
@@ -591,29 +468,8 @@ class AudioSessionManager(
             .filter { appSettingsCache[it.packageName]?.hiddenInOverlay != true }
         )
 
-    fun getExpandedOverlaySessions(now: Long = System.currentTimeMillis()): List<AudioSession> {
-        val active = _sessionState.value.sessions.associateBy { it.packageName }
-        val result = LinkedHashMap<String, AudioSession>()
-
-        active.values.forEach { session ->
-            if (appSettingsCache[session.packageName]?.hiddenInOverlay != true) {
-                result[session.packageName] = session
-            }
-        }
-
-        appSettingsCache.values
-            .asSequence()
-            .filter { !it.hiddenInOverlay }
-            .filter { it.isCustomized || now - it.lastSeenTimestamp <= 60_000L }
-            .sortedByDescending { it.lastSeenTimestamp }
-            .forEach { setting ->
-                if (!result.containsKey(setting.packageName)) {
-                    result[setting.packageName] = setting.toSyntheticSession()
-                }
-            }
-
-        return result.values.toList()
-    }
+    fun getExpandedOverlaySessions(): List<AudioSession> =
+        getDefaultOverlaySessions()
 
     /**
      * Check if any apps are currently playing audio
@@ -838,25 +694,4 @@ class AudioSessionManager(
         return compacted.values.toList()
     }
 
-    private fun AppSettings.toSyntheticSession(): AudioSession {
-        val icon = try {
-            packageManager.getApplicationIcon(packageName)
-        } catch (_: Exception) {
-            null
-        }
-
-        return AudioSession(
-            sessionId = syntheticSessionId(packageName),
-            uid = uid,
-            packageName = packageName,
-            appName = appName,
-            appIcon = icon,
-            streamType = AudioManager.STREAM_MUSIC,
-            volume = defaultVolume,
-            lastSeenTimestamp = lastSeenTimestamp
-        )
-    }
-
-    private fun syntheticSessionId(packageName: String): Int =
-        -kotlin.math.abs(packageName.hashCode()).coerceAtLeast(1)
 }

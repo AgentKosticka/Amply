@@ -180,7 +180,7 @@ fun SettingsDashboard(
             item {
                 SettingsPanel {
                     Text(
-                        text = if (appSettings.isEmpty()) "NO APPS SEEN YET" else "NO DEFAULT APPS RIGHT NOW",
+                        text = if (appSettings.isEmpty()) "NO APPS SEEN YET" else "NO APPS PLAYING RIGHT NOW",
                         style = MaterialTheme.typography.labelMedium,
                         color = NothingColors.GreyMedium
                     )
