@@ -114,8 +114,7 @@ fun VolumeOverlay(
     }
     val landscapeContainerWidth = measuredAvailableWidth
         .coerceAtLeast(ExpandedPillWidth)
-    val landscapePanelWidth = (landscapeContainerWidth - ExpandedPillWidth - PanelSpacing)
-        .coerceAtLeast(120.dp)
+    val landscapePanelWidth = ExpandedPillWidth
     val overlayContainerWidth = if (isLandscape) {
         landscapeContainerWidth
     } else {
