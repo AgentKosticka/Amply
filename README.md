@@ -4,8 +4,6 @@ Per-app volume control for Android, designed with Nothing OS aesthetics.
 
 Amply (1) intercepts hardware volume button presses and displays a custom overlay that allows independent volume control for each currently playing audio application. It uses Shizuku for privileged access without requiring root.
 
-<img width="2752" height="1536" alt="amply(1)-banner" src="https://github.com/user-attachments/assets/33eed5dc-a6b3-4e17-959a-b5828c4282ef" />
-
 ---
 
 ## Table of Contents
