@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.service
 
 import android.accessibilityservice.AccessibilityService
+import android.hardware.camera2.CameraManager
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -8,6 +9,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import kotlinx.coroutines.*
+import java.util.Locale
 
 /**
  * AccessibilityService that detects volume key presses
@@ -18,9 +20,45 @@ class VolumeKeyService : AccessibilityService() {
 
     companion object {
         private const val TAG = "VolumeKeyService"
+        private val VOLUME_KEY_CAMERA_PACKAGES = setOf(
+            "com.android.camera",
+            "com.android.camera2",
+            "com.google.android.GoogleCamera",
+            "com.google.android.apps.camera",
+            "com.nothing.camera",
+            "com.sec.android.app.camera",
+            "com.samsung.android.camera",
+            "com.oneplus.camera",
+            "com.oplus.camera",
+            "com.coloros.camera",
+            "com.motorola.camera",
+            "com.motorola.camera3",
+            "com.huawei.camera",
+            "com.hihonor.camera",
+            "com.miui.camera",
+            "org.lineageos.aperture",
+            "net.sourceforge.opencamera",
+            "com.motioncam"
+        )
+        private val VIDEO_CALL_PACKAGE_HINTS = setOf(
+            "meet",
+            "duo",
+            "zoom",
+            "teams",
+            "skype",
+            "whatsapp",
+            "messenger",
+            "telegram",
+            "discord",
+            "signal",
+            "facetime",
+            "videocall",
+            "videochat"
+        )
     }
 
     private var audioManager: AudioManager? = null
+    private var cameraManager: CameraManager? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Hold-to-repeat job
@@ -35,6 +73,7 @@ class VolumeKeyService : AccessibilityService() {
 
     // Phase 3.5: Smart Focus - track foreground app package
     private var foregroundPackage: String? = null
+    private val activeCameraIds = mutableSetOf<String>()
 
     // Audio device callback for dynamic icon updates
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -60,15 +99,29 @@ class VolumeKeyService : AccessibilityService() {
         }
     }
 
+    private val cameraAvailabilityCallback = object : CameraManager.AvailabilityCallback() {
+        override fun onCameraAvailable(cameraId: String) {
+            activeCameraIds.remove(cameraId)
+            Log.d(TAG, "Camera available: $cameraId, active=${activeCameraIds.isNotEmpty()}")
+        }
+
+        override fun onCameraUnavailable(cameraId: String) {
+            activeCameraIds.add(cameraId)
+            Log.d(TAG, "Camera unavailable/in use: $cameraId, active=${activeCameraIds.isNotEmpty()}")
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
 
         // Get real max volume from system
         maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 30
 
         // Register audio device callback
         audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
+        cameraManager?.registerAvailabilityCallback(mainExecutor, cameraAvailabilityCallback)
 
         // Initial icon type detection
         updateIconType()
@@ -96,6 +149,12 @@ class VolumeKeyService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent): Boolean {
         when (event.keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> {
+                if (shouldBypassForCamera()) {
+                    handleVolumeKeyUp()
+                    Log.d(TAG, "Bypassing volume up for foreground camera app: $foregroundPackage")
+                    return false
+                }
+
                 return when (event.action) {
                     KeyEvent.ACTION_DOWN -> {
                         handleVolumeKeyDown(isUp = true)
@@ -109,6 +168,12 @@ class VolumeKeyService : AccessibilityService() {
                 }
             }
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                if (shouldBypassForCamera()) {
+                    handleVolumeKeyUp()
+                    Log.d(TAG, "Bypassing volume down for foreground camera app: $foregroundPackage")
+                    return false
+                }
+
                 return when (event.action) {
                     KeyEvent.ACTION_DOWN -> {
                         handleVolumeKeyDown(isUp = false)
@@ -124,6 +189,26 @@ class VolumeKeyService : AccessibilityService() {
         }
 
         return false // Let other keys pass through
+    }
+
+    private fun shouldBypassForCamera(): Boolean {
+        val packageName = foregroundPackage ?: return false
+        return activeCameraIds.isNotEmpty() && isVolumeKeyCameraApp(packageName)
+    }
+
+    private fun isVolumeKeyCameraApp(packageName: String): Boolean {
+        if (packageName in VOLUME_KEY_CAMERA_PACKAGES) return true
+
+        val normalizedPackage = packageName.lowercase(Locale.US)
+        if (VIDEO_CALL_PACKAGE_HINTS.any { it in normalizedPackage }) return false
+
+        return try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            val appName = packageManager.getApplicationLabel(appInfo).toString().lowercase(Locale.US)
+            "camera" in appName && VIDEO_CALL_PACKAGE_HINTS.none { it in appName }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /**
@@ -222,6 +307,7 @@ class VolumeKeyService : AccessibilityService() {
 
         // Unregister audio device callback
         audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
+        cameraManager?.unregisterAvailabilityCallback(cameraAvailabilityCallback)
         OverlayManager.cleanup()
         Log.d(TAG, "VolumeKeyService destroyed")
     }
