@@ -1,5 +1,7 @@
 package com.agentkosticka.amply.ui.settings
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -41,6 +44,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.core.net.toUri
 import com.agentkosticka.amply.R
 import com.agentkosticka.amply.audio.AudioSessionManager
 import com.agentkosticka.amply.data.AudioSession
@@ -48,6 +52,7 @@ import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.data.PreferencesManager
+import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.ShizukuRepository
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.launch
@@ -84,6 +89,7 @@ fun SettingsDashboard(
     val overlaySide by preferencesManager.overlaySide.collectAsState(initial = OverlaySide.LEFT)
     val verticalFraction by preferencesManager.overlayVerticalFraction.collectAsState(initial = 0.5f)
     val appSettings by preferencesManager.appSettings.collectAsState(initial = emptyMap())
+    val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val sessionState by audioSessionManager.sessionState.collectAsState(initial = AudioSessionState.empty())
     val scope = rememberCoroutineScope()
     var appListMode by remember { mutableStateOf(AppListMode.DEFAULT) }
@@ -116,6 +122,10 @@ fun SettingsDashboard(
         }
     }
 
+    LaunchedEffect(Unit) {
+        shizukuRepository.checkPermissionState()
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -126,6 +136,36 @@ fun SettingsDashboard(
     ) {
         item {
             DashboardHeader()
+        }
+
+        if (shizukuState != ShizukuPermissionState.GRANTED) {
+            item {
+                ShizukuWarningCard(
+                    permissionState = shizukuState,
+                    onAction = {
+                        when (shizukuState) {
+                            ShizukuPermissionState.NOT_GRANTED,
+                            ShizukuPermissionState.SHOULD_SHOW_RATIONALE,
+                            ShizukuPermissionState.DENIED -> {
+                                shizukuRepository.requestPermission()
+                            }
+                            ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> {
+                                openShizukuApp(context)
+                            }
+                            ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> {
+                                openShizukuDownload(context)
+                            }
+                            ShizukuPermissionState.UNKNOWN -> {
+                                shizukuRepository.checkPermissionState()
+                            }
+                            ShizukuPermissionState.GRANTED -> Unit
+                        }
+                    },
+                    onRefresh = {
+                        shizukuRepository.checkPermissionState()
+                    }
+                )
+            }
         }
 
         item {
@@ -215,6 +255,24 @@ fun SettingsDashboard(
     }
 }
 
+private fun openShizukuApp(context: Context) {
+    val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+    if (intent != null) {
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        context.startActivity(intent)
+    } else {
+        openShizukuDownload(context)
+    }
+}
+
+private fun openShizukuDownload(context: Context) {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        data = "https://github.com/RikkaApps/Shizuku/releases".toUri()
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    }
+    context.startActivity(intent)
+}
+
 private fun stablePackageOrder(
     currentOrder: List<String>,
     candidateApps: List<AppSettings>
@@ -277,6 +335,101 @@ private fun DashboardHeader() {
                 style = MaterialTheme.typography.labelSmall,
                 color = NothingColors.GreyMedium
             )
+        }
+    }
+}
+
+@Composable
+private fun ShizukuWarningCard(
+    permissionState: ShizukuPermissionState,
+    onAction: () -> Unit,
+    onRefresh: () -> Unit
+) {
+    val title = when (permissionState) {
+        ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> "SHIZUKU NOT INSTALLED"
+        ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> "SHIZUKU NOT RUNNING"
+        ShizukuPermissionState.DENIED -> "SHIZUKU PERMISSION DENIED"
+        ShizukuPermissionState.UNKNOWN -> "CHECKING SHIZUKU"
+        else -> "SHIZUKU NOT CONNECTED"
+    }
+    val description = when (permissionState) {
+        ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> "Install Shizuku to enable per-app volume control."
+        ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> "Start Shizuku, then return here to reconnect Amply."
+        ShizukuPermissionState.NOT_GRANTED,
+        ShizukuPermissionState.SHOULD_SHOW_RATIONALE,
+        ShizukuPermissionState.DENIED -> "Shizuku is running. Grant Amply access to restore per-app volume control."
+        ShizukuPermissionState.UNKNOWN -> "Refresh the Shizuku connection state."
+        ShizukuPermissionState.GRANTED -> ""
+    }
+    val actionText = when (permissionState) {
+        ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> "INSTALL"
+        ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> "OPEN SHIZUKU"
+        ShizukuPermissionState.UNKNOWN -> "CHECK"
+        else -> "REQUEST"
+    }
+
+    SettingsPanel {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(NothingColors.Red.copy(alpha = 0.18f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Shizuku warning",
+                    tint = NothingColors.Red,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = NothingColors.White
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NothingColors.GreyMedium
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = onAction,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NothingColors.Red,
+                    contentColor = NothingColors.White
+                )
+            ) {
+                Text(text = actionText, fontWeight = FontWeight.Bold)
+            }
+            Button(
+                onClick = onRefresh,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF2A2A2A),
+                    contentColor = NothingColors.White
+                )
+            ) {
+                Text(text = "REFRESH", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
