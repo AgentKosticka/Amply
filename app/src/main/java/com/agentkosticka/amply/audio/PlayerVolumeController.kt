@@ -24,6 +24,7 @@ class PlayerVolumeController(
 
     companion object {
         private const val TAG = "PlayerVolumeController"
+        private const val PLAYER_STATE_STARTED = 2
     }
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -119,8 +120,8 @@ class PlayerVolumeController(
                             "state=$playerState, hasProxy=${playerProxy != null}, " +
                             "usage=${audioAttributes.usage}, contentType=${audioAttributes.contentType}")
 
-                    // Only include players that are in started/active state
-                    if (playerState == 2 || playerState == 3) {
+                    // Only include players that are actively rendering audio.
+                    if (playerState == PLAYER_STATE_STARTED) {
                         val player = ActivePlayer(
                             piid = piid,
                             uid = clientUid,
