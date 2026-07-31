@@ -9,74 +9,192 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 
-/**
- * Manages connection to the VolumeUserService running in Shizuku's privileged process.
- */
+/** Manages the single process-wide connection to the privileged volume service. */
 class ShizukuVolumeManager(
     packageName: String
-) {
+) : VolumeServiceConnector {
 
     companion object {
         private const val TAG = "ShizukuVolumeManager"
+        private const val USER_SERVICE_TAG = "amply-volume-service"
     }
 
+    private val lock = Any()
+    private val generations = ConnectionGenerationTracker()
     private var volumeService: IVolumeService? = null
+    private var serviceBinder: IBinder? = null
+    private var deathRecipient: IBinder.DeathRecipient? = null
+    private var activeConnection: ServiceConnection? = null
+
+    private val _connectionState = MutableStateFlow(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
+    override val connectionState: StateFlow<VolumeServiceConnectionState> =
+        _connectionState.asStateFlow()
+
+    val isConnected: StateFlow<Boolean>
+        get() = _isConnected
+
     private val _isConnected = MutableStateFlow(false)
-    val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     private val userServiceArgs = Shizuku.UserServiceArgs(
         ComponentName(packageName, VolumeUserService::class.java.name)
     )
-        .daemon(false)  // Don't run as daemon - stop when unbind
+        .tag(USER_SERVICE_TAG)
+        .daemon(false)
         .processNameSuffix("volume_service")
         .debuggable(true)
         .version(1)
 
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            Log.d(TAG, "UserService connected: $name")
-            volumeService = IVolumeService.asInterface(binder)
-            _isConnected.value = true
+    override fun onPermissionAvailable() {
+        synchronized(lock) {
+            if (_connectionState.value == VolumeServiceConnectionState.WAITING_FOR_PERMISSION) {
+                _connectionState.value = VolumeServiceConnectionState.DISCONNECTED
+            }
         }
+    }
 
-        override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(TAG, "UserService disconnected: $name")
-            volumeService = null
+    override fun onPermissionUnavailable() {
+        disconnectCurrentConnection(
+            nextState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
+            cause = "permission unavailable"
+        )
+    }
+
+    override fun ensureBound() {
+        val generation: Int
+        val connection: ServiceConnection
+        synchronized(lock) {
+            if (_connectionState.value == VolumeServiceConnectionState.CONNECTED ||
+                _connectionState.value == VolumeServiceConnectionState.BINDING
+            ) {
+                return
+            }
+
+            generation = generations.next()
+            connection = createServiceConnection(generation)
+            activeConnection = connection
+            _connectionState.value = VolumeServiceConnectionState.BINDING
             _isConnected.value = false
         }
-    }
 
-    /**
-     * Binds to the VolumeUserService.
-     * Requires Shizuku permission to be granted.
-     */
-    fun bindService() {
         try {
-            Log.d(TAG, "Binding to VolumeUserService...")
-            Shizuku.bindUserService(userServiceArgs, serviceConnection)
+            Log.d(TAG, "Binding UserService generation=$generation")
+            Shizuku.bindUserService(userServiceArgs, connection)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to bind UserService", e)
+            Log.e(TAG, "Bind failed generation=$generation", e)
+            handleDisconnect(generation, "bind failed: ${e.javaClass.simpleName}")
         }
     }
 
-    /**
-     * Unbinds from the VolumeUserService.
-     */
-    fun unbindService() {
-        try {
-            Log.d(TAG, "Unbinding from VolumeUserService...")
-            volumeService?.destroy()
-            Shizuku.unbindUserService(userServiceArgs, serviceConnection, true)
-            volumeService = null
+    override fun invalidateConnection(cause: String) {
+        disconnectCurrentConnection(
+            nextState = VolumeServiceConnectionState.DISCONNECTED,
+            cause = cause
+        )
+    }
+
+    private fun createServiceConnection(generation: Int): ServiceConnection =
+        object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                if (binder == null) {
+                    handleDisconnect(generation, "connected with null binder")
+                    return
+                }
+
+                val service = IVolumeService.asInterface(binder)
+                if (service == null) {
+                    handleDisconnect(generation, "failed to create service proxy")
+                    return
+                }
+
+                val recipient = IBinder.DeathRecipient {
+                    handleDisconnect(generation, "service binder died")
+                }
+
+                synchronized(lock) {
+                    if (!generations.isCurrent(generation)) {
+                        Log.w(TAG, "Ignoring stale connection generation=$generation current=${generations.current}")
+                        unbindConnection(this)
+                        return
+                    }
+
+                    try {
+                        binder.linkToDeath(recipient, 0)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Could not watch binder generation=$generation", e)
+                        handleDisconnect(generation, "linkToDeath failed")
+                        return
+                    }
+
+                    clearServiceLocked()
+                    volumeService = service
+                    serviceBinder = binder
+                    deathRecipient = recipient
+                    _connectionState.value = VolumeServiceConnectionState.CONNECTED
+                    _isConnected.value = true
+                }
+                Log.i(TAG, "UserService connected generation=$generation name=$name")
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                handleDisconnect(generation, "service disconnected: $name")
+            }
+        }
+
+    private fun handleDisconnect(generation: Int, cause: String) {
+        synchronized(lock) {
+            if (!generations.isCurrent(generation)) {
+                Log.d(TAG, "Ignoring stale disconnect generation=$generation cause=$cause")
+                return
+            }
+            generations.invalidate()
+            clearServiceLocked()
+            activeConnection = null
+            _connectionState.value = VolumeServiceConnectionState.DISCONNECTED
             _isConnected.value = false
+        }
+        Log.w(TAG, "UserService disconnected generation=$generation cause=$cause")
+    }
+
+    private fun disconnectCurrentConnection(
+        nextState: VolumeServiceConnectionState,
+        cause: String
+    ) {
+        val connection: ServiceConnection?
+        synchronized(lock) {
+            generations.invalidate()
+            connection = activeConnection
+            activeConnection = null
+            clearServiceLocked()
+            _connectionState.value = nextState
+            _isConnected.value = false
+        }
+        connection?.let(::unbindConnection)
+        Log.d(TAG, "Connection cleared cause=$cause nextState=$nextState")
+    }
+
+    private fun unbindConnection(connection: ServiceConnection) {
+        try {
+            Shizuku.unbindUserService(userServiceArgs, connection, false)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to unbind UserService", e)
+            Log.w(TAG, "Non-destructive unbind failed", e)
         }
     }
 
-    /**
-     * Data class representing an active player from the privileged service
-     */
+    private fun clearServiceLocked() {
+        val binder = serviceBinder
+        val recipient = deathRecipient
+        if (binder != null && recipient != null) {
+            try {
+                binder.unlinkToDeath(recipient, 0)
+            } catch (_: Exception) {
+                // The binder may already be dead.
+            }
+        }
+        volumeService = null
+        serviceBinder = null
+        deathRecipient = null
+    }
+
     data class PrivilegedPlayback(
         val piid: Int,
         val uid: Int,
@@ -84,67 +202,52 @@ class ShizukuVolumeManager(
         val state: Int
     )
 
-    /**
-     * Gets active playback configurations from the privileged service.
-     * Returns data that would be sanitized if accessed from app process.
-     */
-    fun getActivePlaybacks(): List<PrivilegedPlayback> {
-        val service = volumeService
-        if (service == null) {
-            Log.w(TAG, "getActivePlaybacks: Service not connected")
-            return emptyList()
-        }
+    /** Returns null for an unavailable/failed service and an empty list for valid idle audio. */
+    fun getActivePlaybacks(): List<PrivilegedPlayback>? {
+        val service = synchronized(lock) { volumeService } ?: return null
 
         return try {
             val data = service.getActivePlaybacks()
             if (data.isEmpty()) {
-                Log.d(TAG, "getActivePlaybacks: Empty result")
-                return emptyList()
+                invalidateConnection("playback query failed")
+                return null
             }
 
             val count = data[0]
-            Log.d(TAG, "getActivePlaybacks: Got $count playbacks")
-
-            val result = mutableListOf<PrivilegedPlayback>()
-            var index = 1
-            for (i in 0 until count) {
-                if (index + 3 >= data.size) break
-
-                val playback = PrivilegedPlayback(
-                    piid = data[index],
-                    uid = data[index + 1],
-                    pid = data[index + 2],
-                    state = data[index + 3]
-                )
-                result.add(playback)
-                index += 4
-
-                Log.d(TAG, "  Playback: piid=${playback.piid}, uid=${playback.uid}, pid=${playback.pid}, state=${playback.state}")
+            if (count < 0 || data.size < 1 + count * 4) {
+                invalidateConnection("malformed playback response")
+                return null
             }
 
-            result
+            buildList(count) {
+                var index = 1
+                repeat(count) {
+                    add(
+                        PrivilegedPlayback(
+                            piid = data[index],
+                            uid = data[index + 1],
+                            pid = data[index + 2],
+                            state = data[index + 3]
+                        )
+                    )
+                    index += 4
+                }
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting active playbacks", e)
-            emptyList()
+            Log.e(TAG, "Playback query failed", e)
+            invalidateConnection("playback RPC failed: ${e.javaClass.simpleName}")
+            null
         }
     }
 
-    /**
-     * Sets volume for a player by piid via the privileged service.
-     */
     fun setPlayerVolume(piid: Int, volume: Float): Boolean {
-        val service = volumeService
-        if (service == null) {
-            Log.w(TAG, "setPlayerVolume: Service not connected")
-            return false
-        }
+        val service = synchronized(lock) { volumeService } ?: return false
 
         return try {
-            val result = service.setPlayerVolume(piid, volume)
-            Log.d(TAG, "setPlayerVolume: piid=$piid, volume=$volume, result=$result")
-            result
+            service.setPlayerVolume(piid, volume)
         } catch (e: Exception) {
-            Log.e(TAG, "Error setting player volume", e)
+            Log.e(TAG, "Volume RPC failed piid=$piid", e)
+            invalidateConnection("volume RPC failed: ${e.javaClass.simpleName}")
             false
         }
     }

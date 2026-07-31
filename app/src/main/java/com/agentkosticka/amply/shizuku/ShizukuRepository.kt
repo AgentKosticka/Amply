@@ -26,10 +26,12 @@ class ShizukuRepository(private val context: Context) {
     private val requestCode = 1001
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
+        Log.i(TAG, "Shizuku binder received")
         checkPermissionState()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
+        Log.w(TAG, "Shizuku binder died")
         _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING
     }
 
@@ -41,6 +43,7 @@ class ShizukuRepository(private val context: Context) {
                 } else {
                     ShizukuPermissionState.DENIED
                 }
+                Log.i(TAG, "Shizuku permission result: ${_permissionState.value}")
             }
         }
 
@@ -81,7 +84,7 @@ class ShizukuRepository(private val context: Context) {
      * Checks current permission state and updates the StateFlow
      */
     fun checkPermissionState() {
-        _permissionState.value = when {
+        val newState = when {
             !isShizukuInstalled() -> ShizukuPermissionState.SHIZUKU_NOT_INSTALLED
             !isShizukuRunning() -> ShizukuPermissionState.SHIZUKU_NOT_RUNNING
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED ->
@@ -90,6 +93,10 @@ class ShizukuRepository(private val context: Context) {
                 ShizukuPermissionState.SHOULD_SHOW_RATIONALE
             else -> ShizukuPermissionState.NOT_GRANTED
         }
+        if (_permissionState.value != newState) {
+            Log.i(TAG, "Shizuku state ${_permissionState.value} -> $newState")
+        }
+        _permissionState.value = newState
     }
 
     /**

@@ -140,6 +140,11 @@ object OverlayManager {
         onSessionVolumeChangeCallback = null
     }
 
+    fun updateSessions(sessions: List<AudioSession>, focusedAppSession: AudioSession?) {
+        currentSessions.value = sessions
+        focusedApp.value = focusedAppSession
+    }
+
     /**
      * Invoke the session volume callback
      * This method ensures the callback is always read fresh from the property

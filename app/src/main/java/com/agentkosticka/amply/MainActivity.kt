@@ -29,8 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.agentkosticka.amply.data.PreferencesManager
-import com.agentkosticka.amply.shizuku.ShizukuRepository
 import com.agentkosticka.amply.ui.settings.SettingsDashboard
 import com.agentkosticka.amply.ui.setup.SetupViewModel
 import com.agentkosticka.amply.ui.setup.SetupWizardScreen
@@ -39,8 +37,7 @@ import com.agentkosticka.amply.ui.theme.NothingColors
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var shizukuRepository: ShizukuRepository
-    private lateinit var preferencesManager: PreferencesManager
+    private lateinit var runtime: AmplyRuntime
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install splash screen BEFORE super.onCreate()
@@ -48,9 +45,7 @@ class MainActivity : ComponentActivity() {
         
         super.onCreate(savedInstanceState)
 
-        // Initialize repositories
-        shizukuRepository = ShizukuRepository(this)
-        preferencesManager = PreferencesManager(this)
+        runtime = (application as AmplyApplication).runtime
 
         setContent {
             AmplyTheme {
@@ -61,7 +56,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun MainContent() {
-        val isSetupCompleted by preferencesManager.isSetupCompleted.collectAsState(initial = false)
+        val isSetupCompleted by runtime.preferencesManager.isSetupCompleted.collectAsState(initial = false)
 
         if (isSetupCompleted) {
             // Show main app screen
@@ -70,8 +65,8 @@ class MainActivity : ComponentActivity() {
             // Show setup wizard
             val viewModel = remember {
                 SetupViewModel(
-                    shizukuRepository = shizukuRepository,
-                    preferencesManager = preferencesManager,
+                    shizukuRepository = runtime.shizukuRepository,
+                    preferencesManager = runtime.preferencesManager,
                     context = this
                 )
             }
@@ -88,8 +83,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun MainAppScreen() {
         SettingsDashboard(
-            preferencesManager = preferencesManager,
-            shizukuRepository = shizukuRepository,
+            runtime = runtime,
             onOverlayPermissionClick = { requestOverlayPermission() },
             onAccessibilityClick = { openAccessibilitySettings() }
         )
@@ -169,8 +163,4 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        shizukuRepository.cleanup()
-    }
 }

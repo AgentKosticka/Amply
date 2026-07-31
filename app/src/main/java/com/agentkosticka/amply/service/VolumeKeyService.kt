@@ -308,7 +308,6 @@ class VolumeKeyService : AccessibilityService() {
         // Unregister audio device callback
         audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
         cameraManager?.unregisterAvailabilityCallback(cameraAvailabilityCallback)
-        OverlayManager.cleanup()
         Log.d(TAG, "VolumeKeyService destroyed")
     }
 }

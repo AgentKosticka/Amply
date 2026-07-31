@@ -15,6 +15,9 @@ class AmplyApplication : Application() {
         private const val TAG = "AmplyApplication"
     }
 
+    lateinit var runtime: AmplyRuntime
+        private set
+
     override fun onCreate() {
         super.onCreate()
 
@@ -30,5 +33,7 @@ class AmplyApplication : Application() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize HiddenApiBypass", e)
         }
+
+        runtime = AmplyRuntime(this)
     }
 }

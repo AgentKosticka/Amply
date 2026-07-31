@@ -85,8 +85,4 @@ class SetupViewModel(
         }
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        shizukuRepository.cleanup()
-    }
 }

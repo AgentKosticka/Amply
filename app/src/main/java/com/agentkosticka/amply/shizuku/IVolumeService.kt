@@ -4,6 +4,7 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
+import android.os.RemoteException
 
 /**
  * Manual Binder interface for VolumeService (replaces AIDL to avoid JDK 24 issues)
@@ -20,6 +21,7 @@ interface IVolumeService : IInterface {
         const val TRANSACTION_getActivePlaybacks = IBinder.FIRST_CALL_TRANSACTION + 0
         const val TRANSACTION_setPlayerVolume = IBinder.FIRST_CALL_TRANSACTION + 1
         const val TRANSACTION_destroy = IBinder.FIRST_CALL_TRANSACTION + 2
+        const val TRANSACTION_destroyUserService = 16777115
 
         fun asInterface(binder: IBinder?): IVolumeService? {
             if (binder == null) return null
@@ -79,7 +81,8 @@ interface IVolumeService : IInterface {
                     reply?.writeInt(if (result) 1 else 0)
                     return true
                 }
-                TRANSACTION_destroy -> {
+                TRANSACTION_destroy,
+                TRANSACTION_destroyUserService -> {
                     data.enforceInterface(DESCRIPTOR)
                     destroy()
                     reply?.writeNoException()
@@ -101,7 +104,9 @@ interface IVolumeService : IInterface {
             val reply = Parcel.obtain()
             return try {
                 data.writeInterfaceToken(DESCRIPTOR)
-                remote.transact(TRANSACTION_getActivePlaybacks, data, reply, 0)
+                if (!remote.transact(TRANSACTION_getActivePlaybacks, data, reply, 0)) {
+                    throw RemoteException("Volume service rejected playback query")
+                }
                 reply.readException()
                 reply.createIntArray() ?: IntArray(0)
             } finally {
@@ -117,7 +122,9 @@ interface IVolumeService : IInterface {
                 data.writeInterfaceToken(DESCRIPTOR)
                 data.writeInt(piid)
                 data.writeFloat(volume)
-                remote.transact(TRANSACTION_setPlayerVolume, data, reply, 0)
+                if (!remote.transact(TRANSACTION_setPlayerVolume, data, reply, 0)) {
+                    throw RemoteException("Volume service rejected volume update")
+                }
                 reply.readException()
                 reply.readInt() != 0
             } finally {
@@ -131,7 +138,9 @@ interface IVolumeService : IInterface {
             val reply = Parcel.obtain()
             try {
                 data.writeInterfaceToken(DESCRIPTOR)
-                remote.transact(TRANSACTION_destroy, data, reply, 0)
+                if (!remote.transact(TRANSACTION_destroy, data, reply, 0)) {
+                    throw RemoteException("Volume service rejected destroy request")
+                }
                 reply.readException()
             } finally {
                 reply.recycle()

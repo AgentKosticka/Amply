@@ -32,7 +32,8 @@ import kotlinx.coroutines.flow.asStateFlow
 class AudioSessionManager(
     private val context: Context,
     private val shizukuRepository: ShizukuRepository,
-    private val preferencesManager: PreferencesManager = PreferencesManager(context)
+    private val preferencesManager: PreferencesManager,
+    private val shizukuVolumeManager: ShizukuVolumeManager
 ) {
     companion object {
         private const val TAG = "AudioSessionManager"
@@ -40,9 +41,6 @@ class AudioSessionManager(
         private const val CACHE_SIZE = 50
         private const val PLAYER_STATE_STARTED = 2
     }
-
-    // NEW: ShizukuVolumeManager for privileged access via UserService
-    private val shizukuVolumeManager = ShizukuVolumeManager(context.packageName)
 
     // Fallback: PlayerVolumeController for local reflection (usually returns -1 for uid)
     private val playerVolumeController = PlayerVolumeController(context, shizukuRepository)
@@ -104,12 +102,6 @@ class AudioSessionManager(
             }
         }
 
-        // Bind to ShizukuVolumeManager UserService if Shizuku is granted
-        if (shizukuRepository.permissionState.value == ShizukuPermissionState.GRANTED) {
-            Log.d(TAG, "Binding to ShizukuVolumeManager UserService...")
-            shizukuVolumeManager.bindService()
-        }
-
         // Register real-time playback callback (for local fallback)
         registerPlaybackCallback()
 
@@ -165,7 +157,7 @@ class AudioSessionManager(
             return
         }
 
-        val playbacks = shizukuVolumeManager.getActivePlaybacks()
+        val playbacks = shizukuVolumeManager.getActivePlaybacks() ?: return
         val uidPackageMap = shizukuRepository.getUidPackageMap()
         
         for (playback in playbacks) {
@@ -221,35 +213,38 @@ class AudioSessionManager(
         // Uses Shizuku UserService for privileged access
         // ==============================================
         if (shizukuVolumeManager.isConnected.value) {
-            val privilegedPlaybacks = shizukuVolumeManager.getActivePlaybacks()
-                .filter { it.state == PLAYER_STATE_STARTED }
+            val playbackResult = shizukuVolumeManager.getActivePlaybacks()
+            if (playbackResult != null) {
+                val privilegedPlaybacks = playbackResult
+                    .filter { it.state == PLAYER_STATE_STARTED }
 
-            if (privilegedPlaybacks.isNotEmpty()) {
-                // Build UID-to-package map
-                val uidPackageMap = shizukuRepository.getUidPackageMap()
+                if (privilegedPlaybacks.isNotEmpty()) {
+                    // Build UID-to-package map
+                    val uidPackageMap = shizukuRepository.getUidPackageMap()
 
-                // Convert PrivilegedPlaybacks to AudioSessions with app metadata
-                val enrichedSessions = privilegedPlaybacks.mapNotNull { playback ->
-                    enrichPrivilegedPlayback(playback, uidPackageMap)
+                    // Convert PrivilegedPlaybacks to AudioSessions with app metadata
+                    val enrichedSessions = privilegedPlaybacks.mapNotNull { playback ->
+                        enrichPrivilegedPlayback(playback, uidPackageMap)
+                    }
+                    applyPersistedVolumes(enrichedSessions)
+
+                    _sessionState.value = AudioSessionState(
+                        sessions = enrichedSessions,
+                        globalVolume = globalVolume,
+                        maxVolume = maxVolume,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    return
                 }
-                applyPersistedVolumes(enrichedSessions)
 
                 _sessionState.value = AudioSessionState(
-                    sessions = enrichedSessions,
+                    sessions = emptyList(),
                     globalVolume = globalVolume,
                     maxVolume = maxVolume,
                     timestamp = System.currentTimeMillis()
                 )
                 return
             }
-
-            _sessionState.value = AudioSessionState(
-                sessions = emptyList(),
-                globalVolume = globalVolume,
-                maxVolume = maxVolume,
-                timestamp = System.currentTimeMillis()
-            )
-            return
         }
 
         // ==============================================
@@ -633,7 +628,6 @@ class AudioSessionManager(
     fun cleanup() {
         Log.d(TAG, "Cleaning up AudioSessionManager")
         stopPolling()
-        shizukuVolumeManager.unbindService()
         managerScope.cancel()
         appMetadataCache.evictAll()
         playerProxyMap.clear()

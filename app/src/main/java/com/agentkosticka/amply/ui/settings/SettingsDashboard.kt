@@ -22,7 +22,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,15 +44,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.net.toUri
+import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.R
-import com.agentkosticka.amply.audio.AudioSessionManager
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
 import com.agentkosticka.amply.data.OverlaySide
-import com.agentkosticka.amply.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
-import com.agentkosticka.amply.shizuku.ShizukuRepository
+import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -65,32 +63,22 @@ private enum class AppListMode {
 
 @Composable
 fun SettingsDashboard(
-    preferencesManager: PreferencesManager,
-    shizukuRepository: ShizukuRepository,
+    runtime: AmplyRuntime,
     onOverlayPermissionClick: () -> Unit,
     onAccessibilityClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val audioSessionManager = remember(preferencesManager, shizukuRepository) {
-        AudioSessionManager(
-            context = context.applicationContext,
-            shizukuRepository = shizukuRepository,
-            preferencesManager = preferencesManager
-        )
-    }
-
-    DisposableEffect(audioSessionManager) {
-        audioSessionManager.startPolling()
-        onDispose {
-            audioSessionManager.cleanup()
-        }
-    }
+    val preferencesManager = runtime.preferencesManager
+    val shizukuRepository = runtime.shizukuRepository
 
     val overlaySide by preferencesManager.overlaySide.collectAsState(initial = OverlaySide.LEFT)
     val verticalFraction by preferencesManager.overlayVerticalFraction.collectAsState(initial = 0.5f)
     val appSettings by preferencesManager.appSettings.collectAsState(initial = emptyMap())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
-    val sessionState by audioSessionManager.sessionState.collectAsState(initial = AudioSessionState.empty())
+    val connectionState by runtime.connectionState.collectAsState(
+        initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION
+    )
+    val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val scope = rememberCoroutineScope()
     var appListMode by remember { mutableStateOf(AppListMode.DEFAULT) }
     var orderedPackageNames by remember(appListMode) { mutableStateOf<List<String>>(emptyList()) }
@@ -138,10 +126,13 @@ fun SettingsDashboard(
             DashboardHeader()
         }
 
-        if (shizukuState != ShizukuPermissionState.GRANTED) {
+        if (shizukuState != ShizukuPermissionState.GRANTED ||
+            connectionState != VolumeServiceConnectionState.CONNECTED
+        ) {
             item {
                 ShizukuWarningCard(
                     permissionState = shizukuState,
+                    connectionState = connectionState,
                     onAction = {
                         when (shizukuState) {
                             ShizukuPermissionState.NOT_GRANTED,
@@ -158,11 +149,16 @@ fun SettingsDashboard(
                             ShizukuPermissionState.UNKNOWN -> {
                                 shizukuRepository.checkPermissionState()
                             }
-                            ShizukuPermissionState.GRANTED -> Unit
+                            ShizukuPermissionState.GRANTED -> {
+                                runtime.retryVolumeServiceConnection()
+                            }
                         }
                     },
                     onRefresh = {
                         shizukuRepository.checkPermissionState()
+                        if (shizukuState == ShizukuPermissionState.GRANTED) {
+                            runtime.retryVolumeServiceConnection()
+                        }
                     }
                 )
             }
@@ -239,7 +235,7 @@ fun SettingsDashboard(
                         scope.launch {
                             val activeSession = activeSessionsByPackage[app.packageName]
                             if (activeSession != null) {
-                                audioSessionManager.setSessionVolume(
+                                runtime.audioSessionManager.setSessionVolume(
                                     sessionId = activeSession.sessionId,
                                     packageName = activeSession.packageName,
                                     volume = volume
@@ -342,6 +338,7 @@ private fun DashboardHeader() {
 @Composable
 private fun ShizukuWarningCard(
     permissionState: ShizukuPermissionState,
+    connectionState: VolumeServiceConnectionState,
     onAction: () -> Unit,
     onRefresh: () -> Unit
 ) {
@@ -350,6 +347,10 @@ private fun ShizukuWarningCard(
         ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> "SHIZUKU NOT RUNNING"
         ShizukuPermissionState.DENIED -> "SHIZUKU PERMISSION DENIED"
         ShizukuPermissionState.UNKNOWN -> "CHECKING SHIZUKU"
+        ShizukuPermissionState.GRANTED -> when (connectionState) {
+            VolumeServiceConnectionState.BINDING -> "RECONNECTING TO SHIZUKU"
+            else -> "SHIZUKU CONNECTION LOST"
+        }
         else -> "SHIZUKU NOT CONNECTED"
     }
     val description = when (permissionState) {
@@ -359,12 +360,13 @@ private fun ShizukuWarningCard(
         ShizukuPermissionState.SHOULD_SHOW_RATIONALE,
         ShizukuPermissionState.DENIED -> "Shizuku is running. Grant Amply access to restore per-app volume control."
         ShizukuPermissionState.UNKNOWN -> "Refresh the Shizuku connection state."
-        ShizukuPermissionState.GRANTED -> ""
+        ShizukuPermissionState.GRANTED -> "Amply is restoring per-app volume control."
     }
     val actionText = when (permissionState) {
         ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> "INSTALL"
         ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> "OPEN SHIZUKU"
         ShizukuPermissionState.UNKNOWN -> "CHECK"
+        ShizukuPermissionState.GRANTED -> "RETRY"
         else -> "REQUEST"
     }
 

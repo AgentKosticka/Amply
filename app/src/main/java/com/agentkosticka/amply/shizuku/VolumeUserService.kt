@@ -23,6 +23,8 @@ class VolumeUserService : IVolumeService.Stub() {
 
     // Direct access to IAudioService for privileged operations
     private var audioService: Any? = null
+    private var audioServiceBinder: IBinder? = null
+    private var audioServiceDeathRecipient: IBinder.DeathRecipient? = null
     private var getActivePlaybackConfigsMethod: Method? = null
 
     // Cached reflection methods for AudioPlaybackConfiguration
@@ -55,7 +57,9 @@ class VolumeUserService : IVolumeService.Stub() {
      * Initialize IAudioService using direct system-level access.
      * Since we're running in Shizuku's shell process (UID 2000), we can access system services.
      */
-    private fun initializeAudioService() {
+    @Synchronized
+    private fun initializeAudioService(): Boolean {
+        clearAudioService()
         try {
             // Get audio service binder via ServiceManager
             val serviceManagerClass = Class.forName("android.os.ServiceManager")
@@ -64,7 +68,7 @@ class VolumeUserService : IVolumeService.Stub() {
 
             if (audioBinder == null) {
                 Log.e(TAG, "Failed to get audio service binder")
-                return
+                return false
             }
 
             Log.d(TAG, "Got audio binder: $audioBinder")
@@ -76,56 +80,77 @@ class VolumeUserService : IVolumeService.Stub() {
 
             if (audioService == null) {
                 Log.e(TAG, "Failed to get IAudioService")
-                return
+                return false
             }
 
             Log.d(TAG, "Got IAudioService: ${audioService!!.javaClass.name}")
 
             // Find getActivePlaybackConfigurations method
             getActivePlaybackConfigsMethod = audioService!!.javaClass.getMethod("getActivePlaybackConfigurations")
+            val deathRecipient = IBinder.DeathRecipient {
+                Log.w(TAG, "Android audio service binder died; it will be reacquired")
+                clearAudioService()
+            }
+            audioBinder.linkToDeath(deathRecipient, 0)
+            audioServiceBinder = audioBinder
+            audioServiceDeathRecipient = deathRecipient
             Log.d(TAG, "Found getActivePlaybackConfigurations method on IAudioService")
-
+            return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize AudioService", e)
-            e.printStackTrace()
+            clearAudioService()
+            return false
         }
+    }
+
+    @Synchronized
+    private fun clearAudioService() {
+        val binder = audioServiceBinder
+        val recipient = audioServiceDeathRecipient
+        if (binder != null && recipient != null) {
+            try {
+                binder.unlinkToDeath(recipient, 0)
+            } catch (_: Exception) {
+                // The binder may already be dead.
+            }
+        }
+        audioService = null
+        audioServiceBinder = null
+        audioServiceDeathRecipient = null
+        getActivePlaybackConfigsMethod = null
+        lastConfigs = emptyList()
     }
 
     /**
      * Get active playback configurations directly from IAudioService
      */
-    private fun getActivePlaybackConfigurations(): List<AudioPlaybackConfiguration> {
-        val service = audioService
-        val method = getActivePlaybackConfigsMethod
+    private fun getActivePlaybackConfigurations(): List<AudioPlaybackConfiguration>? {
+        repeat(2) { attempt ->
+            if (audioService == null && !initializeAudioService()) {
+                return@repeat
+            }
 
-        if (service == null || method == null) {
-            Log.e(TAG, "AudioService not initialized: service=$service, method=$method")
-            return emptyList()
+            val service = audioService ?: return@repeat
+            val method = getActivePlaybackConfigsMethod ?: return@repeat
+            try {
+                val result = method.invoke(service)
+                return (result as? List<*>)?.filterIsInstance<AudioPlaybackConfiguration>()
+                    ?: emptyList()
+            } catch (e: Exception) {
+                Log.e(TAG, "Playback query failed on attempt ${attempt + 1}", e)
+                clearAudioService()
+            }
         }
-
-        return try {
-            val result = method.invoke(service)
-            Log.d(TAG, "getActivePlaybackConfigurations returned: ${result?.javaClass?.name}")
-            (result as? List<*>)?.filterIsInstance<AudioPlaybackConfiguration>() ?: emptyList()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get playback configurations: ${e.message}")
-            e.printStackTrace()
-            emptyList()
-        }
+        return null
     }
 
     override fun getActivePlaybacks(): IntArray {
-        if (audioService == null) {
-            Log.e(TAG, "getActivePlaybacks: AudioService is null")
-            return IntArray(0)
-        }
-
         if (!reflectionInitialized) {
             initializeReflection()
         }
 
         try {
-            val configs = getActivePlaybackConfigurations()
+            val configs = getActivePlaybackConfigurations() ?: return IntArray(0)
             lastConfigs = configs // Store for setPlayerVolume
 
             Log.d(TAG, "Found ${configs.size} active playback configurations (privileged)")
@@ -166,7 +191,7 @@ class VolumeUserService : IVolumeService.Stub() {
         val config = lastConfigs.find { getPlayerInterfaceId(it) == piid }
         if (config == null) {
             // Refresh configs and try again
-            lastConfigs = getActivePlaybackConfigurations()
+            lastConfigs = getActivePlaybackConfigurations() ?: return false
             val refreshedConfig = lastConfigs.find { getPlayerInterfaceId(it) == piid }
             if (refreshedConfig == null) {
                 Log.w(TAG, "Player with piid=$piid not found")
@@ -216,9 +241,8 @@ class VolumeUserService : IVolumeService.Stub() {
 
     override fun destroy() {
         Log.d(TAG, "destroy called")
-        audioService = null
-        getActivePlaybackConfigsMethod = null
-        lastConfigs = emptyList()
+        clearAudioService()
+        System.exit(0)
     }
 
     private fun initializeReflection() {

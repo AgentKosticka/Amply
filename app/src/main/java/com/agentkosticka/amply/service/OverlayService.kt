@@ -11,16 +11,16 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.agentkosticka.amply.AmplyApplication
+import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.R
-import com.agentkosticka.amply.audio.AudioSessionManager
 import com.agentkosticka.amply.data.OverlaySide
-import com.agentkosticka.amply.data.PreferencesManager
-import com.agentkosticka.amply.shizuku.ShizukuRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
 
@@ -57,13 +57,13 @@ class OverlayService : Service() {
         ) {
             val runtime = activeRuntimeRef?.get()
             if (runtime == null) {
-                startRuntime(host)
-                OverlayManager.show(
-                    context = host,
-                    volume = volume,
-                    newIconType = iconType,
-                    windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-                )
+                val intent = Intent(host, OverlayService::class.java).apply {
+                    action = ACTION_SHOW_OVERLAY
+                    putExtra(EXTRA_VOLUME, volume)
+                    putExtra(EXTRA_ICON_TYPE, iconType)
+                    putExtra(EXTRA_FOCUSED_PACKAGE, foregroundPackage)
+                }
+                ContextCompat.startForegroundService(host, intent)
                 return
             }
 
@@ -78,13 +78,13 @@ class OverlayService : Service() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var preferencesManager: PreferencesManager? = null
-    private var shizukuRepository: ShizukuRepository? = null
-    private var audioSessionManager: AudioSessionManager? = null
+    private val runtime: AmplyRuntime
+        get() = (application as AmplyApplication).runtime
     private var runtimeInitialized = false
     private var overlaySide: OverlaySide = OverlaySide.LEFT
     private var overlayVerticalFraction: Float = 0.5f
     private var preferenceJobs: List<Job> = emptyList()
+    private var currentForegroundPackage: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -123,16 +123,10 @@ class OverlayService : Service() {
         if (runtimeInitialized) return
 
         try {
-            val preferences = PreferencesManager(this)
-            val shizuku = ShizukuRepository(this)
-            val sessionManager = AudioSessionManager(this, shizuku, preferences)
-
-            preferencesManager = preferences
-            shizukuRepository = shizuku
-            audioSessionManager = sessionManager
+            val preferences = runtime.preferencesManager
+            val sessionManager = runtime.audioSessionManager
             runtimeInitialized = true
 
-            sessionManager.startPolling()
             preferenceJobs = listOf(
                 serviceScope.launch {
                     preferences.overlaySide.collect { side ->
@@ -143,6 +137,15 @@ class OverlayService : Service() {
                     preferences.overlayVerticalFraction.collect { fraction ->
                         overlayVerticalFraction = fraction
                     }
+                },
+                serviceScope.launch {
+                    combine(runtime.sessionState, preferences.appSettings) { _, _ ->
+                        sessionManager.getDefaultOverlaySessions()
+                    }.collect { sessions ->
+                        val focusedApp = sessionManager.getFocusedApp(currentForegroundPackage)
+                            ?: sessionManager.getMostRecentSession()
+                        OverlayManager.updateSessions(sessions, focusedApp)
+                    }
                 }
             )
 
@@ -152,7 +155,7 @@ class OverlayService : Service() {
                 }
             }
 
-            Log.d("OverlayService", "Runtime initialized and audio session polling started")
+            Log.d("OverlayService", "Connected to process-owned audio runtime")
         } catch (e: Exception) {
             Log.e("OverlayService", "Failed to initialize runtime", e)
         }
@@ -166,10 +169,12 @@ class OverlayService : Service() {
         windowType: Int
     ) {
         initializeRuntime()
+        currentForegroundPackage = foregroundPackage
 
-        val sessions = audioSessionManager?.getDefaultOverlaySessions() ?: emptyList()
-        val focusedApp = audioSessionManager?.getFocusedApp(foregroundPackage)
-            ?: audioSessionManager?.getMostRecentSession()
+        val sessionManager = runtime.audioSessionManager
+        val sessions = sessionManager.getDefaultOverlaySessions()
+        val focusedApp = sessionManager.getFocusedApp(foregroundPackage)
+            ?: sessionManager.getMostRecentSession()
 
         Log.d(
             "OverlayService",
@@ -218,8 +223,6 @@ class OverlayService : Service() {
             activeRuntimeRef = null
         }
         preferenceJobs.forEach { it.cancel() }
-        audioSessionManager?.cleanup()
-        shizukuRepository?.cleanup()
         serviceScope.cancel()
         OverlayManager.clearSessionVolumeCallback()
         OverlayManager.cleanup()
