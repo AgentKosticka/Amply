@@ -835,7 +835,7 @@ fun DraggableDotSlider(
     onVolumeChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dotCount = 12
+    val dotCount = 16
 
     Canvas(
         modifier = modifier
