@@ -26,7 +26,6 @@ class AmplyRuntime(context: Context) {
     val shizukuVolumeManager = ShizukuVolumeManager(appContext.packageName)
     val audioSessionManager = AudioSessionManager(
         context = appContext,
-        shizukuRepository = shizukuRepository,
         preferencesManager = preferencesManager,
         shizukuVolumeManager = shizukuVolumeManager
     )

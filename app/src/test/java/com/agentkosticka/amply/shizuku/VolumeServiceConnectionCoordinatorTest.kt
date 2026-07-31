@@ -103,6 +103,20 @@ class VolumeServiceConnectionCoordinatorTest {
         assertFalse(tracker.isCurrent(second))
     }
 
+    @Test
+    fun connectedStateDoesNotRequireFrequentWakeups() {
+        val permission = MutableStateFlow(ShizukuPermissionState.GRANTED)
+        val connector = FakeConnector()
+        val coordinator = coordinator(permission, connector)
+
+        coordinator.step(0L)
+        coordinator.step(500L)
+        connector.connect()
+        coordinator.step(600L)
+
+        assertTrue(coordinator.nextWakeDelayMs(600L) >= 60L * 60L * 1_000L)
+    }
+
     private fun coordinator(
         permission: StateFlow<ShizukuPermissionState>,
         connector: FakeConnector
@@ -111,7 +125,6 @@ class VolumeServiceConnectionCoordinatorTest {
         permissionState = permission,
         connector = connector,
         clock = { 0L },
-        tickIntervalMs = Long.MAX_VALUE,
         logger = {}
     )
 

@@ -22,9 +22,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,6 +55,8 @@ import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -80,6 +84,9 @@ fun SettingsDashboard(
     )
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val scope = rememberCoroutineScope()
+    val inactiveVolumeSaveJobs = remember { mutableMapOf<String, Job>() }
+    var positionSaveJob by remember { mutableStateOf<Job?>(null) }
+    var previewVerticalFraction by remember { mutableFloatStateOf(verticalFraction) }
     var appListMode by remember { mutableStateOf(AppListMode.DEFAULT) }
     var orderedPackageNames by remember(appListMode) { mutableStateOf<List<String>>(emptyList()) }
     val now = System.currentTimeMillis()
@@ -112,6 +119,18 @@ fun SettingsDashboard(
 
     LaunchedEffect(Unit) {
         shizukuRepository.checkPermissionState()
+    }
+
+    LaunchedEffect(verticalFraction) {
+        previewVerticalFraction = verticalFraction
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            inactiveVolumeSaveJobs.values.forEach { it.cancel() }
+            inactiveVolumeSaveJobs.clear()
+            positionSaveJob?.cancel()
+        }
     }
 
     LazyColumn(
@@ -195,9 +214,14 @@ fun SettingsDashboard(
                 Spacer(modifier = Modifier.height(18.dp))
                 PositionPreview(
                     side = overlaySide,
-                    verticalFraction = verticalFraction,
+                    verticalFraction = previewVerticalFraction,
                     onFractionChange = { fraction ->
-                        scope.launch { preferencesManager.setOverlayVerticalFraction(fraction) }
+                        previewVerticalFraction = fraction
+                        positionSaveJob?.cancel()
+                        positionSaveJob = scope.launch {
+                            delay(200L)
+                            preferencesManager.setOverlayVerticalFraction(fraction)
+                        }
                     }
                 )
             }
@@ -232,16 +256,19 @@ fun SettingsDashboard(
                         }
                     },
                     onVolumeChange = { volume ->
-                        scope.launch {
-                            val activeSession = activeSessionsByPackage[app.packageName]
-                            if (activeSession != null) {
-                                runtime.audioSessionManager.setSessionVolume(
-                                    sessionId = activeSession.sessionId,
-                                    packageName = activeSession.packageName,
-                                    volume = volume
-                                )
-                            } else {
+                        val activeSession = activeSessionsByPackage[app.packageName]
+                        if (activeSession != null) {
+                            runtime.audioSessionManager.setSessionVolume(
+                                sessionId = activeSession.sessionId,
+                                packageName = activeSession.packageName,
+                                volume = volume
+                            )
+                        } else {
+                            inactiveVolumeSaveJobs.remove(app.packageName)?.cancel()
+                            inactiveVolumeSaveJobs[app.packageName] = scope.launch {
+                                delay(300L)
                                 preferencesManager.setAppDefaultVolume(app.packageName, volume)
+                                inactiveVolumeSaveJobs.remove(app.packageName)
                             }
                         }
                     }
@@ -617,6 +644,10 @@ private fun AppSettingsRow(
     onVolumeChange: (Float) -> Unit
 ) {
     val context = LocalContext.current
+    var displayedVolume by remember(app.packageName) { mutableFloatStateOf(app.defaultVolume) }
+    LaunchedEffect(app.defaultVolume) {
+        displayedVolume = app.defaultVolume
+    }
     val icon = remember(app.packageName) {
         try {
             context.packageManager.getApplicationIcon(app.packageName)
@@ -624,7 +655,7 @@ private fun AppSettingsRow(
             null
         }
     }
-    val volumePercent = (app.defaultVolume * 100).roundToInt()
+    val volumePercent = (displayedVolume * 100).roundToInt()
 
     SettingsPanel {
         Row(
@@ -676,8 +707,11 @@ private fun AppSettingsRow(
         Spacer(modifier = Modifier.height(12.dp))
 
         DotVolumeSlider(
-            volume = app.defaultVolume,
-            onVolumeChange = onVolumeChange,
+            volume = displayedVolume,
+            onVolumeChange = { volume ->
+                displayedVolume = volume
+                onVolumeChange(volume)
+            },
             modifier = Modifier.fillMaxWidth()
         )
     }

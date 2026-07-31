@@ -4,9 +4,11 @@ import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.StateFlow
 
 enum class VolumeServiceConnectionState {
@@ -43,11 +45,11 @@ internal class VolumeServiceConnectionCoordinator(
     private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val retryDelaysMs: List<Long> = listOf(500L, 1_000L, 2_000L, 4_000L, 8_000L, 10_000L),
     private val bindTimeoutMs: Long = 5_000L,
-    private val tickIntervalMs: Long = 100L,
     private val logger: (String) -> Unit = { message -> Log.d(TAG, message) }
 ) {
     companion object {
         private const val TAG = "VolumeConnection"
+        private const val IDLE_WAIT_MS = 24L * 60L * 60L * 1_000L
     }
 
     private var job: Job? = null
@@ -55,13 +57,31 @@ internal class VolumeServiceConnectionCoordinator(
     private var nextRetryAt = Long.MAX_VALUE
     private var bindStartedAt = 0L
     private var lastState: VolumeServiceConnectionState? = null
+    private val wakeSignals = Channel<Unit>(Channel.CONFLATED)
 
     fun start() {
         if (job?.isActive == true) return
         job = scope.launch {
+            launch {
+                permissionState.drop(1).collect {
+                    wakeSignals.trySend(Unit)
+                }
+            }
+            launch {
+                connector.connectionState.drop(1).collect {
+                    wakeSignals.trySend(Unit)
+                }
+            }
+
             while (isActive) {
-                step(clock())
-                delay(tickIntervalMs)
+                val now = clock()
+                step(now)
+                val waitMs = nextWakeDelayMs(clock())
+                if (waitMs > 0L) {
+                    withTimeoutOrNull(waitMs) {
+                        wakeSignals.receive()
+                    }
+                }
             }
         }
     }
@@ -74,6 +94,7 @@ internal class VolumeServiceConnectionCoordinator(
             connector.invalidateConnection("manual retry")
             lastState = VolumeServiceConnectionState.DISCONNECTED
         }
+        wakeSignals.trySend(Unit)
         logger("Manual reconnect requested")
     }
 
@@ -150,5 +171,19 @@ internal class VolumeServiceConnectionCoordinator(
         retryIndex = 0
         nextRetryAt = Long.MAX_VALUE
         bindStartedAt = 0L
+    }
+
+    internal fun nextWakeDelayMs(now: Long): Long {
+        if (permissionState.value != ShizukuPermissionState.GRANTED) {
+            return IDLE_WAIT_MS
+        }
+
+        return when (connector.connectionState.value) {
+            VolumeServiceConnectionState.WAITING_FOR_PERMISSION -> 0L
+            VolumeServiceConnectionState.DISCONNECTED -> (nextRetryAt - now).coerceAtLeast(0L)
+            VolumeServiceConnectionState.BINDING ->
+                (bindTimeoutMs - (now - bindStartedAt)).coerceAtLeast(0L)
+            VolumeServiceConnectionState.CONNECTED -> IDLE_WAIT_MS
+        }
     }
 }

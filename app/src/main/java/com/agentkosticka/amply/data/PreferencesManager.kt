@@ -144,6 +144,26 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
+    suspend fun persistAppVolume(
+        packageName: String,
+        appName: String,
+        uid: Int,
+        volume: Float,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        updateAppSettings { current ->
+            val existing = current[packageName]
+            current[packageName] = AppSettings(
+                packageName = packageName,
+                appName = appName,
+                uid = uid,
+                defaultVolume = volume.coerceIn(0f, 1f),
+                hiddenInOverlay = existing?.hiddenInOverlay ?: false,
+                lastSeenTimestamp = timestamp
+            )
+        }
+    }
+
     suspend fun setAppHiddenInOverlay(packageName: String, hidden: Boolean) {
         updateAppSettings { current ->
             val existing = current[packageName] ?: AppSettings(

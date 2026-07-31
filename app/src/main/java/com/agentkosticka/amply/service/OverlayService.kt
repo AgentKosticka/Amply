@@ -172,6 +172,9 @@ class OverlayService : Service() {
         currentForegroundPackage = foregroundPackage
 
         val sessionManager = runtime.audioSessionManager
+        if (!OverlayManager.isShowing()) {
+            sessionManager.requestRefresh()
+        }
         val sessions = sessionManager.getDefaultOverlaySessions()
         val focusedApp = sessionManager.getFocusedApp(foregroundPackage)
             ?: sessionManager.getMostRecentSession()

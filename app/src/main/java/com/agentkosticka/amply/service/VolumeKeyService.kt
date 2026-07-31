@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.service
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -74,6 +75,7 @@ class VolumeKeyService : AccessibilityService() {
     // Phase 3.5: Smart Focus - track foreground app package
     private var foregroundPackage: String? = null
     private val activeCameraIds = mutableSetOf<String>()
+    private val volumeKeyCameraAppCache = mutableMapOf<String, Boolean>()
 
     // Audio device callback for dynamic icon updates
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -137,7 +139,6 @@ class VolumeKeyService : AccessibilityService() {
                 !packageName.startsWith("com.android.systemui") &&
                 !packageName.startsWith("com.nothing.systemui")) {
                 foregroundPackage = packageName
-                Log.d(TAG, "Foreground app: $foregroundPackage")
             }
         }
     }
@@ -197,17 +198,19 @@ class VolumeKeyService : AccessibilityService() {
     }
 
     private fun isVolumeKeyCameraApp(packageName: String): Boolean {
-        if (packageName in VOLUME_KEY_CAMERA_PACKAGES) return true
+        return volumeKeyCameraAppCache.getOrPut(packageName) {
+            if (packageName in VOLUME_KEY_CAMERA_PACKAGES) return@getOrPut true
 
-        val normalizedPackage = packageName.lowercase(Locale.US)
-        if (VIDEO_CALL_PACKAGE_HINTS.any { it in normalizedPackage }) return false
+            val normalizedPackage = packageName.lowercase(Locale.US)
+            if (VIDEO_CALL_PACKAGE_HINTS.any { it in normalizedPackage }) return@getOrPut false
 
-        return try {
-            val appInfo = packageManager.getApplicationInfo(packageName, 0)
-            val appName = packageManager.getApplicationLabel(appInfo).toString().lowercase(Locale.US)
-            "camera" in appName && VIDEO_CALL_PACKAGE_HINTS.none { it in appName }
-        } catch (_: Exception) {
-            false
+            try {
+                val appInfo = packageManager.getApplicationInfo(packageName, 0)
+                val appName = packageManager.getApplicationLabel(appInfo).toString().lowercase(Locale.US)
+                "camera" in appName && VIDEO_CALL_PACKAGE_HINTS.none { it in appName }
+            } catch (_: Exception) {
+                false
+            }
         }
     }
 
@@ -270,7 +273,6 @@ class VolumeKeyService : AccessibilityService() {
      * Phase 3.5: Now includes focused app detection for Smart Focus
      */
     private fun showOverlay(volume: Int) {
-        Log.d(TAG, "showOverlay: volume=$volume, foreground=$foregroundPackage")
         OverlayService.showFromAccessibilityHost(
             host = this,
             volume = volume,
@@ -308,6 +310,7 @@ class VolumeKeyService : AccessibilityService() {
         // Unregister audio device callback
         audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
         cameraManager?.unregisterAvailabilityCallback(cameraAvailabilityCallback)
+        stopService(Intent(this, OverlayService::class.java))
         Log.d(TAG, "VolumeKeyService destroyed")
     }
 }

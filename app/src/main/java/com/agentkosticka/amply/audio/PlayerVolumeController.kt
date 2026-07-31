@@ -5,7 +5,6 @@ import android.content.Context
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.util.Log
-import com.agentkosticka.amply.shizuku.ShizukuRepository
 import java.lang.reflect.Method
 
 /**
@@ -18,8 +17,7 @@ import java.lang.reflect.Method
  * Note: Volume control may not work on devices with strict hidden API enforcement.
  */
 class PlayerVolumeController(
-    context: Context,
-    private val shizukuRepository: ShizukuRepository? = null
+    context: Context
 ) {
 
     companion object {

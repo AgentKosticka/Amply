@@ -153,8 +153,6 @@ class VolumeUserService : IVolumeService.Stub() {
             val configs = getActivePlaybackConfigurations() ?: return IntArray(0)
             lastConfigs = configs // Store for setPlayerVolume
 
-            Log.d(TAG, "Found ${configs.size} active playback configurations (privileged)")
-
             // Build result array: [count, piid1, uid1, pid1, state1, piid2, uid2, pid2, state2, ...]
             val result = mutableListOf<Int>()
             result.add(configs.size)
@@ -164,8 +162,6 @@ class VolumeUserService : IVolumeService.Stub() {
                 val uid = getClientUid(config)
                 val pid = getClientPid(config)
                 val state = getPlayerState(config)
-
-                Log.d(TAG, "Config: piid=$piid, uid=$uid, pid=$pid, state=$state")
 
                 result.add(piid)
                 result.add(uid)
@@ -181,8 +177,6 @@ class VolumeUserService : IVolumeService.Stub() {
     }
 
     override fun setPlayerVolume(piid: Int, volume: Float): Boolean {
-        Log.d(TAG, "setPlayerVolume: piid=$piid, volume=$volume")
-
         if (!reflectionInitialized) {
             initializeReflection()
         }
@@ -208,9 +202,6 @@ class VolumeUserService : IVolumeService.Stub() {
             val uid = getClientUid(config)
             val piid = getPlayerInterfaceId(config)
             
-            Log.d(TAG, "setVolumeForConfig: piid=$piid, uid=$uid, volume=$volume")
-            Log.d(TAG, "  setVolumeMethod=${setVolumeMethod != null}, getPlayerProxyMethod=${getPlayerProxyMethod != null}")
-            
             if (getPlayerProxyMethod == null) {
                 Log.e(TAG, "getPlayerProxyMethod is NULL - reflection failed!")
                 return false
@@ -222,8 +213,6 @@ class VolumeUserService : IVolumeService.Stub() {
                 return false
             }
 
-            Log.d(TAG, "Got PlayerProxy: ${playerProxy.javaClass.name}")
-            
             if (setVolumeMethod == null) {
                 Log.e(TAG, "setVolumeMethod is NULL - cannot set volume!")
                 return false
@@ -231,7 +220,6 @@ class VolumeUserService : IVolumeService.Stub() {
 
             // Try to set volume
             setVolumeMethod!!.invoke(playerProxy, volume)
-            Log.d(TAG, "Volume set successfully: piid=$piid, uid=$uid, volume=$volume")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set volume: ${e.message}", e)
