@@ -169,8 +169,13 @@ object OverlayManager {
     }
 
     fun updateSelectedVolumeTarget(target: VolumeTarget) {
-        selectedVolumeTarget.value = target
-        if (overlayVisible.value) refreshSystemStreamVolumes()
+        // Freeze the rendered target during the exit animation. The session controller
+        // clears its manual target as soon as hiding begins, but that reset belongs to
+        // the next overlay appearance and must not replace the bar that is fading out.
+        if (overlayVisible.value) {
+            selectedVolumeTarget.value = target
+            refreshSystemStreamVolumes()
+        }
     }
 
     fun setPauseAmplyCallback(callback: () -> Unit) {
@@ -410,10 +415,11 @@ object OverlayManager {
             return
         }
 
-        if (overlayVisible.value) {
+        val wasVisible = overlayVisible.value
+        overlayVisible.value = false
+        if (wasVisible) {
             onOverlayHiddenCallback?.invoke()
         }
-        overlayVisible.value = false
         removeJob?.cancel()
         removeJob = managerScope.launch {
             delay(200L)

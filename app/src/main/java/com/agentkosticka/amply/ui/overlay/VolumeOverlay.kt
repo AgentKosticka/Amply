@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
@@ -429,21 +430,22 @@ private fun MainVolumePill(
     onInteraction: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
-    val pillWidth by animateDpAsState(
-        targetValue = if (isExpanded) ExpandedPillWidth else CollapsedPillWidth,
+    val expansionProgress by animateFloatAsState(
+        targetValue = if (isExpanded) 1f else 0f,
         animationSpec = tween(250, easing = FastOutSlowInEasing),
-        label = "mainPillWidth"
+        label = "pillExpansionProgress"
     )
-    val arrowWidth by animateDpAsState(
-        targetValue = if (isExpanded) ExpandedPillWidth - (ExpandControlSideInset * 2) else ExpandControlHeight,
-        animationSpec = tween(250, easing = FastOutSlowInEasing),
-        label = "expandArrowWidth"
-    )
-    val mediaStream = streams.first()
-    val collapsedStream = streams.firstOrNull { it.streamType == selectedTarget.streamType }
-        ?: mediaStream
-    val primaryStream = if (isExpanded) mediaStream else collapsedStream
-    val secondaryStreams = streams.drop(1)
+    // Keep every moving part on the same animation clock. Deriving widths and stream
+    // offsets from one progress value makes rapid direction changes remain coherent.
+    val pillWidth = CollapsedPillWidth +
+        ((ExpandedPillWidth - CollapsedPillWidth) * expansionProgress)
+    val expandedArrowWidth = ExpandedPillWidth - (ExpandControlSideInset * 2)
+    val arrowWidth = ExpandControlHeight +
+        ((expandedArrowWidth - ExpandControlHeight) * expansionProgress)
+    val selectedStreamType = streams
+        .firstOrNull { it.streamType == selectedTarget.streamType }
+        ?.streamType
+        ?: AudioManager.STREAM_MUSIC
 
     Column(
         modifier = modifier
@@ -460,53 +462,35 @@ private fun MainVolumePill(
         Box(
             modifier = Modifier.width(pillWidth),
         ) {
-            if (isExpanded) {
-                Row(
-                    modifier = Modifier
-                        .align(if (keepMediaAtEnd) Alignment.TopStart else Alignment.TopStart)
-                        .padding(
-                            start = if (keepMediaAtEnd) 0.dp else CollapsedPillWidth,
-                            end = if (keepMediaAtEnd) CollapsedPillWidth else 0.dp
-                        )
-                ) {
-                    val visibleSecondaryStreams = if (keepMediaAtEnd) {
-                        secondaryStreams.asReversed()
-                    } else {
-                        secondaryStreams
-                    }
-                    visibleSecondaryStreams.forEach { stream ->
-                        StreamVolumeColumn(
-                            stream = stream,
-                            onVolumeChange = { newVolume ->
-                                onStreamSelected(VolumeTarget.fromStreamType(stream.streamType))
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onInteraction()
-                                onStreamVolumeChange(stream.streamType, newVolume)
-                            },
-                            onMediaMuteToggle = {}
-                        )
-                    }
-                }
-            }
+            streams.forEachIndexed { index, stream ->
+                val isSelected = stream.streamType == selectedStreamType
+                val expandedSlot = if (keepMediaAtEnd) streams.lastIndex - index else index
+                val streamOffset = CollapsedPillWidth * expandedSlot * expansionProgress
+                val streamAlpha = if (isSelected) 1f else expansionProgress
 
-            StreamVolumeColumn(
-                stream = primaryStream,
-                onVolumeChange = { newVolume ->
-                    if (isExpanded) {
-                        onStreamSelected(VolumeTarget.fromStreamType(primaryStream.streamType))
-                    }
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onInteraction()
-                    onStreamVolumeChange(primaryStream.streamType, newVolume)
-                },
-                onMediaMuteToggle = {
-                    if (isExpanded) onStreamSelected(VolumeTarget.MEDIA)
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onInteraction()
-                    onMuteToggle()
-                },
-                modifier = Modifier.align(if (keepMediaAtEnd) Alignment.TopEnd else Alignment.TopStart)
-            )
+                StreamVolumeColumn(
+                    stream = stream,
+                    enabled = isExpanded || isSelected,
+                    onVolumeChange = { newVolume ->
+                        if (isExpanded) {
+                            onStreamSelected(VolumeTarget.fromStreamType(stream.streamType))
+                        }
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onInteraction()
+                        onStreamVolumeChange(stream.streamType, newVolume)
+                    },
+                    onMediaMuteToggle = {
+                        if (isExpanded) onStreamSelected(VolumeTarget.MEDIA)
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onInteraction()
+                        onMuteToggle()
+                    },
+                    modifier = Modifier
+                        .offset(x = streamOffset)
+                        .alpha(streamAlpha)
+                        .zIndex(if (isSelected) 1f else 0f)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -543,6 +527,7 @@ private fun StreamVolumeColumn(
     stream: OverlayStreamVolume,
     onVolumeChange: (Int) -> Unit,
     onMediaMuteToggle: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val volumePercentage by remember(stream.currentVolume, stream.maxVolume) {
@@ -568,6 +553,7 @@ private fun StreamVolumeColumn(
                     onMediaMuteToggle()
                 }
             },
+            enabled = enabled,
             modifier = Modifier.size(26.dp)
         ) {
             Icon(
@@ -606,6 +592,7 @@ private fun StreamVolumeColumn(
             currentVolume = stream.currentVolume,
             maxVolume = stream.maxVolume,
             onVolumeChange = onVolumeChange,
+            enabled = enabled,
             modifier = Modifier
                 .height(130.dp)
                 .width(40.dp)
@@ -932,33 +919,41 @@ fun DraggableDotSlider(
     currentVolume: Int,
     maxVolume: Int,
     onVolumeChange: (Int) -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val dotCount = 16
 
     Canvas(
         modifier = modifier
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDrag = { change, _ ->
-                        change.consume()
-                        val y = change.position.y
-                        val height = size.height
-                        val percentage = 1f - (y / height).coerceIn(0f, 1f)
-                        val newVolume = (percentage * maxVolume).toInt().coerceIn(0, maxVolume)
-                        onVolumeChange(newVolume)
-                    }
-                )
-            }
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    val y = offset.y
-                    val height = size.height
-                    val percentage = 1f - (y / height).coerceIn(0f, 1f)
-                    val newVolume = (percentage * maxVolume).toInt().coerceIn(0, maxVolume)
-                    onVolumeChange(newVolume)
+            .then(
+                if (enabled) {
+                    Modifier
+                        .pointerInput(maxVolume) {
+                            detectDragGestures(
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val y = change.position.y
+                                    val height = size.height
+                                    val percentage = 1f - (y / height).coerceIn(0f, 1f)
+                                    val newVolume = (percentage * maxVolume).toInt().coerceIn(0, maxVolume)
+                                    onVolumeChange(newVolume)
+                                }
+                            )
+                        }
+                        .pointerInput(maxVolume) {
+                            detectTapGestures { offset ->
+                                val y = offset.y
+                                val height = size.height
+                                val percentage = 1f - (y / height).coerceIn(0f, 1f)
+                                val newVolume = (percentage * maxVolume).toInt().coerceIn(0, maxVolume)
+                                onVolumeChange(newVolume)
+                            }
+                        }
+                } else {
+                    Modifier
                 }
-            }
+            )
     ) {
         val dotRadius = 3.5.dp.toPx()
         val spacing = size.height / (dotCount - 1)
