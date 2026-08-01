@@ -31,6 +31,26 @@ val NothingTypography = Typography(
         letterSpacing = 1.sp
     ),
 
+    // Page and card titles
+    headlineMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Bold,
+        fontSize = 24.sp,
+        letterSpacing = 1.2.sp
+    ),
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Bold,
+        fontSize = 20.sp,
+        letterSpacing = 1.sp
+    ),
+    titleMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Bold,
+        fontSize = 16.sp,
+        letterSpacing = 0.5.sp
+    ),
+
     // Labels - Medium weight
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -63,5 +83,11 @@ val NothingTypography = Typography(
         fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
         letterSpacing = 0.25.sp
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+        letterSpacing = 0.4.sp
     )
 )

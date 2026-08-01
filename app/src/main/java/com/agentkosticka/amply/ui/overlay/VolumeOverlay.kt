@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,7 +58,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
@@ -593,7 +593,7 @@ private fun StreamVolumeColumn(
         Text(
             text = "$volumePercentage",
             color = NothingColors.White,
-            fontSize = 16.sp,
+            style = MaterialTheme.typography.labelLarge,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
@@ -784,7 +784,7 @@ private fun AmplyPanel(
         Text(
             text = "${apps.size} ${if (apps.size == 1) "app" else "apps"}",
             color = NothingColors.GreyDim,
-            fontSize = 9.sp
+            style = MaterialTheme.typography.labelSmall
         )
     }
 }
@@ -827,7 +827,7 @@ private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
         Text(
             text = "Shizuku disconnected",
             color = NothingColors.GreyMedium,
-            fontSize = 11.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -903,7 +903,7 @@ private fun AppVolumeRow(
                 Text(
                     text = app.appName,
                     color = NothingColors.White,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -914,7 +914,7 @@ private fun AppVolumeRow(
             Text(
                 text = "$volumePercent%",
                 color = if (volumePercent > 80) NothingColors.Red else NothingColors.GreyMedium,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold
             )

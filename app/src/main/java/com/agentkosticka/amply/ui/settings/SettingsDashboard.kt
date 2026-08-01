@@ -66,7 +66,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.net.toUri
 import com.agentkosticka.amply.AmplyRuntime
@@ -685,7 +684,7 @@ private fun VolumeKeyHandlingPanel(
                         },
                         color = NothingColors.GreyMedium,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 Button(
@@ -696,13 +695,17 @@ private fun VolumeKeyHandlingPanel(
                         contentColor = NothingColors.White
                     )
                 ) {
-                    Text("RESTORE NOW", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("RESTORE NOW", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        Text("EXPANDED-PILL PAUSE DURATION", color = NothingColors.GreyMedium, fontSize = 11.sp)
+        Text(
+            "EXPANDED-PILL PAUSE DURATION",
+            color = NothingColors.GreyMedium,
+            style = MaterialTheme.typography.labelSmall
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AmplyPauseDuration.entries.filter { it.minutes != null }.forEach { duration ->
@@ -730,7 +733,11 @@ private fun VolumeKeyHandlingPanel(
                 contentColor = NothingColors.White
             )
         ) {
-            Text("TURN BACK ON ONLY MANUALLY", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            Text(
+                "TURN BACK ON ONLY MANUALLY",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -790,11 +797,15 @@ private fun StandDownAppRow(
                     app.packageName,
                     color = NothingColors.GreyMedium,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text("Let app use volume buttons", color = NothingColors.GreyMedium, fontSize = 11.sp)
+                Text(
+                    "Let app use volume buttons",
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
             Switch(
                 checked = enabled,
@@ -1228,14 +1239,14 @@ private fun AppSettingsRow(
                 Text(
                     text = app.appName,
                     color = NothingColors.White,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = "$volumePercent%",
                     color = if (volumePercent > 80) NothingColors.Red else NothingColors.GreyMedium,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace
                 )
             }
@@ -1301,7 +1312,7 @@ private fun VisibilityButton(
     ) {
         Text(
             text = text,
-            fontSize = 9.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold
         )
     }
