@@ -64,6 +64,8 @@ class AudioSessionManager(
     val sessionState: StateFlow<AudioSessionState> = _sessionState.asStateFlow()
     private val _activePlaybackUsages = MutableStateFlow<Set<Int>>(emptySet())
     val activePlaybackUsages: StateFlow<Set<Int>> = _activePlaybackUsages.asStateFlow()
+    private val _activeSystemStreams = MutableStateFlow(ActiveSystemStreams())
+    val activeSystemStreams: StateFlow<ActiveSystemStreams> = _activeSystemStreams.asStateFlow()
 
     private var refreshJob: Job? = null
     private var safetyRefreshJob: Job? = null
@@ -79,8 +81,6 @@ class AudioSessionManager(
     private var playbackCallback: AudioManager.AudioPlaybackCallback? = null
 
     // NEW: Map of piid -> PlayerProxy for volume control
-    private val playerProxyMap = ConcurrentHashMap<Int, Any?>()
-
     // LRU cache for app metadata
     private val appMetadataCache = LruCache<Int, AppMetadata>(CACHE_SIZE)
     
@@ -168,6 +168,8 @@ class AudioSessionManager(
                     if (state == VolumeServiceConnectionState.CONNECTED) {
                         appliedPlayerGains.clear()
                         requestRefresh()
+                    } else {
+                        _activeSystemStreams.value = ActiveSystemStreams()
                     }
                 }
         }
@@ -240,6 +242,7 @@ class AudioSessionManager(
             playbackCallback = null
         }
         _activePlaybackUsages.value = emptySet()
+        _activeSystemStreams.value = ActiveSystemStreams()
     }
 
     /**
@@ -260,6 +263,12 @@ class AudioSessionManager(
             if (playbackResult != null) {
                 val privilegedPlaybacks = playbackResult
                     .filter { it.state == PLAYER_STATE_STARTED }
+                val topology = shizukuVolumeManager.getStreamTopology() ?: StreamTopology.UNKNOWN
+                _activeSystemStreams.value = ActiveSystemStreams(
+                    rawStreamTypes = privilegedPlaybacks.mapTo(linkedSetOf()) { it.streamType },
+                    topology = topology,
+                    shizukuConnected = true
+                )
                 pruneAppliedPlayerGains(privilegedPlaybacks.mapTo(mutableSetOf()) { it.piid })
 
                 if (privilegedPlaybacks.isNotEmpty()) {
@@ -278,6 +287,8 @@ class AudioSessionManager(
             }
         }
 
+        _activeSystemStreams.value = ActiveSystemStreams()
+
         // ==============================================
         // FALLBACK 1: PlayerVolumeController (local reflection)
         // Usually returns -1 for uid due to sanitization
@@ -287,12 +298,6 @@ class AudioSessionManager(
 
         if (activePlayers.isNotEmpty()) {
             pruneAppliedPlayerGains(activePlayers.mapTo(mutableSetOf()) { it.piid })
-            // Store PlayerProxy references for volume control
-            playerProxyMap.clear()
-            activePlayers.forEach { player ->
-                playerProxyMap[player.piid] = player.playerProxy
-            }
-
             // Convert ActivePlayers to AudioSessions with app metadata
             val enrichedSessions = activePlayers.mapNotNull { player ->
                 enrichPlayerWithMetadata(player)
@@ -411,7 +416,7 @@ class AudioSessionManager(
                     packageName = cached.packageName,
                     appName = cached.appName,
                     appIcon = cached.appIcon,
-                    streamType = AudioManager.STREAM_MUSIC,
+                    streamType = playback.streamType,
                     volume = persistedVolume,
                     lastSeenTimestamp = System.currentTimeMillis()
                 )
@@ -447,7 +452,7 @@ class AudioSessionManager(
                 packageName = packageName,
                 appName = appName,
                 appIcon = appIcon,
-                streamType = AudioManager.STREAM_MUSIC,
+                streamType = playback.streamType,
                 volume = persistedVolume,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
@@ -693,7 +698,6 @@ class AudioSessionManager(
         stopPolling()
         managerScope.cancel()
         appMetadataCache.evictAll()
-        playerProxyMap.clear()
         appliedPlayerGains.clear()
         seenAppWriteTimes.clear()
     }

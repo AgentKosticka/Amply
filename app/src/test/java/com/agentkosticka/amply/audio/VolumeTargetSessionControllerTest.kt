@@ -104,4 +104,78 @@ class VolumeTargetSessionControllerTest {
         controller.onTimeAdvanced()
         assertEquals(VolumeTarget.MEDIA, controller.selectedTarget.value)
     }
+
+    @Test
+    fun dynamicStreamPriorityMatchesRoutingContract() {
+        val active = setOf(
+            VolumeTarget.SYSTEM,
+            VolumeTarget.TTS,
+            VolumeTarget.ASSISTANT,
+            VolumeTarget.DTMF,
+            VolumeTarget.RING,
+            VolumeTarget.ACCESSIBILITY,
+            VolumeTarget.ALARM,
+            VolumeTarget.BLUETOOTH_SCO
+        )
+        assertEquals(
+            VolumeTarget.BLUETOOTH_SCO,
+            VolumeTargetPolicy.automaticTarget(
+                SystemVolumeContext(activeStreamTargets = active),
+                nowElapsedMs = 1_000L
+            )
+        )
+        assertEquals(
+            VolumeTarget.ACCESSIBILITY,
+            VolumeTargetPolicy.automaticTarget(
+                SystemVolumeContext(activeStreamTargets = active - VolumeTarget.BLUETOOTH_SCO - VolumeTarget.ALARM),
+                nowElapsedMs = 1_000L
+            )
+        )
+        assertEquals(
+            VolumeTarget.DTMF,
+            VolumeTargetPolicy.automaticTarget(
+                SystemVolumeContext(
+                    activeStreamTargets = active - VolumeTarget.BLUETOOTH_SCO -
+                        VolumeTarget.ALARM - VolumeTarget.ACCESSIBILITY - VolumeTarget.RING
+                ),
+                nowElapsedMs = 1_000L
+            )
+        )
+    }
+
+    @Test
+    fun independentRingTargetsRingButConfirmedAliasTargetsCanonicalRinger() {
+        assertEquals(
+            VolumeTarget.RING,
+            VolumeTargetPolicy.automaticTarget(
+                SystemVolumeContext(activeStreamTargets = setOf(VolumeTarget.RING)),
+                1_000L
+            )
+        )
+        val topology = StreamTopology(true, mapOf(2 to 5, 5 to 5))
+        assertEquals(
+            VolumeTarget.NOTIFICATION,
+            VolumeTargetPolicy.automaticTarget(
+                SystemVolumeContext(
+                    activeStreamTargets = setOf(VolumeTarget.NOTIFICATION),
+                    topology = topology
+                ),
+                1_000L
+            )
+        )
+    }
+
+    @Test
+    fun disabledActiveStreamFallsThroughToNextPriority() {
+        assertEquals(
+            VolumeTarget.ASSISTANT,
+            VolumeTargetPolicy.automaticTarget(
+                SystemVolumeContext(
+                    activeStreamTargets = setOf(VolumeTarget.DTMF, VolumeTarget.ASSISTANT),
+                    disabledTargets = setOf(VolumeTarget.DTMF)
+                ),
+                1_000L
+            )
+        )
+    }
 }

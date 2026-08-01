@@ -6,6 +6,8 @@ import android.os.IBinder
 import android.os.Process
 import android.util.Log
 import org.lsposed.hiddenapibypass.HiddenApiBypass
+import com.agentkosticka.amply.audio.LegacyStreamResolver
+import com.agentkosticka.amply.audio.VolumeTarget
 import java.lang.reflect.Method
 
 /**
@@ -156,10 +158,13 @@ class VolumeUserService : IVolumeService.Stub() {
         }
 
         try {
-            val configs = getActivePlaybackConfigurations() ?: return IntArray(0)
+            // A one-element response is the valid wire representation of an idle
+            // service. Never return a zero-length array: the client reserves that for
+            // a query/protocol failure and temporarily uses its local fallback.
+            val configs = getActivePlaybackConfigurations() ?: return intArrayOf(0)
             lastConfigs = configs // Store for setPlayerVolume
 
-            // Build result array: [count, piid1, uid1, pid1, state1, piid2, uid2, pid2, state2, ...]
+            // [count, piid, uid, pid, state, legacyStreamType, ...]
             val result = mutableListOf<Int>()
             result.add(configs.size)
 
@@ -168,17 +173,25 @@ class VolumeUserService : IVolumeService.Stub() {
                 val uid = getClientUid(config)
                 val pid = getClientPid(config)
                 val state = getPlayerState(config)
+                val attributes = config.audioAttributes
+                val allFlags = runCatching {
+                    val method = attributes.javaClass.getDeclaredMethod("getAllFlags")
+                    method.isAccessible = true
+                    method.invoke(attributes) as Int
+                }.getOrElse { attributes.flags }
+                val streamType = LegacyStreamResolver.resolve(attributes.usage, allFlags).streamType
 
                 result.add(piid)
                 result.add(uid)
                 result.add(pid)
                 result.add(state)
+                result.add(streamType)
             }
 
             return result.toIntArray()
         } catch (e: Exception) {
             Log.e(TAG, "Error getting playback configurations", e)
-            return IntArray(0)
+            return intArrayOf(0)
         }
     }
 
@@ -201,6 +214,54 @@ class VolumeUserService : IVolumeService.Stub() {
         }
 
         return setVolumeForConfig(config, volume)
+    }
+
+    override fun getStreamTopology(): IntArray {
+        val service: Any = audioService ?: run {
+            if (initializeAudioService()) audioService else null
+        } ?: return intArrayOf(0, 12, *IntArray(12) { it })
+
+        val identity = IntArray(12) { it }
+        val method = service.javaClass.methods.firstOrNull {
+            it.name == "getStreamTypeAlias" && it.parameterTypes.size == 1
+        } ?: return intArrayOf(0, 12, *identity)
+        return try {
+            val aliases = IntArray(12) { stream -> method.invoke(service, stream) as Int }
+            intArrayOf(1, aliases.size, *aliases)
+        } catch (e: Exception) {
+            Log.w(TAG, "Authoritative stream aliases unavailable", e)
+            intArrayOf(0, 12, *identity)
+        }
+    }
+
+    override fun setSystemStreamVolume(streamType: Int, index: Int): Int {
+        if (streamType !in 0..11 || streamType == VolumeTarget.ENFORCED_AUDIBLE.streamType) {
+            return STATUS_DENIED
+        }
+        val service: Any = audioService ?: run {
+            if (initializeAudioService()) audioService else null
+        } ?: return STATUS_UNAVAILABLE
+        return try {
+            invokeCompatible(
+                service,
+                listOf("setStreamVolumeWithAttribution", "setStreamVolume"),
+                streamType,
+                index,
+                0,
+                "com.android.shell",
+                null
+            )
+            val applied = invokeAudioService(service, "getStreamVolume", streamType) as? Int
+            if (applied == index) STATUS_OK else STATUS_FAILED
+        } catch (e: SecurityException) {
+            Log.w(TAG, "System stream update denied stream=$streamType", e)
+            STATUS_DENIED
+        } catch (e: NoSuchMethodException) {
+            STATUS_UNSUPPORTED
+        } catch (e: Exception) {
+            Log.e(TAG, "System stream update failed stream=$streamType", e)
+            STATUS_FAILED
+        }
     }
 
     override fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int {

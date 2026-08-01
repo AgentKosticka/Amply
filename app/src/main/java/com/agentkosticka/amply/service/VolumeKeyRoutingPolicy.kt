@@ -56,6 +56,10 @@ internal class VolumeKeyStreamActionRouter {
 
     fun onUp(keyCode: Int): VolumeKeyStreamAction? = actions.remove(keyCode)
 
+    fun replace(keyCode: Int, action: VolumeKeyStreamAction) {
+        actions[keyCode] = action
+    }
+
     fun clear() = actions.clear()
 }
 

@@ -13,7 +13,6 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.ComposeView
@@ -33,7 +32,9 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.audio.NotificationAlertMode
+import com.agentkosticka.amply.audio.DynamicStreamState
 import com.agentkosticka.amply.audio.StreamMuteToggleController
+import com.agentkosticka.amply.audio.VolumeBarModel
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
@@ -111,15 +112,8 @@ object OverlayManager {
     private var removeJob: Job? = null
 
     // State - persists across hide/show cycles
-    private val currentVolume = mutableIntStateOf(0)
-    private val maxVolume = mutableIntStateOf(30)
-    private val alarmVolume = mutableIntStateOf(0)
-    private val maxAlarmVolume = mutableIntStateOf(7)
-    private val notificationVolume = mutableIntStateOf(0)
-    private val maxNotificationVolume = mutableIntStateOf(7)
-    private val notificationAlertMode = mutableStateOf(NotificationAlertMode.LOUD)
-    private val callVolume = mutableIntStateOf(0)
-    private val maxCallVolume = mutableIntStateOf(5)
+    private val volumeBars = mutableStateOf<List<VolumeBarModel>>(emptyList())
+    private val dynamicStreamState = mutableStateOf(DynamicStreamState())
     private val selectedVolumeTarget = mutableStateOf(VolumeTarget.MEDIA)
     private val iconType = mutableStateOf("MUSIC")
     private val currentApps = mutableStateOf<List<OverlayAppEntry>>(emptyList())
@@ -138,6 +132,7 @@ object OverlayManager {
     private var onOverlayHiddenCallback: (() -> Unit)? = null
     private var onPauseAmplyCallback: (() -> Unit)? = null
     private var onNotificationModeToggleCallback: (() -> Unit)? = null
+    private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
     private val overlayVisible = mutableStateOf(false)
     private var isOverlayExpanded = false
 
@@ -200,6 +195,19 @@ object OverlayManager {
 
     fun refreshStreamVolumes() {
         refreshSystemStreamVolumes()
+    }
+
+    fun updateDynamicStreams(state: DynamicStreamState) {
+        dynamicStreamState.value = state
+        refreshSystemStreamVolumes()
+    }
+
+    fun setSystemStreamVolumeCallback(callback: (VolumeTarget, Int) -> Boolean) {
+        onSystemStreamVolumeChangeCallback = callback
+    }
+
+    fun clearSystemStreamVolumeCallback() {
+        onSystemStreamVolumeChangeCallback = null
     }
 
     fun updateApps(
@@ -337,15 +345,7 @@ object OverlayManager {
         view.setContent {
             AmplyTheme {
                 VolumeOverlay(
-                    currentVolume = currentVolume.intValue,
-                    maxVolume = maxVolume.intValue,
-                    alarmVolume = alarmVolume.intValue,
-                    maxAlarmVolume = maxAlarmVolume.intValue,
-                    notificationVolume = notificationVolume.intValue,
-                    maxNotificationVolume = maxNotificationVolume.intValue,
-                    notificationAlertMode = notificationAlertMode.value,
-                    callVolume = callVolume.intValue,
-                    maxCallVolume = maxCallVolume.intValue,
+                    volumeBars = volumeBars.value,
                     selectedTarget = selectedVolumeTarget.value,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
@@ -471,19 +471,33 @@ object OverlayManager {
 
     private fun refreshSystemStreamVolumes() {
         val manager = audioManager ?: return
-        currentVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        maxVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        alarmVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_ALARM)
-        maxAlarmVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-        notificationVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
-        maxNotificationVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
-        notificationAlertMode.value = NotificationAlertMode.resolve(
-            ringerMode = manager.ringerMode,
-            currentVolume = notificationVolume.intValue,
-            minVolume = manager.getStreamMinVolume(AudioManager.STREAM_NOTIFICATION)
-        )
-        callVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
-        maxCallVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+        val state = dynamicStreamState.value
+        val topology = state.topology
+        val combinedRinger = topology.aliasesTogether(VolumeTarget.RING, VolumeTarget.NOTIFICATION)
+        volumeBars.value = state.visibleTargets().map { target ->
+            val aliases = VolumeTarget.entries
+                .filter { topology.canonicalTarget(it) == target }
+                .mapTo(linkedSetOf()) { it.streamType }
+            val current = runCatching { manager.getStreamVolume(target.streamType) }.getOrDefault(0)
+            val min = runCatching { manager.getStreamMinVolume(target.streamType) }.getOrDefault(0)
+            val max = runCatching { manager.getStreamMaxVolume(target.streamType) }.getOrDefault(min)
+            val ringerControl = VolumeTarget.NOTIFICATION.streamType in aliases ||
+                VolumeTarget.RING.streamType in aliases
+            VolumeBarModel(
+                target = target,
+                aliases = aliases.ifEmpty { setOf(target.streamType) },
+                label = if (combinedRinger && ringerControl) "Ring & notifications" else target.label,
+                currentVolume = current,
+                minVolume = min,
+                maxVolume = max,
+                active = target in state.activeTargets,
+                enabled = target.userAdjustable && target !in state.disabledTargets,
+                combinedRinger = combinedRinger && ringerControl,
+                notificationAlertMode = if (ringerControl) {
+                    NotificationAlertMode.resolve(manager.ringerMode, current, min)
+                } else null
+            )
+        }
     }
 
     /**
@@ -502,27 +516,10 @@ object OverlayManager {
         if (!changedThroughMuteToggle) {
             streamMuteToggleController.onVolumeChangedOutsideToggle(streamType)
         }
-        when (streamType) {
-            AudioManager.STREAM_MUSIC -> currentVolume.intValue = clampedVolume
-            AudioManager.STREAM_ALARM -> alarmVolume.intValue = clampedVolume
-            AudioManager.STREAM_NOTIFICATION -> notificationVolume.intValue = clampedVolume
-            AudioManager.STREAM_VOICE_CALL -> callVolume.intValue = clampedVolume
-        }
-        manager.setStreamVolume(streamType, clampedVolume, 0)
-        if (streamType == AudioManager.STREAM_NOTIFICATION) {
-            runCatching {
-                manager.ringerMode = if (clampedVolume <= manager.getStreamMinVolume(streamType)) {
-                    AudioManager.RINGER_MODE_VIBRATE
-                } else {
-                    AudioManager.RINGER_MODE_NORMAL
-                }
-            }
-            notificationAlertMode.value = NotificationAlertMode.resolve(
-                ringerMode = manager.ringerMode,
-                currentVolume = clampedVolume,
-                minVolume = manager.getStreamMinVolume(streamType)
-            )
-        }
+        val target = VolumeTarget.findByStreamType(streamType) ?: return
+        onSystemStreamVolumeChangeCallback?.invoke(target, clampedVolume)
+            ?: runCatching { manager.setStreamVolume(streamType, clampedVolume, 0) }
+        refreshSystemStreamVolumes()
     }
 
     /**
@@ -530,12 +527,15 @@ object OverlayManager {
      * through keys or a slider, restore only the first tick above minimum instead.
      */
     private fun toggleMute(streamType: Int) {
-        if (streamType != AudioManager.STREAM_MUSIC &&
-            streamType != AudioManager.STREAM_NOTIFICATION
-        ) {
+        val isRingerControl = volumeBars.value.any {
+            it.target.streamType == streamType &&
+                (it.target == VolumeTarget.NOTIFICATION ||
+                    it.target == VolumeTarget.RING || it.combinedRinger)
+        }
+        if (streamType != AudioManager.STREAM_MUSIC && !isRingerControl) {
             return
         }
-        if (streamType == AudioManager.STREAM_NOTIFICATION) {
+        if (isRingerControl) {
             onNotificationModeToggleCallback?.invoke()
             return
         }
@@ -636,8 +636,10 @@ object OverlayManager {
 
     private fun updateAvailableOverlayWidth(context: Context) {
         val density = context.resources.displayMetrics.density
+        val horizontalMargins = 32f * density
         availableOverlayWidthDp.floatValue =
-            (windowWidthForCurrentOrientation(context) / density).coerceAtLeast(216f)
+            ((context.resources.displayMetrics.widthPixels - horizontalMargins) / density)
+                .coerceAtLeast(216f)
     }
 
     private fun windowWidthForCurrentOrientation(context: Context): Int {

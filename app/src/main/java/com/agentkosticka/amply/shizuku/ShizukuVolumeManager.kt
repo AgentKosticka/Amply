@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.util.Log
+import com.agentkosticka.amply.audio.StreamTopology
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,7 @@ class ShizukuVolumeManager(
     private var serviceBinder: IBinder? = null
     private var deathRecipient: IBinder.DeathRecipient? = null
     private var activeConnection: ServiceConnection? = null
+    private var cachedStreamTopology: StreamTopology? = null
 
     private val _connectionState = MutableStateFlow(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     override val connectionState: StateFlow<VolumeServiceConnectionState> =
@@ -42,7 +44,7 @@ class ShizukuVolumeManager(
         .daemon(false)
         .processNameSuffix("volume_service")
         .debuggable(true)
-        .version(2)
+        .version(3)
 
     override fun onPermissionAvailable() {
         synchronized(lock) {
@@ -193,13 +195,15 @@ class ShizukuVolumeManager(
         volumeService = null
         serviceBinder = null
         deathRecipient = null
+        cachedStreamTopology = null
     }
 
     data class PrivilegedPlayback(
         val piid: Int,
         val uid: Int,
         val pid: Int,
-        val state: Int
+        val state: Int,
+        val streamType: Int
     )
 
     /** Returns null for an unavailable/failed service and an empty list for valid idle audio. */
@@ -209,13 +213,19 @@ class ShizukuVolumeManager(
         return try {
             val data = service.getActivePlaybacks()
             if (data.isEmpty()) {
-                invalidateConnection("playback query failed")
+                // A malformed payload is a query-level failure, not proof that the
+                // binder died. Rebinding the same healthy UserService creates a tight
+                // reconnect loop and cannot repair the payload.
+                Log.w(TAG, "Playback query returned an empty payload; keeping binder connected")
                 return null
             }
 
             val count = data[0]
-            if (count < 0 || data.size < 1 + count * 4) {
-                invalidateConnection("malformed playback response")
+            if (count < 0 || data.size != 1 + count * 5) {
+                Log.w(
+                    TAG,
+                    "Malformed playback payload size=${data.size} count=$count; keeping binder connected"
+                )
                 return null
             }
 
@@ -227,10 +237,11 @@ class ShizukuVolumeManager(
                             piid = data[index],
                             uid = data[index + 1],
                             pid = data[index + 2],
-                            state = data[index + 3]
+                            state = data[index + 3],
+                            streamType = data[index + 4]
                         )
                     )
-                    index += 4
+                    index += 5
                 }
             }
         } catch (e: Exception) {
@@ -248,6 +259,43 @@ class ShizukuVolumeManager(
         } catch (e: Exception) {
             Log.e(TAG, "Volume RPC failed piid=$piid", e)
             invalidateConnection("volume RPC failed: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    fun getStreamTopology(): StreamTopology? {
+        synchronized(lock) { cachedStreamTopology }?.let { return it }
+        val service = synchronized(lock) { volumeService } ?: return null
+        return try {
+            val data = service.getStreamTopology()
+            if (data.size < 2) error("empty topology response")
+            val count = data[1]
+            if (count !in 1..12 || data.size != 2 + count) error("malformed topology response")
+            val topology = StreamTopology(
+                aliasKnown = data[0] == 1,
+                aliases = (0 until count).associateWith { data[2 + it] }
+            )
+            synchronized(lock) { cachedStreamTopology = topology }
+            topology
+        } catch (e: Exception) {
+            Log.e(TAG, "Stream-topology query failed", e)
+            StreamTopology.UNKNOWN.also { unknown ->
+                synchronized(lock) { cachedStreamTopology = unknown }
+            }
+        }
+    }
+
+    fun invalidateStreamTopologyCache() {
+        synchronized(lock) { cachedStreamTopology = null }
+    }
+
+    fun setSystemStreamVolume(streamType: Int, index: Int): Boolean {
+        val service = synchronized(lock) { volumeService } ?: return false
+        return try {
+            service.setSystemStreamVolume(streamType, index) > 0
+        } catch (e: Exception) {
+            Log.e(TAG, "System stream update failed stream=$streamType", e)
+            invalidateConnection("system-stream RPC failed: ${e.javaClass.simpleName}")
             false
         }
     }

@@ -7,21 +7,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class VolumeTarget(val streamType: Int) {
-    MEDIA(AudioManager.STREAM_MUSIC),
-    ALARM(AudioManager.STREAM_ALARM),
-    NOTIFICATION(AudioManager.STREAM_NOTIFICATION),
-    CALL(AudioManager.STREAM_VOICE_CALL);
-
-    companion object {
-        fun fromStreamType(streamType: Int): VolumeTarget =
-            entries.firstOrNull { it.streamType == streamType } ?: MEDIA
-    }
-}
-
 data class SystemVolumeContext(
     val audioMode: Int = AudioManager.MODE_NORMAL,
     val activeUsages: Set<Int> = emptySet(),
+    val activeStreamTargets: Set<VolumeTarget> = emptySet(),
+    val topology: StreamTopology = StreamTopology.UNKNOWN,
+    val disabledTargets: Set<VolumeTarget> = emptySet(),
     val lastNotificationElapsedMs: Long = Long.MIN_VALUE
 )
 
@@ -34,24 +25,48 @@ internal object VolumeTargetPolicy {
     const val NOTIFICATION_GRACE_MS = 1_000L
 
     fun automaticTarget(context: SystemVolumeContext, nowElapsedMs: Long): VolumeTarget {
-        if (isCallMode(context.audioMode) || context.activeUsages.any(::isCallUsage)) {
-            return VolumeTarget.CALL
+        fun active(target: VolumeTarget): Boolean {
+            val canonical = context.topology.canonicalTarget(target)
+            return canonical in context.activeStreamTargets && canonical !in context.disabledTargets
         }
-        if (AudioAttributes.USAGE_ALARM in context.activeUsages) {
-            return VolumeTarget.ALARM
+        fun available(target: VolumeTarget): VolumeTarget? {
+            val canonical = context.topology.canonicalTarget(target)
+            return canonical.takeIf { it.userAdjustable && it !in context.disabledTargets }
         }
-        if (context.activeUsages.any(::isNotificationUsage) ||
-            elapsedSince(context.lastNotificationElapsedMs, nowElapsedMs) <= NOTIFICATION_GRACE_MS
+
+        if (isActiveCallMode(context.audioMode) || context.activeUsages.any(::isCallUsage) ||
+            active(VolumeTarget.BLUETOOTH_SCO) || active(VolumeTarget.CALL)
         ) {
-            return VolumeTarget.NOTIFICATION
+            if (active(VolumeTarget.BLUETOOTH_SCO)) available(VolumeTarget.BLUETOOTH_SCO)?.let { return it }
+            available(VolumeTarget.CALL)?.let { return it }
         }
-        return VolumeTarget.MEDIA
+        if (AudioAttributes.USAGE_ALARM in context.activeUsages || active(VolumeTarget.ALARM)) {
+            available(VolumeTarget.ALARM)?.let { return it }
+        }
+        if (active(VolumeTarget.ACCESSIBILITY)) {
+            available(VolumeTarget.ACCESSIBILITY)?.let { return it }
+        }
+        if (active(VolumeTarget.RING)) {
+            available(VolumeTarget.RING)?.let { return it }
+        }
+        if (context.activeUsages.any(::isNotificationUsage) || active(VolumeTarget.NOTIFICATION) ||
+            elapsedSince(context.lastNotificationElapsedMs, nowElapsedMs) <= NOTIFICATION_GRACE_MS) {
+            available(VolumeTarget.NOTIFICATION)?.let { return it }
+        }
+        listOf(
+            VolumeTarget.DTMF,
+            VolumeTarget.ASSISTANT,
+            VolumeTarget.TTS,
+            VolumeTarget.SYSTEM
+        ).firstOrNull(::active)?.let { target ->
+            available(target)?.let { return it }
+        }
+        return available(VolumeTarget.MEDIA) ?: VolumeTarget.MEDIA
     }
 
     fun isIncomingRinging(audioMode: Int): Boolean = audioMode == AudioManager.MODE_RINGTONE
 
-    private fun isCallMode(mode: Int): Boolean = when (mode) {
-        AudioManager.MODE_RINGTONE,
+    fun isActiveCallMode(mode: Int): Boolean = when (mode) {
         AudioManager.MODE_IN_CALL,
         AudioManager.MODE_IN_COMMUNICATION,
         AudioManager.MODE_CALL_SCREENING,
@@ -60,11 +75,8 @@ internal object VolumeTargetPolicy {
         else -> false
     }
 
-    private fun isCallUsage(usage: Int): Boolean = when (usage) {
-        AudioAttributes.USAGE_VOICE_COMMUNICATION,
-        AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING -> true
-        else -> false
-    }
+    private fun isCallUsage(usage: Int): Boolean =
+        usage == AudioAttributes.USAGE_VOICE_COMMUNICATION
 
     @Suppress("DEPRECATION")
     fun isNotificationUsage(usage: Int): Boolean = when (usage) {
@@ -115,6 +127,19 @@ class VolumeTargetSessionController(
     }
 
     @Synchronized
+    fun onStreamsChanged(streams: ActiveSystemStreams, disabledTargets: Set<VolumeTarget> = emptySet()) {
+        if (!streams.shizukuConnected && manualTarget?.permanentlyVisible == false) {
+            manualTarget = null
+        }
+        context = context.copy(
+            activeStreamTargets = streams.canonicalTargets,
+            topology = streams.topology,
+            disabledTargets = disabledTargets
+        )
+        publishAutomaticIfAllowed()
+    }
+
+    @Synchronized
     fun onTimeAdvanced() {
         publishAutomaticIfAllowed()
     }
@@ -155,6 +180,14 @@ class VolumeTargetSessionController(
 
     @Synchronized
     fun hasManualTarget(): Boolean = manualTarget != null
+
+    @Synchronized
+    fun onTargetUnavailable(target: VolumeTarget) {
+        if (manualTarget?.let(context.topology::canonicalTarget) == context.topology.canonicalTarget(target)) {
+            manualTarget = null
+        }
+        publishAutomaticIfAllowed()
+    }
 
     private fun publishAutomaticIfAllowed() {
         if (manualTarget == null) {

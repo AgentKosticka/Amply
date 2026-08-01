@@ -14,6 +14,8 @@ import android.os.RemoteException
  * - TRANSACTION_setPlayerVolume = 2
  * - TRANSACTION_applyRingerExperiment = 3
  * - TRANSACTION_destroy = 4
+ * - TRANSACTION_getStreamTopology = 5
+ * - TRANSACTION_setSystemStreamVolume = 6
  */
 interface IVolumeService : IInterface {
 
@@ -23,6 +25,8 @@ interface IVolumeService : IInterface {
         const val TRANSACTION_setPlayerVolume = IBinder.FIRST_CALL_TRANSACTION + 1
         const val TRANSACTION_applyRingerExperiment = IBinder.FIRST_CALL_TRANSACTION + 2
         const val TRANSACTION_destroy = IBinder.FIRST_CALL_TRANSACTION + 3
+        const val TRANSACTION_getStreamTopology = IBinder.FIRST_CALL_TRANSACTION + 4
+        const val TRANSACTION_setSystemStreamVolume = IBinder.FIRST_CALL_TRANSACTION + 5
         const val TRANSACTION_destroyUserService = 16777115
 
         fun asInterface(binder: IBinder?): IVolumeService? {
@@ -34,7 +38,7 @@ interface IVolumeService : IInterface {
 
     /**
      * Gets active playback configurations with full data (uid, pid, piid)
-     * Returns a list of PlaybackInfo objects serialized as: [count, piid1, uid1, pid1, piid2, uid2, pid2, ...]
+     * Serialized as [count, piid, uid, pid, state, legacyStreamType, ...].
      */
     fun getActivePlaybacks(): IntArray
 
@@ -47,6 +51,12 @@ interface IVolumeService : IInterface {
     fun setPlayerVolume(piid: Int, volume: Float): Boolean
 
     fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int
+
+    /** [knownFlag, count, aliasForStream0, aliasForStream1, ...]. */
+    fun getStreamTopology(): IntArray
+
+    /** Returns a positive status on success and a negative status on failure. */
+    fun setSystemStreamVolume(streamType: Int, index: Int): Int
 
     /**
      * Destroys the service
@@ -88,6 +98,19 @@ interface IVolumeService : IInterface {
                 TRANSACTION_applyRingerExperiment -> {
                     data.enforceInterface(DESCRIPTOR)
                     val result = applyRingerExperiment(data.readInt(), data.readInt(), data.readInt())
+                    reply?.writeNoException()
+                    reply?.writeInt(result)
+                    return true
+                }
+                TRANSACTION_getStreamTopology -> {
+                    data.enforceInterface(DESCRIPTOR)
+                    reply?.writeNoException()
+                    reply?.writeIntArray(getStreamTopology())
+                    return true
+                }
+                TRANSACTION_setSystemStreamVolume -> {
+                    data.enforceInterface(DESCRIPTOR)
+                    val result = setSystemStreamVolume(data.readInt(), data.readInt())
                     reply?.writeNoException()
                     reply?.writeInt(result)
                     return true
@@ -154,6 +177,40 @@ interface IVolumeService : IInterface {
                 data.writeInt(restoreVolume)
                 if (!remote.transact(TRANSACTION_applyRingerExperiment, data, reply, 0)) {
                     throw RemoteException("Volume service rejected ringer experiment")
+                }
+                reply.readException()
+                reply.readInt()
+            } finally {
+                reply.recycle()
+                data.recycle()
+            }
+        }
+
+        override fun getStreamTopology(): IntArray {
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            return try {
+                data.writeInterfaceToken(DESCRIPTOR)
+                if (!remote.transact(TRANSACTION_getStreamTopology, data, reply, 0)) {
+                    throw RemoteException("Volume service rejected stream-topology query")
+                }
+                reply.readException()
+                reply.createIntArray() ?: IntArray(0)
+            } finally {
+                reply.recycle()
+                data.recycle()
+            }
+        }
+
+        override fun setSystemStreamVolume(streamType: Int, index: Int): Int {
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            return try {
+                data.writeInterfaceToken(DESCRIPTOR)
+                data.writeInt(streamType)
+                data.writeInt(index)
+                if (!remote.transact(TRANSACTION_setSystemStreamVolume, data, reply, 0)) {
+                    throw RemoteException("Volume service rejected system-stream update")
                 }
                 reply.readException()
                 reply.readInt()

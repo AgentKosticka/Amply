@@ -202,7 +202,13 @@ class VolumeKeyService : AccessibilityService() {
                             false
                         }
                         is VolumeKeyStreamAction.Adjust -> {
-                            if (event.repeatCount == 0) handleVolumeKeyDown(isUp, action.target)
+                            if (event.repeatCount == 0) {
+                                val appliedTarget = handleVolumeKeyDown(isUp, action.target)
+                                streamActionRouter.replace(
+                                    event.keyCode,
+                                    VolumeKeyStreamAction.Adjust(appliedTarget)
+                                )
+                            }
                             true
                         }
                     }
@@ -255,12 +261,12 @@ class VolumeKeyService : AccessibilityService() {
     /**
      * Handle volume key down with hold-to-repeat logic
      */
-    private fun handleVolumeKeyDown(isUp: Boolean, target: VolumeTarget) {
+    private fun handleVolumeKeyDown(isUp: Boolean, target: VolumeTarget): VolumeTarget {
         // Cancel any existing repeat job
         repeatJob?.cancel()
 
         // Change volume once immediately
-        changeVolume(isUp, target)
+        var repeatTarget = changeVolumeWithFallback(isUp, target)
 
         // Start repeat after initial debounce
         repeatJob = serviceScope.launch {
@@ -268,10 +274,11 @@ class VolumeKeyService : AccessibilityService() {
 
             // Repeat every 150ms while held
             while (isActive) {
-                changeVolume(isUp, target)
+                repeatTarget = changeVolumeWithFallback(isUp, repeatTarget)
                 delay(150)
             }
         }
+        return repeatTarget
     }
 
     /**
@@ -288,16 +295,31 @@ class VolumeKeyService : AccessibilityService() {
      */
     private fun resolveStreamAction(): VolumeKeyStreamAction {
         val manager = audioManager ?: return VolumeKeyStreamAction.Adjust(VolumeTarget.MEDIA)
-        return (application as AmplyApplication).runtime.volumeTargetSessionController
-            .resolveForInitialKeyDown(manager.mode)
+        val runtime = (application as AmplyApplication).runtime
+        runtime.onAudioModeObserved(manager.mode)
+        return runtime.volumeTargetSessionController.resolveForInitialKeyDown(manager.mode)
     }
 
-    private fun changeVolume(isUp: Boolean, target: VolumeTarget) {
-        val manager = audioManager ?: return
+    private fun changeVolumeWithFallback(isUp: Boolean, initialTarget: VolumeTarget): VolumeTarget {
+        val runtime = (application as AmplyApplication).runtime
+        var target = initialTarget
+        repeat(VolumeTarget.entries.size) {
+            if (changeVolume(isUp, target)) return target
+            runtime.disableSystemStream(target)
+            target = when (val fallback = resolveStreamAction()) {
+                is VolumeKeyStreamAction.Adjust -> fallback.target
+                VolumeKeyStreamAction.SilenceIncomingRinger -> return target
+            }
+        }
+        return target
+    }
+
+    private fun changeVolume(isUp: Boolean, target: VolumeTarget): Boolean {
+        val manager = audioManager ?: return false
         val streamType = target.streamType
-        val currentVolume = manager.getStreamVolume(streamType)
-        val minVolume = manager.getStreamMinVolume(streamType)
-        val maxVolume = manager.getStreamMaxVolume(streamType)
+        val currentVolume = runCatching { manager.getStreamVolume(streamType) }.getOrElse { return false }
+        val minVolume = runCatching { manager.getStreamMinVolume(streamType) }.getOrElse { return false }
+        val maxVolume = runCatching { manager.getStreamMaxVolume(streamType) }.getOrElse { return false }
 
         val newVolume = VolumeStepPolicy.next(
             current = currentVolume,
@@ -307,18 +329,11 @@ class VolumeKeyService : AccessibilityService() {
             step = volumeStep
         )
 
-        if (target == VolumeTarget.NOTIFICATION) {
-            (application as AmplyApplication).runtime.ringerExperimentExecutor
-                .setNotificationVolumeFromControl(newVolume)
-        } else {
-            manager.setStreamVolume(
-                streamType,
-                newVolume,
-                0 // No flags = no system UI
-            )
-        }
-
+        val applied = (application as AmplyApplication).runtime
+            .setSystemStreamVolume(target, newVolume)
+        if (!applied) return false
         showOverlay(target)
+        return true
     }
 
     /**

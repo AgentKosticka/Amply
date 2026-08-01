@@ -146,6 +146,9 @@ class OverlayService : Service() {
                     }
                 },
                 serviceScope.launch {
+                    runtime.dynamicStreamState.collect(OverlayManager::updateDynamicStreams)
+                },
+                serviceScope.launch {
                     combine(
                         runtime.sessionState,
                         preferences.appSettings,
@@ -169,9 +172,10 @@ class OverlayService : Service() {
             }
             OverlayManager.setVolumeTargetCallbacks(
                 onSelected = runtime.volumeTargetSessionController::onUserSelected,
-                onShown = runtime.volumeTargetSessionController::onOverlayShown,
-                onHidden = runtime.volumeTargetSessionController::onOverlayHidden
+                onShown = runtime::onOverlayShown,
+                onHidden = runtime::onOverlayHidden
             )
+            OverlayManager.setSystemStreamVolumeCallback(runtime::setSystemStreamVolume)
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
             }
@@ -265,5 +269,6 @@ class OverlayService : Service() {
         OverlayManager.clearVolumeTargetCallbacks()
         OverlayManager.clearPauseAmplyCallback()
         OverlayManager.clearNotificationModeToggleCallback()
+        OverlayManager.clearSystemStreamVolumeCallback()
     }
 }

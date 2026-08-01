@@ -16,8 +16,10 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -25,11 +27,20 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.RingVolume
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material3.Icon
@@ -44,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
@@ -65,9 +77,13 @@ import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.audio.NotificationAlertMode
+import com.agentkosticka.amply.audio.FixedVolumeDotScale
+import com.agentkosticka.amply.audio.StreamIcon
+import com.agentkosticka.amply.audio.VolumeBarModel
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
+import kotlin.math.roundToInt
 
 private const val TAG = "VolumeOverlay"
 private val CollapsedPillWidth = 54.dp
@@ -79,15 +95,6 @@ private val ExpandControlSideInset = (CollapsedPillWidth - ExpandControlHeight) 
 private val PauseControlSlotHeight = 58.dp
 private val OverlayCornerRadius = 27.dp
 
-private data class OverlayStreamVolume(
-    val streamType: Int,
-    val currentVolume: Int,
-    val maxVolume: Int,
-    val icon: ImageVector,
-    val contentDescription: String,
-    val notificationAlertMode: NotificationAlertMode? = null
-)
-
 /**
  * Volume overlay with Nothing OS design
  * Layout: Volume pill left, per-app controls expand to the right (side-by-side)
@@ -95,15 +102,7 @@ private data class OverlayStreamVolume(
  */
 @Composable
 fun VolumeOverlay(
-    currentVolume: Int,
-    maxVolume: Int,
-    alarmVolume: Int = 0,
-    maxAlarmVolume: Int = 7,
-    notificationVolume: Int = 0,
-    maxNotificationVolume: Int = 7,
-    notificationAlertMode: NotificationAlertMode = NotificationAlertMode.LOUD,
-    callVolume: Int = 0,
-    maxCallVolume: Int = 5,
+    volumeBars: List<VolumeBarModel> = emptyList(),
     selectedTarget: VolumeTarget = VolumeTarget.MEDIA,
     visible: Boolean = true,
     iconType: String = "MUSIC",
@@ -135,13 +134,15 @@ fun VolumeOverlay(
     } else {
         configuration.screenWidthDp.dp - 32.dp
     }
-    val landscapeContainerWidth = measuredAvailableWidth
+    val desiredPillWidth = CollapsedPillWidth * volumeBars.size.coerceAtLeast(4)
+    val expandedPillWidth = desiredPillWidth.coerceAtMost(measuredAvailableWidth)
         .coerceAtLeast(ExpandedPillWidth)
+    val landscapeContainerWidth = measuredAvailableWidth.coerceAtLeast(expandedPillWidth)
     val landscapePanelWidth = ExpandedPillWidth
     val overlayContainerWidth = if (isLandscape) {
         landscapeContainerWidth
     } else {
-        ExpandedPillWidth
+        maxOf(ExpandedPillWidth, expandedPillWidth)
     }
     val landscapePanelMaxHeight = with(density) {
         if (mainPillHeightPx > 0) mainPillHeightPx.toDp() else 360.dp
@@ -176,41 +177,7 @@ fun VolumeOverlay(
         label = "chevronRotation"
     )
 
-    val streamVolumes = listOf(
-        OverlayStreamVolume(
-            streamType = AudioManager.STREAM_MUSIC,
-            currentVolume = currentVolume,
-            maxVolume = maxVolume,
-            icon = when (iconType) {
-                "BLUETOOTH" -> Icons.Rounded.Bluetooth
-                "HEADPHONE" -> Icons.Rounded.Headphones
-                else -> Icons.Default.MusicNote
-            },
-            contentDescription = "Media volume"
-        ),
-        OverlayStreamVolume(
-            streamType = AudioManager.STREAM_ALARM,
-            currentVolume = alarmVolume,
-            maxVolume = maxAlarmVolume,
-            icon = Icons.Default.Alarm,
-            contentDescription = "Alarm volume"
-        ),
-        OverlayStreamVolume(
-            streamType = AudioManager.STREAM_NOTIFICATION,
-            currentVolume = notificationVolume,
-            maxVolume = maxNotificationVolume,
-            icon = Icons.Default.Notifications,
-            contentDescription = "Notification volume",
-            notificationAlertMode = notificationAlertMode
-        ),
-        OverlayStreamVolume(
-            streamType = AudioManager.STREAM_VOICE_CALL,
-            currentVolume = callVolume,
-            maxVolume = maxCallVolume,
-            icon = Icons.Default.Call,
-            contentDescription = "Call volume"
-        )
-    )
+    val streamVolumes = volumeBars
 
     val pillContent: @Composable () -> Unit = {
         Column(
@@ -251,10 +218,13 @@ fun VolumeOverlay(
             MainVolumePill(
                 modifier = Modifier.onSizeChanged { mainPillHeightPx = it.height },
                 streams = streamVolumes,
+                expandedWidth = expandedPillWidth,
+                fullExpandedWidth = desiredPillWidth,
                 selectedTarget = selectedTarget,
                 isExpanded = isExpanded,
                 chevronRotation = chevronRotation,
                 keepMediaAtEnd = expandToStart,
+                iconType = iconType,
                 onStreamVolumeChange = { streamType, newVolume ->
                     onStreamVolumeChange(streamType, newVolume)
                 },
@@ -357,7 +327,7 @@ fun VolumeOverlay(
                     }
                     Box(
                         modifier = Modifier
-                            .width(ExpandedPillWidth)
+                            .width(expandedPillWidth)
                             .zIndex(1f),
                         contentAlignment = Alignment.BottomEnd
                     ) {
@@ -366,7 +336,7 @@ fun VolumeOverlay(
                 } else {
                     Box(
                         modifier = Modifier
-                            .width(ExpandedPillWidth)
+                            .width(expandedPillWidth)
                             .zIndex(1f),
                         contentAlignment = Alignment.BottomStart
                     ) {
@@ -445,11 +415,14 @@ fun VolumeOverlay(
 @Composable
 private fun MainVolumePill(
     modifier: Modifier = Modifier,
-    streams: List<OverlayStreamVolume>,
+    streams: List<VolumeBarModel>,
+    expandedWidth: Dp,
+    fullExpandedWidth: Dp,
     selectedTarget: VolumeTarget,
     isExpanded: Boolean,
     chevronRotation: Float,
     keepMediaAtEnd: Boolean,
+    iconType: String,
     onStreamVolumeChange: (Int, Int) -> Unit,
     onStreamSelected: (VolumeTarget) -> Unit,
     onMuteToggle: (Int) -> Unit,
@@ -457,6 +430,13 @@ private fun MainVolumePill(
     onInteraction: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val streamScroll = rememberScrollState()
+    val animatedExpandedWidth by animateDpAsState(
+        targetValue = expandedWidth,
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label = "dynamicExpandedPillWidth"
+    )
     val expansionProgress by animateFloatAsState(
         targetValue = if (isExpanded) 1f else 0f,
         animationSpec = tween(250, easing = FastOutSlowInEasing),
@@ -465,14 +445,27 @@ private fun MainVolumePill(
     // Keep every moving part on the same animation clock. Deriving widths and stream
     // offsets from one progress value makes rapid direction changes remain coherent.
     val pillWidth = CollapsedPillWidth +
-        ((ExpandedPillWidth - CollapsedPillWidth) * expansionProgress)
-    val expandedArrowWidth = ExpandedPillWidth - (ExpandControlSideInset * 2)
+        ((animatedExpandedWidth - CollapsedPillWidth) * expansionProgress)
+    val expandedArrowWidth = animatedExpandedWidth - (ExpandControlSideInset * 2)
     val arrowWidth = ExpandControlHeight +
         ((expandedArrowWidth - ExpandControlHeight) * expansionProgress)
     val selectedStreamType = streams
-        .firstOrNull { it.streamType == selectedTarget.streamType }
-        ?.streamType
+        .firstOrNull { selectedTarget.streamType in it.aliases }
+        ?.target?.streamType
         ?: AudioManager.STREAM_MUSIC
+
+    LaunchedEffect(isExpanded, selectedStreamType, streams.size) {
+        if (!isExpanded) {
+            streamScroll.animateScrollTo(0, tween(250, easing = FastOutSlowInEasing))
+        } else if (fullExpandedWidth > expandedWidth) {
+            val index = streams.indexOfFirst { it.target.streamType == selectedStreamType }.coerceAtLeast(0)
+            // Reveal the selected slot without introducing a second movement clock.
+            streamScroll.animateScrollTo(
+                with(density) { (CollapsedPillWidth * index).roundToPx() },
+                tween(250, easing = FastOutSlowInEasing)
+            )
+        }
+    }
 
     Column(
         modifier = modifier
@@ -487,32 +480,36 @@ private fun MainVolumePill(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.width(pillWidth),
+            modifier = Modifier
+                .width(pillWidth)
+                .then(if (fullExpandedWidth > expandedWidth) Modifier.horizontalScroll(streamScroll) else Modifier),
         ) {
+            Spacer(modifier = Modifier.width(fullExpandedWidth).height(1.dp))
             streams.forEachIndexed { index, stream ->
-                val isSelected = stream.streamType == selectedStreamType
+                val isSelected = stream.target.streamType == selectedStreamType
                 val expandedSlot = if (keepMediaAtEnd) streams.lastIndex - index else index
                 val streamOffset = CollapsedPillWidth * expandedSlot * expansionProgress
                 val streamAlpha = if (isSelected) 1f else expansionProgress
 
                 StreamVolumeColumn(
                     stream = stream,
-                    enabled = isExpanded || isSelected,
+                    enabled = stream.enabled && (isExpanded || isSelected),
+                    iconType = iconType,
                     onVolumeChange = { newVolume ->
                         if (isExpanded) {
-                            onStreamSelected(VolumeTarget.fromStreamType(stream.streamType))
+                            onStreamSelected(stream.target)
                         }
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onInteraction()
-                        onStreamVolumeChange(stream.streamType, newVolume)
+                        onStreamVolumeChange(stream.target.streamType, newVolume)
                     },
                     onMuteToggle = {
                         if (isExpanded) {
-                            onStreamSelected(VolumeTarget.fromStreamType(stream.streamType))
+                            onStreamSelected(stream.target)
                         }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onInteraction()
-                        onMuteToggle(stream.streamType)
+                        onMuteToggle(stream.target.streamType)
                     },
                     modifier = Modifier
                         .offset(x = streamOffset)
@@ -553,24 +550,28 @@ private fun MainVolumePill(
 
 @Composable
 private fun StreamVolumeColumn(
-    stream: OverlayStreamVolume,
+    stream: VolumeBarModel,
     onVolumeChange: (Int) -> Unit,
     onMuteToggle: () -> Unit,
+    iconType: String,
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val volumePercentage by remember(stream.currentVolume, stream.maxVolume) {
-        derivedStateOf {
-            if (stream.maxVolume > 0) {
-                ((stream.currentVolume.toFloat() / stream.maxVolume.toFloat()) * 100).toInt()
-            } else {
-                0
-            }
-        }
+    val displayedPercentage = if (stream.maxVolume > 0) {
+        ((stream.currentVolume.toFloat() / stream.maxVolume.toFloat()) * 100f)
+            .roundToInt()
+            .coerceIn(0, 100)
+    } else {
+        0
     }
-    val isMediaStream = stream.streamType == AudioManager.STREAM_MUSIC
-    val isNotificationStream = stream.streamType == AudioManager.STREAM_NOTIFICATION
-    val supportsMuteToggle = isMediaStream || isNotificationStream
+    val isMediaStream = stream.target == VolumeTarget.MEDIA
+    val isNotificationStream = stream.target == VolumeTarget.NOTIFICATION || stream.combinedRinger
+    val isRingStream = stream.target == VolumeTarget.RING && !stream.combinedRinger
+    val supportsMuteToggle = isMediaStream || isNotificationStream || isRingStream
+    val semanticIcon = streamIcon(
+        if (stream.combinedRinger) StreamIcon.NOTIFICATION else stream.target.icon,
+        iconType
+    )
 
     Column(
         modifier = modifier
@@ -587,13 +588,13 @@ private fun StreamVolumeColumn(
         ) {
             when {
                 isMediaStream -> Icon(
-                    imageVector = if (stream.currentVolume == 0) {
+                    imageVector = if (stream.currentVolume <= stream.minVolume) {
                         Icons.AutoMirrored.Filled.VolumeOff
                     } else {
                         Icons.AutoMirrored.Filled.VolumeUp
                     },
-                    contentDescription = "Mute or restore ${stream.contentDescription}",
-                    tint = if (stream.currentVolume == 0) NothingColors.Red else NothingColors.White,
+                    contentDescription = "Mute or restore ${stream.label}",
+                    tint = if (stream.currentVolume <= stream.minVolume) NothingColors.Red else NothingColors.White,
                     modifier = Modifier.size(18.dp)
                 )
 
@@ -601,10 +602,14 @@ private fun StreamVolumeColumn(
                     mode = stream.notificationAlertMode ?: NotificationAlertMode.LOUD
                 )
 
+                isRingStream -> RingerAlertIcon(
+                    mode = stream.notificationAlertMode ?: NotificationAlertMode.LOUD
+                )
+
                 else -> Icon(
-                    imageVector = stream.icon,
-                    contentDescription = stream.contentDescription,
-                    tint = NothingColors.White,
+                    imageVector = semanticIcon,
+                    contentDescription = stream.label,
+                    tint = if (stream.enabled) NothingColors.White else Color(0xFF444444),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -613,7 +618,7 @@ private fun StreamVolumeColumn(
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "$volumePercentage",
+            text = "$displayedPercentage",
             color = NothingColors.White,
             style = MaterialTheme.typography.labelLarge,
             fontFamily = FontFamily.Monospace,
@@ -628,6 +633,7 @@ private fun StreamVolumeColumn(
 
         DraggableDotSlider(
             currentVolume = stream.currentVolume,
+            minVolume = stream.minVolume,
             maxVolume = stream.maxVolume,
             onVolumeChange = onVolumeChange,
             enabled = enabled,
@@ -639,12 +645,31 @@ private fun StreamVolumeColumn(
         Spacer(modifier = Modifier.height(10.dp))
 
         Icon(
-            imageVector = stream.icon,
-            contentDescription = stream.contentDescription,
+            imageVector = semanticIcon,
+            contentDescription = stream.label,
             tint = NothingColors.GreyMedium,
             modifier = Modifier.size(16.dp)
         )
     }
+}
+
+private fun streamIcon(icon: StreamIcon, mediaIconType: String): ImageVector = when (icon) {
+    StreamIcon.MEDIA -> when (mediaIconType) {
+        "BLUETOOTH" -> Icons.Rounded.Bluetooth
+        "HEADPHONE" -> Icons.Rounded.Headphones
+        else -> Icons.Default.MusicNote
+    }
+    StreamIcon.ALARM -> Icons.Default.Alarm
+    StreamIcon.NOTIFICATION -> Icons.Default.Notifications
+    StreamIcon.CALL -> Icons.Default.Call
+    StreamIcon.SYSTEM -> Icons.Default.Settings
+    StreamIcon.RING -> Icons.Default.RingVolume
+    StreamIcon.BLUETOOTH -> Icons.Rounded.Bluetooth
+    StreamIcon.LOCKED_SOUND -> Icons.Default.Lock
+    StreamIcon.DIAL_PAD -> Icons.Default.Dialpad
+    StreamIcon.SPOKEN_TEXT -> Icons.Default.RecordVoiceOver
+    StreamIcon.ACCESSIBILITY -> Icons.Default.Accessibility
+    StreamIcon.ASSISTANT -> Icons.Default.AutoAwesome
 }
 
 @Composable
@@ -652,7 +677,7 @@ private fun NotificationAlertIcon(mode: NotificationAlertMode) {
     val tint = if (mode == NotificationAlertMode.MUTED) {
         NothingColors.Red
     } else {
-        NothingColors.GreyMedium
+        NothingColors.White
     }
     val description = when (mode) {
         NotificationAlertMode.LOUD -> "Notifications use sound"
@@ -706,6 +731,32 @@ private fun NotificationAlertIcon(mode: NotificationAlertMode) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RingerAlertIcon(mode: NotificationAlertMode) {
+    val tint = if (mode == NotificationAlertMode.MUTED) NothingColors.Red else NothingColors.White
+    val description = when (mode) {
+        NotificationAlertMode.LOUD -> "Ringtone uses sound"
+        NotificationAlertMode.VIBRATIONS -> "Phone vibrates for calls"
+        NotificationAlertMode.MUTED -> "Ringtone is muted"
+    }
+
+    Box(
+        modifier = Modifier.size(22.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = when (mode) {
+                NotificationAlertMode.LOUD -> Icons.Default.RingVolume
+                NotificationAlertMode.VIBRATIONS -> Icons.Default.Vibration
+                NotificationAlertMode.MUTED -> Icons.Default.PhoneDisabled
+            },
+            contentDescription = description,
+            tint = tint,
+            modifier = Modifier.size(19.dp)
+        )
     }
 }
 
@@ -1004,36 +1055,45 @@ private fun HorizontalVolumeRail(
 @Composable
 fun DraggableDotSlider(
     currentVolume: Int,
+    minVolume: Int = 0,
     maxVolume: Int,
     onVolumeChange: (Int) -> Unit,
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val dotCount = 16
+    val dotCount = FixedVolumeDotScale.MAX_LEVEL
 
     Canvas(
         modifier = modifier
             .then(
                 if (enabled) {
                     Modifier
-                        .pointerInput(maxVolume) {
+                        .pointerInput(minVolume, maxVolume) {
                             detectDragGestures(
                                 onDrag = { change, _ ->
                                     change.consume()
                                     val y = change.position.y
                                     val height = size.height
                                     val percentage = 1f - (y / height).coerceIn(0f, 1f)
-                                    val newVolume = (percentage * maxVolume).toInt().coerceIn(0, maxVolume)
+                                    val newVolume = FixedVolumeDotScale.levelForFraction(
+                                        percentage,
+                                        minVolume,
+                                        maxVolume
+                                    )
                                     onVolumeChange(newVolume)
                                 }
                             )
                         }
-                        .pointerInput(maxVolume) {
+                        .pointerInput(minVolume, maxVolume) {
                             detectTapGestures { offset ->
                                 val y = offset.y
                                 val height = size.height
                                 val percentage = 1f - (y / height).coerceIn(0f, 1f)
-                                val newVolume = (percentage * maxVolume).toInt().coerceIn(0, maxVolume)
+                                val newVolume = FixedVolumeDotScale.levelForFraction(
+                                    percentage,
+                                    minVolume,
+                                    maxVolume
+                                )
                                 onVolumeChange(newVolume)
                             }
                         }
@@ -1044,19 +1104,18 @@ fun DraggableDotSlider(
     ) {
         val dotRadius = 3.5.dp.toPx()
         val spacing = size.height / (dotCount - 1)
-        val filledDots = if (maxVolume > 0) {
-            ((currentVolume.toFloat() / maxVolume.toFloat()) * dotCount).toInt()
-        } else {
-            0
-        }
+        val filledDots = FixedVolumeDotScale.displayLevel(currentVolume)
 
         for (i in 0 until dotCount) {
             val y = size.height - (i * spacing)
             val x = size.width / 2
             val dotPercentage = i.toFloat() / (dotCount - 1)
+            val level = i + 1
+            val available = FixedVolumeDotScale.isLevelAvailable(level, minVolume, maxVolume)
 
             val dotColor = when {
-                i < filledDots -> {
+                !enabled || !available -> Color(0xFF343434)
+                level <= filledDots -> {
                     if (dotPercentage > 0.75f) NothingColors.Red else NothingColors.White
                 }
                 else -> Color(0xFF444444)
@@ -1067,6 +1126,32 @@ fun DraggableDotSlider(
                 radius = dotRadius,
                 center = Offset(x, y)
             )
+            if (minVolume > 0 && level == minVolume && available) {
+                drawCircle(
+                    color = NothingColors.GreyMedium.copy(alpha = 0.7f),
+                    radius = dotRadius + 2.dp.toPx(),
+                    center = Offset(x, y),
+                    style = Stroke(width = 1.dp.toPx())
+                )
+            }
+            if (!available) {
+                val crossRadius = dotRadius * 0.72f
+                val crossColor = NothingColors.GreyMedium.copy(alpha = 0.55f)
+                drawLine(
+                    color = crossColor,
+                    start = Offset(x - crossRadius, y - crossRadius),
+                    end = Offset(x + crossRadius, y + crossRadius),
+                    strokeWidth = 1.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = crossColor,
+                    start = Offset(x + crossRadius, y - crossRadius),
+                    end = Offset(x - crossRadius, y + crossRadius),
+                    strokeWidth = 1.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
         }
     }
 }
