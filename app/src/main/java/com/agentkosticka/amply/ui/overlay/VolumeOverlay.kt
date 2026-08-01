@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.ui.overlay
 
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.util.Log
 import androidx.compose.animation.*
@@ -15,10 +16,10 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
@@ -44,7 +45,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -53,9 +56,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.drawable.toBitmap
-import com.agentkosticka.amply.data.AudioSession
+import androidx.compose.ui.zIndex
+import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
 
 private const val TAG = "VolumeOverlay"
@@ -66,6 +70,7 @@ private val ExpandControlHeight = 48.dp
 private val ExpandControlIconSize = 16.dp
 private val ExpandControlSideInset = (CollapsedPillWidth - ExpandControlHeight) / 2
 private val PauseControlSlotHeight = 58.dp
+private val OverlayCornerRadius = 27.dp
 
 private data class OverlayStreamVolume(
     val streamType: Int,
@@ -92,13 +97,14 @@ fun VolumeOverlay(
     maxCallVolume: Int = 5,
     visible: Boolean = true,
     iconType: String = "MUSIC",
-    sessions: List<AudioSession> = emptyList(),
-    focusedApp: AudioSession? = null,
+    apps: List<OverlayAppEntry> = emptyList(),
+    shizukuConnectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
+    shizukuIcon: Bitmap? = null,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     onVolumeChange: (Int) -> Unit = {},
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
-    onSessionVolumeChange: (AudioSession, Float) -> Unit = { _, _ -> },
+    onAppVolumeChange: (OverlayAppEntry, Float) -> Unit = { _, _ -> },
     onMuteToggle: () -> Unit = {},
     onInteraction: () -> Unit = {},
     onTouchStart: () -> Unit = {},
@@ -108,9 +114,11 @@ fun VolumeOverlay(
     onDismissRequest: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
-    val hasActiveSessions = sessions.isNotEmpty()
+    val hasPanelContent = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED || apps.isNotEmpty()
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    var mainPillHeightPx by remember { mutableIntStateOf(0) }
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val measuredAvailableWidth = if (availableWidthDp > 0f) {
         availableWidthDp.dp
@@ -124,6 +132,9 @@ fun VolumeOverlay(
         landscapeContainerWidth
     } else {
         ExpandedPillWidth
+    }
+    val landscapePanelMaxHeight = with(density) {
+        if (mainPillHeightPx > 0) mainPillHeightPx.toDp() else 360.dp
     }
     val panelTransitionState = remember {
         MutableTransitionState(false)
@@ -142,9 +153,7 @@ fun VolumeOverlay(
         }
     }
 
-    LaunchedEffect(isExpanded, hasActiveSessions) {
-        panelTransitionState.targetState = isExpanded && hasActiveSessions
-    }
+    panelTransitionState.targetState = isExpanded && hasPanelContent
 
     // Chevron rotation animation
     val chevronRotation by animateFloatAsState(
@@ -194,6 +203,7 @@ fun VolumeOverlay(
 
     val pillContent: @Composable () -> Unit = {
         Column(
+            modifier = Modifier.zIndex(1f),
             horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
         ) {
             Box(
@@ -228,6 +238,7 @@ fun VolumeOverlay(
                 }
             }
             MainVolumePill(
+                modifier = Modifier.onSizeChanged { mainPillHeightPx = it.height },
                 streams = streamVolumes,
                 isExpanded = isExpanded,
                 chevronRotation = chevronRotation,
@@ -244,31 +255,34 @@ fun VolumeOverlay(
                     val nextExpanded = !isExpanded
                     isExpanded = nextExpanded
                     onExpandedChange(nextExpanded)
-                    onInteraction()
                 },
                 onInteraction = onInteraction
             )
         }
     }
 
-    val panelBody: @Composable (Dp) -> Unit = { panelWidth ->
-        AmplyPanel(
-            panelWidth = panelWidth,
-            sessions = sessions,
-            focusedApp = focusedApp,
-            onSessionVolumeChange = { session, volume ->
-                Log.d(TAG, "Session volume change: sessionId=${session.sessionId}, volume=$volume")
-                onInteraction()
-                onSessionVolumeChange(session, volume)
-            },
-            onClose = {
-                isExpanded = false
-                onExpandedChange(false)
-                onInteraction()
-            },
-            onTouchStart = onTouchStart,
-            onTouchEnd = onTouchEnd
-        )
+    val panelBody: @Composable (Dp, Dp) -> Unit = { panelWidth, maxHeight ->
+        if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED) {
+            AmplyPanel(
+                panelWidth = panelWidth,
+                maxHeight = maxHeight,
+                apps = apps,
+                onAppVolumeChange = { app, volume ->
+                    Log.d(TAG, "App volume change: package=${app.packageName}, volume=$volume")
+                    onInteraction()
+                    onAppVolumeChange(app, volume)
+                },
+                onClose = {
+                    isExpanded = false
+                    onExpandedChange(false)
+                    onInteraction()
+                },
+                onTouchStart = onTouchStart,
+                onTouchEnd = onTouchEnd
+            )
+        } else {
+            ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
+        }
     }
 
     AnimatedVisibility(
@@ -310,67 +324,61 @@ fun VolumeOverlay(
                     .width(overlayContainerWidth)
                     .then(collapsedHitTestModifier),
                 horizontalArrangement = if (expandToStart) Arrangement.End else Arrangement.Start,
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.Bottom
             ) {
                 if (expandToStart) {
                     androidx.compose.animation.AnimatedVisibility(
                         visibleState = panelTransitionState,
                         enter = slideInHorizontally(
-                            initialOffsetX = { it / 2 },
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessMedium
-                            )
-                        ) + fadeIn(animationSpec = tween(200)),
+                            initialOffsetX = { it }
+                        ) + fadeIn(animationSpec = tween(180)),
                         exit = slideOutHorizontally(
-                            targetOffsetX = { it / 2 },
-                            animationSpec = tween(200, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(150))
+                            targetOffsetX = { it }
+                        ) + fadeOut(animationSpec = tween(120))
                     ) {
-                        Row(verticalAlignment = Alignment.Top) {
+                        Row(verticalAlignment = Alignment.Bottom) {
                             Box(
                                 modifier = Modifier.width(landscapePanelWidth),
-                                contentAlignment = Alignment.TopEnd
+                                contentAlignment = Alignment.BottomEnd
                             ) {
-                                panelBody(landscapePanelWidth)
+                                panelBody(landscapePanelWidth, landscapePanelMaxHeight)
                             }
                             Spacer(modifier = Modifier.width(PanelSpacing))
                         }
                     }
                     Box(
-                        modifier = Modifier.width(ExpandedPillWidth),
-                        contentAlignment = Alignment.TopEnd
+                        modifier = Modifier
+                            .width(ExpandedPillWidth)
+                            .zIndex(1f),
+                        contentAlignment = Alignment.BottomEnd
                     ) {
                         pillContent()
                     }
                 } else {
                     Box(
-                        modifier = Modifier.width(ExpandedPillWidth),
-                        contentAlignment = Alignment.TopStart
+                        modifier = Modifier
+                            .width(ExpandedPillWidth)
+                            .zIndex(1f),
+                        contentAlignment = Alignment.BottomStart
                     ) {
                         pillContent()
                     }
                     androidx.compose.animation.AnimatedVisibility(
                         visibleState = panelTransitionState,
                         enter = slideInHorizontally(
-                            initialOffsetX = { -it / 2 },
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessMedium
-                            )
-                        ) + fadeIn(animationSpec = tween(200)),
+                            initialOffsetX = { -it }
+                        ) + fadeIn(animationSpec = tween(180)),
                         exit = slideOutHorizontally(
-                            targetOffsetX = { -it / 2 },
-                            animationSpec = tween(200, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(150))
+                            targetOffsetX = { -it }
+                        ) + fadeOut(animationSpec = tween(120))
                     ) {
-                        Row(verticalAlignment = Alignment.Top) {
+                        Row(verticalAlignment = Alignment.Bottom) {
                             Spacer(modifier = Modifier.width(PanelSpacing))
                             Box(
                                 modifier = Modifier.width(landscapePanelWidth),
-                                contentAlignment = Alignment.TopStart
+                                contentAlignment = Alignment.BottomStart
                             ) {
-                                panelBody(landscapePanelWidth)
+                                panelBody(landscapePanelWidth, landscapePanelMaxHeight)
                             }
                         }
                     }
@@ -387,20 +395,15 @@ fun VolumeOverlay(
                 AnimatedVisibility(
                     visibleState = panelTransitionState,
                     enter = slideInVertically(
-                        initialOffsetY = { it / 2 },
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMedium
-                        )
-                    ) + fadeIn(animationSpec = tween(200)),
+                        initialOffsetY = { -it }
+                    ) + fadeIn(animationSpec = tween(180)),
                     exit = slideOutVertically(
-                        targetOffsetY = { it / 2 },
-                        animationSpec = tween(200, easing = FastOutSlowInEasing)
-                    ) + fadeOut(animationSpec = tween(150))
+                        targetOffsetY = { -it }
+                    ) + fadeOut(animationSpec = tween(120))
                 ) {
                     Column {
                         Spacer(modifier = Modifier.height(PanelSpacing))
-                        panelBody(ExpandedPillWidth)
+                        panelBody(ExpandedPillWidth, 360.dp)
                     }
                 }
             }
@@ -413,6 +416,7 @@ fun VolumeOverlay(
  */
 @Composable
 private fun MainVolumePill(
+    modifier: Modifier = Modifier,
     streams: List<OverlayStreamVolume>,
     isExpanded: Boolean,
     chevronRotation: Float,
@@ -437,13 +441,13 @@ private fun MainVolumePill(
     val secondaryStreams = streams.drop(1)
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .width(pillWidth)
             .wrapContentHeight()
-            .clip(RoundedCornerShape(27.dp))
+            .clip(RoundedCornerShape(OverlayCornerRadius))
             .background(
                 color = Color(0xFF1C1C1C),
-                shape = RoundedCornerShape(27.dp)
+                shape = RoundedCornerShape(OverlayCornerRadius)
             )
             .padding(top = 14.dp, bottom = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -508,7 +512,6 @@ private fun MainVolumePill(
                 )
                 .clickable {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onInteraction()
                     onExpandToggle()
                 },
             contentAlignment = Alignment.Center
@@ -615,9 +618,9 @@ private fun StreamVolumeColumn(
 @Composable
 private fun AmplyPanel(
     panelWidth: Dp,
-    sessions: List<AudioSession>,
-    focusedApp: AudioSession?,
-    onSessionVolumeChange: (AudioSession, Float) -> Unit,
+    maxHeight: Dp,
+    apps: List<OverlayAppEntry>,
+    onAppVolumeChange: (OverlayAppEntry, Float) -> Unit,
     onClose: () -> Unit,
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
@@ -627,10 +630,10 @@ private fun AmplyPanel(
     Column(
         modifier = Modifier
             .width(panelWidth)
-            .heightIn(min = 100.dp, max = 360.dp)
+            .heightIn(min = 100.dp, max = maxHeight)
             .background(
                 color = Color(0xFF1C1C1C),
-                shape = RoundedCornerShape(18.dp)
+                shape = RoundedCornerShape(OverlayCornerRadius)
             )
             .padding(14.dp)
             .pointerInput(Unit) {
@@ -681,31 +684,75 @@ private fun AmplyPanel(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // App List
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState()),
+                .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            sessions.forEach { session ->
+            items(
+                items = apps,
+                key = { it.packageName },
+                contentType = { "app-volume" }
+            ) { app ->
                 AppVolumeRow(
-                    session = session,
+                    app = app,
                     onVolumeChange = { newVolume ->
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        Log.d(TAG, "AppVolumeRow: ${session.appName} volume=$newVolume")
-                        onSessionVolumeChange(session, newVolume)
+                        onAppVolumeChange(app, newVolume)
                     }
                 )
             }
         }
 
-        // Footer
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "${sessions.size} ${if (sessions.size == 1) "app" else "apps"}",
+            text = "${apps.size} ${if (apps.size == 1) "app" else "apps"}",
             color = NothingColors.GreyDim,
             fontSize = 9.sp
+        )
+    }
+}
+
+@Composable
+private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
+    Row(
+        modifier = Modifier
+            .width(panelWidth)
+            .heightIn(min = 82.dp)
+            .background(Color(0xFF1C1C1C), RoundedCornerShape(OverlayCornerRadius))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(modifier = Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+            if (shizukuIcon != null) {
+                Image(
+                    bitmap = shizukuIcon.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.size(30.dp)
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = NothingColors.GreyMedium,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+            Canvas(modifier = Modifier.matchParentSize()) {
+                drawLine(
+                    color = NothingColors.Red,
+                    start = Offset(size.width * 0.12f, size.height * 0.88f),
+                    end = Offset(size.width * 0.88f, size.height * 0.12f),
+                    strokeWidth = 3.dp.toPx()
+                )
+            }
+        }
+        Text(
+            text = "Shizuku disconnected",
+            color = NothingColors.GreyMedium,
+            fontSize = 11.sp
         )
     }
 }
@@ -716,10 +763,13 @@ private fun AmplyPanel(
  */
 @Composable
 private fun AppVolumeRow(
-    session: AudioSession,
+    app: OverlayAppEntry,
     onVolumeChange: (Float) -> Unit
 ) {
-    var localVolume by remember(session.sessionId) { mutableFloatStateOf(session.volume) }
+    var localVolume by remember(app.packageName) { mutableFloatStateOf(app.volume) }
+    LaunchedEffect(app.volume) {
+        localVolume = app.volume
+    }
     val volumePercent = (localVolume * 100).toInt()
 
     val backgroundColor by animateColorAsState(
@@ -759,16 +809,16 @@ private fun AppVolumeRow(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    session.appIcon?.let { icon ->
+                    app.appIconBitmap?.let { icon ->
                         Image(
-                            bitmap = icon.toBitmap(52, 52).asImageBitmap(),
-                            contentDescription = session.appName,
+                            bitmap = icon.asImageBitmap(),
+                            contentDescription = app.appName,
                             modifier = Modifier.size(20.dp)
                         )
                     } ?: run {
                         Icon(
                             imageVector = Icons.Default.MusicNote,
-                            contentDescription = session.appName,
+                            contentDescription = app.appName,
                             tint = NothingColors.GreyMedium,
                             modifier = Modifier.size(14.dp)
                         )
@@ -776,7 +826,7 @@ private fun AppVolumeRow(
                 }
 
                 Text(
-                    text = session.appName,
+                    text = app.appName,
                     color = NothingColors.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Normal,

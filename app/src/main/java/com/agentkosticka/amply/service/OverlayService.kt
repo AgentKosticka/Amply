@@ -84,7 +84,6 @@ class OverlayService : Service() {
     private var overlaySide: OverlaySide = OverlaySide.LEFT
     private var overlayVerticalFraction: Float = 0.5f
     private var preferenceJobs: List<Job> = emptyList()
-    private var currentForegroundPackage: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -139,20 +138,26 @@ class OverlayService : Service() {
                     }
                 },
                 serviceScope.launch {
-                    combine(runtime.sessionState, preferences.appSettings) { _, _ ->
-                        sessionManager.getDefaultOverlaySessions()
-                    }.collect { sessions ->
-                        val focusedApp = sessionManager.getFocusedApp(currentForegroundPackage)
-                            ?: sessionManager.getMostRecentSession()
-                        OverlayManager.updateSessions(sessions, focusedApp)
+                    combine(
+                        runtime.sessionState,
+                        preferences.appSettings,
+                        runtime.connectionState,
+                        runtime.foregroundVisitState
+                    ) { _, settings, connectionState, foregroundVisit ->
+                        connectionState to sessionManager.getOverlayApps(
+                            foregroundVisitSession = foregroundVisit.lastAudioSession
+                                ?.takeIf { foregroundVisit.heardAudio },
+                            shizukuConnected = connectionState == com.agentkosticka.amply.shizuku.VolumeServiceConnectionState.CONNECTED,
+                            settings = settings
+                        )
+                    }.collect { (connectionState, apps) ->
+                        OverlayManager.updateApps(apps, connectionState)
                     }
                 }
             )
 
-            OverlayManager.setSessionVolumeCallback { sessionId, packageName, volume ->
-                serviceScope.launch {
-                    sessionManager.setSessionVolume(sessionId, packageName, volume)
-                }
+            OverlayManager.setAppVolumeCallback { app, volume ->
+                sessionManager.setAppVolume(app, volume)
             }
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
@@ -172,27 +177,31 @@ class OverlayService : Service() {
         windowType: Int
     ) {
         initializeRuntime()
-        currentForegroundPackage = foregroundPackage
+        runtime.onForegroundPackageChanged(foregroundPackage)
 
         val sessionManager = runtime.audioSessionManager
         if (!OverlayManager.isShowing()) {
             sessionManager.requestRefresh()
         }
-        val sessions = sessionManager.getDefaultOverlaySessions()
-        val focusedApp = sessionManager.getFocusedApp(foregroundPackage)
-            ?: sessionManager.getMostRecentSession()
+        val connectionState = runtime.connectionState.value
+        val foregroundVisit = runtime.foregroundVisitState.value
+        val apps = sessionManager.getOverlayApps(
+            foregroundVisitSession = foregroundVisit.lastAudioSession
+                ?.takeIf { foregroundVisit.heardAudio },
+            shizukuConnected = connectionState == com.agentkosticka.amply.shizuku.VolumeServiceConnectionState.CONNECTED
+        )
 
         Log.d(
             "OverlayService",
-            "showOverlay: volume=$volume sessions=${sessions.size} focused=${focusedApp?.appName ?: "none"} windowType=$windowType"
+            "showOverlay: volume=$volume apps=${apps.size} connection=$connectionState windowType=$windowType"
         )
 
         OverlayManager.show(
             context = hostContext,
             volume = volume,
             newIconType = iconType,
-            sessions = sessions,
-            focusedAppSession = focusedApp,
+            apps = apps,
+            connectionState = connectionState,
             overlaySide = overlaySide,
             overlayVerticalFraction = overlayVerticalFraction,
             windowType = windowType
@@ -230,7 +239,7 @@ class OverlayService : Service() {
         }
         preferenceJobs.forEach { it.cancel() }
         serviceScope.cancel()
-        OverlayManager.clearSessionVolumeCallback()
+        OverlayManager.clearAppVolumeCallback()
         OverlayManager.clearPauseAmplyCallback()
         OverlayManager.cleanup()
     }

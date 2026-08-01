@@ -12,18 +12,28 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -38,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -58,6 +69,9 @@ import com.agentkosticka.amply.R
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
+import com.agentkosticka.amply.data.AppPermissionState
+import com.agentkosticka.amply.data.AmplyPauseDuration
+import com.agentkosticka.amply.data.OverlayAppMode
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
@@ -74,6 +88,13 @@ private enum class AppListMode {
     EXPANDED
 }
 
+private enum class SettingsTab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    ACCESS("Access", Icons.Default.Security),
+    APPS("Apps", Icons.Default.Apps),
+    PILL("Pill", Icons.Default.Tune),
+    STAND_DOWN("Stand-Down", Icons.AutoMirrored.Filled.VolumeUp)
+}
+
 private data class InstalledAppEntry(
     val packageName: String,
     val appName: String,
@@ -83,54 +104,58 @@ private data class InstalledAppEntry(
 @Composable
 fun SettingsDashboard(
     runtime: AmplyRuntime,
+    appPermissionState: AppPermissionState,
     onOverlayPermissionClick: () -> Unit,
     onAccessibilityClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val preferencesManager = runtime.preferencesManager
+    val preferences = runtime.preferencesManager
     val shizukuRepository = runtime.shizukuRepository
-
-    val overlaySide by preferencesManager.overlaySide.collectAsState(initial = OverlaySide.LEFT)
-    val verticalFraction by preferencesManager.overlayVerticalFraction.collectAsState(initial = 0.5f)
-    val appSettings by preferencesManager.appSettings.collectAsState(initial = emptyMap())
-    val pauseDurationMinutes by preferencesManager.amplyPauseDurationMinutes.collectAsState(initial = 5)
-    val pausedUntilEpochMs by preferencesManager.amplyPausedUntilEpochMs.collectAsState(initial = 0L)
-    val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
-    val connectionState by runtime.connectionState.collectAsState(
-        initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION
-    )
+    val overlaySide by preferences.overlaySide.collectAsState(initial = OverlaySide.LEFT)
+    val verticalFraction by preferences.overlayVerticalFraction.collectAsState(initial = 0.5f)
+    val appSettings by preferences.appSettings.collectAsState(initial = emptyMap())
+    val pauseDuration by preferences.amplyPauseDuration.collectAsState(initial = AmplyPauseDuration.FIVE_MINUTES)
+    val pausedUntil by preferences.amplyPausedUntilEpochMs.collectAsState(initial = 0L)
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
+    val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
+    val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     val scope = rememberCoroutineScope()
     val inactiveVolumeSaveJobs = remember { mutableMapOf<String, Job>() }
-    var positionSaveJob by remember { mutableStateOf<Job?>(null) }
+    var selectedTabName by rememberSaveable { mutableStateOf(SettingsTab.ACCESS.name) }
+    val selectedTab = SettingsTab.entries.firstOrNull { it.name == selectedTabName } ?: SettingsTab.ACCESS
+    val appsListState = rememberLazyListState()
+    val pillListState = rememberLazyListState()
+    val keysListState = rememberLazyListState()
+    val accessListState = rememberLazyListState()
+    val listStates = mapOf(
+        SettingsTab.APPS to appsListState,
+        SettingsTab.PILL to pillListState,
+        SettingsTab.STAND_DOWN to keysListState,
+        SettingsTab.ACCESS to accessListState
+    )
+    var appListMode by rememberSaveable { mutableStateOf(AppListMode.DEFAULT) }
+    var appSearch by rememberSaveable { mutableStateOf("") }
     var previewVerticalFraction by remember { mutableFloatStateOf(verticalFraction) }
-    var appListMode by remember { mutableStateOf(AppListMode.DEFAULT) }
-    var standDownPickerExpanded by remember { mutableStateOf(false) }
-    var standDownSearch by remember { mutableStateOf("") }
+    var positionSaveJob by remember { mutableStateOf<Job?>(null) }
+    var pickerExpanded by rememberSaveable { mutableStateOf(false) }
+    var standDownSearch by rememberSaveable { mutableStateOf("") }
     var installedApps by remember { mutableStateOf<List<InstalledAppEntry>>(emptyList()) }
-    var currentTimeEpochMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var orderedPackageNames by remember(appListMode) { mutableStateOf<List<String>>(emptyList()) }
-    val now = System.currentTimeMillis()
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
     val activeSessionsByPackage = sessionState.sessions.associateBy { it.packageName }
-    val activePackageNames = activeSessionsByPackage.keys
-    val allApps = mergeAppSettingsWithActiveSessions(
-        appSettings = appSettings,
-        activeSessions = sessionState.sessions
-    )
-    val candidateApps = if (appListMode == AppListMode.DEFAULT) {
-        allApps.filter { it.packageName in activePackageNames }
-    } else {
-        allApps.filter { it.packageName in activePackageNames || it.isCustomized || now - it.lastSeenTimestamp <= 60_000L }
-    }
-    val candidatePackageNames = candidateApps.map { it.packageName }.toSet()
-    val nextOrderedPackageNames = stablePackageOrder(
-        currentOrder = orderedPackageNames,
-        candidateApps = candidateApps
-    )
-    val appsByPackage = candidateApps.associateBy { it.packageName }
-    val apps = nextOrderedPackageNames.mapNotNull { packageName ->
-        appsByPackage[packageName]
-    }
+    val activePackages = activeSessionsByPackage.keys
+    val knownApps = mergeAppSettingsWithActiveSessions(appSettings, sessionState.sessions)
+        .filter { it.lastSeenTimestamp > 0L || it.packageName in activePackages }
+        .filter {
+            val query = appSearch.trim().lowercase()
+            query.isEmpty() || query in it.appName.lowercase() || query in it.packageName.lowercase()
+        }
+        .filter { appListMode == AppListMode.EXPANDED || it.packageName in activePackages }
+        .sortedWith(
+            compareByDescending<AppSettings> { it.overlayMode == OverlayAppMode.PINNED }
+                .thenByDescending { it.packageName in activePackages }
+                .thenBy { it.appName.lowercase() }
+        )
     val standDownApps = remember(installedApps, appSettings, standDownSearch) {
         val query = standDownSearch.trim().lowercase()
         installedApps
@@ -141,228 +166,246 @@ fun SettingsDashboard(
             )
     }
 
-    LaunchedEffect(appListMode, candidatePackageNames) {
-        if (orderedPackageNames != nextOrderedPackageNames) {
-            orderedPackageNames = nextOrderedPackageNames
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        shizukuRepository.checkPermissionState()
-    }
-
-    LaunchedEffect(verticalFraction) {
-        previewVerticalFraction = verticalFraction
-    }
-
-    LaunchedEffect(standDownPickerExpanded) {
-        if (standDownPickerExpanded && installedApps.isEmpty()) {
+    LaunchedEffect(Unit) { shizukuRepository.checkPermissionState() }
+    LaunchedEffect(verticalFraction) { previewVerticalFraction = verticalFraction }
+    LaunchedEffect(pickerExpanded) {
+        if (pickerExpanded && installedApps.isEmpty()) {
             installedApps = withContext(Dispatchers.IO) { loadLaunchableApps(context) }
         }
     }
-
-    LaunchedEffect(pausedUntilEpochMs) {
-        currentTimeEpochMs = System.currentTimeMillis()
-        while (pausedUntilEpochMs > currentTimeEpochMs) {
+    LaunchedEffect(pausedUntil) {
+        currentTime = System.currentTimeMillis()
+        while (pausedUntil > currentTime && pausedUntil != Long.MAX_VALUE) {
             delay(1_000L)
-            currentTimeEpochMs = System.currentTimeMillis()
+            currentTime = System.currentTimeMillis()
         }
     }
-
     DisposableEffect(Unit) {
         onDispose {
-            inactiveVolumeSaveJobs.values.forEach { it.cancel() }
-            inactiveVolumeSaveJobs.clear()
+            inactiveVolumeSaveJobs.values.forEach(Job::cancel)
             positionSaveJob?.cancel()
         }
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(NothingColors.Black)
-            .padding(horizontal = 24.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        item {
-            DashboardHeader()
-        }
-
-        if (shizukuState != ShizukuPermissionState.GRANTED ||
-            connectionState != VolumeServiceConnectionState.CONNECTED
-        ) {
-            item {
-                ShizukuWarningCard(
-                    permissionState = shizukuState,
-                    connectionState = connectionState,
-                    onAction = {
-                        when (shizukuState) {
-                            ShizukuPermissionState.NOT_GRANTED,
-                            ShizukuPermissionState.SHOULD_SHOW_RATIONALE,
-                            ShizukuPermissionState.DENIED -> {
-                                shizukuRepository.requestPermission()
-                            }
-                            ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> {
-                                openShizukuApp(context)
-                            }
-                            ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> {
-                                openShizukuDownload(context)
-                            }
-                            ShizukuPermissionState.UNKNOWN -> {
-                                shizukuRepository.checkPermissionState()
-                            }
-                            ShizukuPermissionState.GRANTED -> {
-                                runtime.retryVolumeServiceConnection()
-                            }
-                        }
-                    },
-                    onRefresh = {
-                        shizukuRepository.checkPermissionState()
-                        if (shizukuState == ShizukuPermissionState.GRANTED) {
-                            runtime.retryVolumeServiceConnection()
-                        }
-                    }
-                )
-            }
-        }
-
-        item {
-            SectionTitle("PERMISSIONS")
-            Spacer(modifier = Modifier.height(10.dp))
-            PermissionButton(
-                number = "1",
-                title = "OVERLAY",
-                description = "Grant overlay access",
-                onClick = onOverlayPermissionClick
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            PermissionButton(
-                number = "2",
-                title = "VOLUME KEYS",
-                description = "Enable accessibility service",
-                onClick = onAccessibilityClick
-            )
-        }
-
-        item {
-            SectionTitle("OVERLAY POSITION")
-            Spacer(modifier = Modifier.height(10.dp))
-            SettingsPanel {
-                SideSelector(
-                    selected = overlaySide,
-                    onSelected = { side ->
-                        scope.launch { preferencesManager.setOverlaySide(side) }
-                    }
-                )
-                Spacer(modifier = Modifier.height(18.dp))
-                PositionPreview(
-                    side = overlaySide,
-                    verticalFraction = previewVerticalFraction,
-                    onFractionChange = { fraction ->
-                        previewVerticalFraction = fraction
-                        positionSaveJob?.cancel()
-                        positionSaveJob = scope.launch {
-                            delay(200L)
-                            preferencesManager.setOverlayVerticalFraction(fraction)
-                        }
-                    }
-                )
-            }
-        }
-
-        item {
-            SectionTitle("VOLUME KEY HANDLING")
-            Spacer(modifier = Modifier.height(10.dp))
-            VolumeKeyHandlingPanel(
-                pauseDurationMinutes = pauseDurationMinutes,
-                pausedUntilEpochMs = pausedUntilEpochMs,
-                currentTimeEpochMs = currentTimeEpochMs,
-                pickerExpanded = standDownPickerExpanded,
-                onDurationSelected = { minutes ->
-                    scope.launch { preferencesManager.setAmplyPauseDurationMinutes(minutes) }
-                },
-                onRestoreNow = {
-                    scope.launch { preferencesManager.restoreAmplyNow() }
-                },
-                onPickerToggle = { standDownPickerExpanded = !standDownPickerExpanded }
-            )
-        }
-
-        if (standDownPickerExpanded) {
-            item {
-                OutlinedTextField(
-                    value = standDownSearch,
-                    onValueChange = { standDownSearch = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Search app or package") },
-                    singleLine = true
-                )
-            }
-            items(standDownApps, key = { "stand-down-${it.packageName}" }) { app ->
-                StandDownAppRow(
-                    app = app,
-                    enabled = appSettings[app.packageName]?.passVolumeKeysToApp == true,
-                    onEnabledChange = { enabled ->
-                        scope.launch {
-                            preferencesManager.setPassVolumeKeysToApp(
-                                packageName = app.packageName,
-                                appName = app.appName,
-                                uid = app.uid,
-                                enabled = enabled
-                            )
-                        }
-                    }
-                )
-            }
-        }
-
-        item {
-            SectionTitle("APP VOLUMES")
-            Spacer(modifier = Modifier.height(10.dp))
-            AppListModeSelector(
-                selected = appListMode,
-                onSelected = { appListMode = it }
-            )
-        }
-
-        if (apps.isEmpty()) {
-            item {
-                SettingsPanel {
-                    Text(
-                        text = if (appSettings.isEmpty()) "NO APPS SEEN YET" else "NO APPS PLAYING RIGHT NOW",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = NothingColors.GreyMedium
+    Scaffold(
+        containerColor = NothingColors.Black,
+        bottomBar = {
+            NavigationBar(containerColor = Color(0xFF151515)) {
+                SettingsTab.entries.forEach { tab ->
+                    NavigationBarItem(
+                        selected = selectedTab == tab,
+                        onClick = { selectedTabName = tab.name },
+                        icon = { Icon(tab.icon, contentDescription = tab.label) },
+                        label = { Text(tab.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = NothingColors.White,
+                            selectedTextColor = NothingColors.White,
+                            indicatorColor = NothingColors.Red,
+                            unselectedIconColor = NothingColors.GreyMedium,
+                            unselectedTextColor = NothingColors.GreyMedium
+                        )
                     )
                 }
             }
-        } else {
-            items(apps, key = { it.packageName }) { app ->
-                AppSettingsRow(
-                    app = app,
-                    onVisibleChange = { visible ->
-                        scope.launch {
-                            preferencesManager.setAppHiddenInOverlay(app.packageName, !visible)
-                        }
-                    },
-                    onVolumeChange = { volume ->
-                        val activeSession = activeSessionsByPackage[app.packageName]
-                        if (activeSession != null) {
-                            runtime.audioSessionManager.setSessionVolume(
-                                sessionId = activeSession.sessionId,
-                                packageName = activeSession.packageName,
-                                volume = volume
-                            )
-                        } else {
-                            inactiveVolumeSaveJobs.remove(app.packageName)?.cancel()
-                            inactiveVolumeSaveJobs[app.packageName] = scope.launch {
-                                delay(300L)
-                                preferencesManager.setAppDefaultVolume(app.packageName, volume)
-                                inactiveVolumeSaveJobs.remove(app.packageName)
+        }
+    ) { scaffoldPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(scaffoldPadding)
+                .background(NothingColors.Black)
+        ) {
+            Box(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 12.dp)) {
+                DashboardHeader()
+            }
+
+            when (selectedTab) {
+                SettingsTab.APPS -> LazyColumn(
+                    state = listStates.getValue(SettingsTab.APPS),
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    item {
+                        SectionTitle("PER-APP VOLUME")
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Pinned apps stay in the expanded overlay while Shizuku is connected.",
+                            color = NothingColors.GreyMedium,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    if (connectionState != VolumeServiceConnectionState.CONNECTED) {
+                        item {
+                            SettingsPanel {
+                                Text("SHIZUKU DISCONNECTED", color = NothingColors.Red, fontWeight = FontWeight.Bold)
+                                Text("Pins are saved and will appear after reconnection.", color = NothingColors.GreyMedium)
                             }
                         }
                     }
-                )
+                    item {
+                        OutlinedTextField(
+                            value = appSearch,
+                            onValueChange = { appSearch = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Search known audio apps") },
+                            singleLine = true
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        AppListModeSelector(appListMode) { appListMode = it }
+                    }
+                    if (knownApps.isEmpty()) {
+                        item {
+                            SettingsPanel {
+                                Text(
+                                    if (appListMode == AppListMode.DEFAULT) "NO APPS PLAYING RIGHT NOW" else "NO AUDIO APPS SEEN YET",
+                                    color = NothingColors.GreyMedium
+                                )
+                            }
+                        }
+                    } else {
+                        items(knownApps, key = { "app-${it.packageName}" }) { app ->
+                            AppSettingsRow(
+                                app = app,
+                                onOverlayModeChange = { mode ->
+                                    scope.launch { preferences.setAppOverlayMode(app.packageName, mode) }
+                                },
+                                onVolumeChange = { volume ->
+                                    val active = activeSessionsByPackage[app.packageName]
+                                    if (active != null) {
+                                        runtime.audioSessionManager.setAppVolume(app.packageName, volume)
+                                    } else {
+                                        inactiveVolumeSaveJobs.remove(app.packageName)?.cancel()
+                                        inactiveVolumeSaveJobs[app.packageName] = scope.launch {
+                                            delay(300L)
+                                            preferences.setAppDefaultVolume(app.packageName, volume)
+                                            inactiveVolumeSaveJobs.remove(app.packageName)
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                SettingsTab.PILL -> LazyColumn(
+                    state = listStates.getValue(SettingsTab.PILL),
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp)
+                ) {
+                    item {
+                        SectionTitle("PILL LAYOUT")
+                        Spacer(Modifier.height(10.dp))
+                        SettingsPanel {
+                            SideSelector(overlaySide) { side -> scope.launch { preferences.setOverlaySide(side) } }
+                            Spacer(Modifier.height(18.dp))
+                            PositionPreview(overlaySide, previewVerticalFraction) { fraction ->
+                                previewVerticalFraction = fraction
+                                positionSaveJob?.cancel()
+                                positionSaveJob = scope.launch {
+                                    delay(200L)
+                                    preferences.setOverlayVerticalFraction(fraction)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SettingsTab.STAND_DOWN -> LazyColumn(
+                    state = listStates.getValue(SettingsTab.STAND_DOWN),
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    item {
+                        SectionTitle("VOLUME KEY HANDLING")
+                        Spacer(Modifier.height(10.dp))
+                        VolumeKeyHandlingPanel(
+                            pauseDuration = pauseDuration,
+                            pausedUntilEpochMs = pausedUntil,
+                            currentTimeEpochMs = currentTime,
+                            pickerExpanded = pickerExpanded,
+                            onDurationSelected = { duration -> scope.launch { preferences.setAmplyPauseDuration(duration) } },
+                            onRestoreNow = { scope.launch { preferences.restoreAmplyNow() } },
+                            onPickerToggle = { pickerExpanded = !pickerExpanded }
+                        )
+                    }
+                    if (pickerExpanded) {
+                        item {
+                            OutlinedTextField(
+                                value = standDownSearch,
+                                onValueChange = { standDownSearch = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Search app or package") },
+                                singleLine = true
+                            )
+                        }
+                        items(standDownApps, key = { "stand-down-${it.packageName}" }) { app ->
+                            StandDownAppRow(
+                                app,
+                                appSettings[app.packageName]?.passVolumeKeysToApp == true
+                            ) { enabled ->
+                                scope.launch {
+                                    preferences.setPassVolumeKeysToApp(app.packageName, app.appName, app.uid, enabled)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SettingsTab.ACCESS -> LazyColumn(
+                    state = listStates.getValue(SettingsTab.ACCESS),
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    if (shizukuState == ShizukuPermissionState.GRANTED && connectionState == VolumeServiceConnectionState.CONNECTED) {
+                        item {
+                            SettingsPanel {
+                                Text("SHIZUKU CONNECTED", color = NothingColors.White, fontWeight = FontWeight.Bold)
+                                Text("Privileged per-app volume control is ready.", color = NothingColors.GreyMedium)
+                            }
+                        }
+                    }
+                    if (shizukuState != ShizukuPermissionState.GRANTED || connectionState != VolumeServiceConnectionState.CONNECTED) {
+                        item {
+                            ShizukuWarningCard(
+                                shizukuState,
+                                connectionState,
+                                onAction = {
+                                    when (shizukuState) {
+                                        ShizukuPermissionState.NOT_GRANTED,
+                                        ShizukuPermissionState.SHOULD_SHOW_RATIONALE,
+                                        ShizukuPermissionState.DENIED -> shizukuRepository.requestPermission()
+                                        ShizukuPermissionState.SHIZUKU_NOT_RUNNING -> openShizukuApp(context)
+                                        ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> openShizukuDownload(context)
+                                        ShizukuPermissionState.UNKNOWN -> shizukuRepository.checkPermissionState()
+                                        ShizukuPermissionState.GRANTED -> runtime.retryVolumeServiceConnection()
+                                    }
+                                },
+                                onRefresh = {
+                                    shizukuRepository.checkPermissionState()
+                                    if (shizukuState == ShizukuPermissionState.GRANTED) runtime.retryVolumeServiceConnection()
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        SectionTitle("PERMISSIONS")
+                        Spacer(Modifier.height(10.dp))
+                        PermissionButton(
+                            "1",
+                            "OVERLAY",
+                            "Grant overlay access",
+                            appPermissionState.overlayGranted,
+                            onOverlayPermissionClick
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        PermissionButton(
+                            "2",
+                            "VOLUME KEYS",
+                            "Enable accessibility service",
+                            appPermissionState.volumeKeysGranted,
+                            onAccessibilityClick
+                        )
+                    }
+                }
             }
         }
     }
@@ -388,16 +431,18 @@ private fun loadLaunchableApps(context: Context): List<InstalledAppEntry> {
 
 @Composable
 private fun VolumeKeyHandlingPanel(
-    pauseDurationMinutes: Int,
+    pauseDuration: AmplyPauseDuration,
     pausedUntilEpochMs: Long,
     currentTimeEpochMs: Long,
     pickerExpanded: Boolean,
-    onDurationSelected: (Int) -> Unit,
+    onDurationSelected: (AmplyPauseDuration) -> Unit,
     onRestoreNow: () -> Unit,
     onPickerToggle: () -> Unit
 ) {
-    val remainingSeconds = ((pausedUntilEpochMs - currentTimeEpochMs).coerceAtLeast(0L) + 999L) / 1_000L
-    val isPaused = remainingSeconds > 0
+    val isManualPause = pausedUntilEpochMs == Long.MAX_VALUE
+    val remainingSeconds = if (isManualPause) 0L else
+        ((pausedUntilEpochMs - currentTimeEpochMs).coerceAtLeast(0L) + 999L) / 1_000L
+    val isPaused = isManualPause || remainingSeconds > 0
 
     SettingsPanel {
         if (isPaused) {
@@ -421,7 +466,11 @@ private fun VolumeKeyHandlingPanel(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("AMPLY IS PAUSED", color = NothingColors.White, fontWeight = FontWeight.Bold)
                     Text(
-                        text = "${remainingSeconds / 60}:${(remainingSeconds % 60).toString().padStart(2, '0')} remaining",
+                        text = if (isManualPause) {
+                            "Until restored manually"
+                        } else {
+                            "${remainingSeconds / 60}:${(remainingSeconds % 60).toString().padStart(2, '0')} remaining"
+                        },
                         color = NothingColors.GreyMedium,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp
@@ -441,19 +490,30 @@ private fun VolumeKeyHandlingPanel(
         Text("EXPANDED-PILL PAUSE DURATION", color = NothingColors.GreyMedium, fontSize = 11.sp)
         Spacer(modifier = Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(1, 5, 15, 30).forEach { minutes ->
+            AmplyPauseDuration.entries.filter { it.minutes != null }.forEach { duration ->
                 Button(
-                    onClick = { onDurationSelected(minutes) },
+                    onClick = { onDurationSelected(duration) },
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 4.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (pauseDurationMinutes == minutes) NothingColors.Red else Color(0xFF2A2A2A)
+                        containerColor = if (pauseDuration == duration) NothingColors.Red else Color(0xFF2A2A2A)
                     )
                 ) {
-                    Text("${minutes}m", fontWeight = FontWeight.Bold)
+                    Text("${duration.minutes}m", fontWeight = FontWeight.Bold)
                 }
             }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = { onDurationSelected(AmplyPauseDuration.MANUAL) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (pauseDuration == AmplyPauseDuration.MANUAL) NothingColors.Red else Color(0xFF2A2A2A)
+            )
+        ) {
+            Text("TURN BACK ON ONLY MANUALLY", fontWeight = FontWeight.Bold, fontSize = 11.sp)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -579,7 +639,7 @@ private fun mergeAppSettingsWithActiveSessions(
             appName = session.appName,
             uid = session.uid,
             defaultVolume = existing?.defaultVolume ?: session.volume,
-            hiddenInOverlay = existing?.hiddenInOverlay ?: false,
+            overlayMode = existing?.overlayMode ?: OverlayAppMode.AUTO,
             passVolumeKeysToApp = existing?.passVolumeKeysToApp ?: false,
             lastSeenTimestamp = maxOf(existing?.lastSeenTimestamp ?: 0L, session.lastSeenTimestamp)
         )
@@ -742,6 +802,7 @@ private fun PermissionButton(
     number: String,
     title: String,
     description: String,
+    granted: Boolean,
     onClick: () -> Unit
 ) {
     Button(
@@ -763,7 +824,7 @@ private fun PermissionButton(
             Box(
                 modifier = Modifier
                     .size(34.dp)
-                    .background(NothingColors.Red, CircleShape),
+                    .background(if (granted) NothingColors.GreyMedium else NothingColors.Red, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -772,9 +833,17 @@ private fun PermissionButton(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(text = title, style = MaterialTheme.typography.labelLarge)
                 Text(text = description, style = MaterialTheme.typography.bodyMedium, color = NothingColors.GreyMedium)
+            }
+            if (granted) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Granted",
+                    tint = NothingColors.GreyMedium,
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
     }
@@ -824,7 +893,7 @@ private fun AppListModeSelector(
                     contentColor = NothingColors.White
                 )
             ) {
-                Text(text = mode.name)
+                Text(text = if (mode == AppListMode.DEFAULT) "PLAYING" else "ALL")
             }
         }
     }
@@ -893,7 +962,7 @@ private fun PositionPreview(
 @Composable
 private fun AppSettingsRow(
     app: AppSettings,
-    onVisibleChange: (Boolean) -> Unit,
+    onOverlayModeChange: (OverlayAppMode) -> Unit,
     onVolumeChange: (Float) -> Unit
 ) {
     val context = LocalContext.current
@@ -951,11 +1020,14 @@ private fun AppSettingsRow(
                 )
             }
 
-            VisibilitySelector(
-                visible = !app.hiddenInOverlay,
-                onVisibleChange = onVisibleChange
-            )
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OverlayModeSelector(
+            selected = app.overlayMode,
+            onSelected = onOverlayModeChange
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -971,26 +1043,22 @@ private fun AppSettingsRow(
 }
 
 @Composable
-private fun VisibilitySelector(
-    visible: Boolean,
-    onVisibleChange: (Boolean) -> Unit
+private fun OverlayModeSelector(
+    selected: OverlayAppMode,
+    onSelected: (OverlayAppMode) -> Unit
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.width(118.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
-        VisibilityButton(
-            text = "SHOW",
-            active = visible,
-            onClick = { onVisibleChange(true) },
-            modifier = Modifier.weight(1f)
-        )
-        VisibilityButton(
-            text = "HIDE",
-            active = !visible,
-            onClick = { onVisibleChange(false) },
-            modifier = Modifier.weight(1f)
-        )
+        OverlayAppMode.entries.forEach { mode ->
+            VisibilityButton(
+                text = mode.name,
+                active = selected == mode,
+                onClick = { onSelected(mode) },
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 

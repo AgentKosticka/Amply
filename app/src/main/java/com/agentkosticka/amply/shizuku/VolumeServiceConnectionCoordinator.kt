@@ -42,6 +42,7 @@ internal class VolumeServiceConnectionCoordinator(
     private val scope: CoroutineScope,
     private val permissionState: StateFlow<ShizukuPermissionState>,
     private val connector: VolumeServiceConnector,
+    private val permissionRefresher: () -> Unit = {},
     private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val retryDelaysMs: List<Long> = listOf(500L, 1_000L, 2_000L, 4_000L, 8_000L, 10_000L),
     private val bindTimeoutMs: Long = 5_000L,
@@ -75,7 +76,14 @@ internal class VolumeServiceConnectionCoordinator(
 
             while (isActive) {
                 val now = clock()
-                step(now)
+                try {
+                    step(now)
+                } catch (e: RuntimeException) {
+                    logger("Connection loop recovered from ${e.javaClass.simpleName}")
+                    connector.invalidateConnection("coordinator failure: ${e.javaClass.simpleName}")
+                    lastState = VolumeServiceConnectionState.DISCONNECTED
+                    scheduleRetry(now)
+                }
                 val waitMs = nextWakeDelayMs(clock())
                 if (waitMs > 0L) {
                     withTimeoutOrNull(waitMs) {
@@ -147,6 +155,13 @@ internal class VolumeServiceConnectionCoordinator(
 
             VolumeServiceConnectionState.DISCONNECTED -> {
                 if (now >= nextRetryAt) {
+                    permissionRefresher()
+                    if (permissionState.value != ShizukuPermissionState.GRANTED) {
+                        connector.onPermissionUnavailable()
+                        resetRetryState()
+                        lastState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION
+                        return
+                    }
                     logger("Starting bind attempt ${retryIndex + 1}")
                     connector.ensureBound()
                     retryIndex = (retryIndex + 1).coerceAtMost(retryDelaysMs.lastIndex)

@@ -31,6 +31,8 @@ Amply (1) intercepts hardware volume button presses and displays a custom overla
 - **Logarithmic Volume Curve**: Natural-feeling volume control that matches human hearing perception
 - **Per-App Volume-Key Stand-Down**: Choose installed apps that should receive hardware volume buttons directly
 - **Temporary Pause**: Pause Amply from the circular control above the expanded pill, with a configurable duration and an in-app Restore now action
+- **Tabbed Control Center**: Separate Apps, Pill, Keys, and Access pages keep related controls together
+- **Pinned Overlay Apps**: Keep previously detected audio apps in the expanded overlay even while they are idle
 
 ---
 
@@ -94,6 +96,10 @@ An Accessibility Service monitors volume key events. When detected, it triggers 
 Android sends accessibility key callbacks before the foreground app, so Amply cannot learn afterward whether that app would have consumed a specific press. The **Volume Key Handling** settings provide explicit routing instead: selected packages receive the entire down/repeat/up sequence, while Amply intercepts keys elsewhere. If a selected app declines the event, Android continues with its normal volume behavior and pill.
 
 For one-off situations, expand Amply's pill and press the circular power button above it. Amply then passes volume keys through globally for the configured period (five minutes by default). The duration can be changed in settings, and **Restore now** re-enables Amply immediately.
+
+The pause duration can also be set to **Turn back on only manually**. This state persists until **Restore now** is selected, including after a reboot.
+
+The expanded overlay normally contains currently playing apps, pinned known-audio apps, and the foreground app after it produces audio during its current foreground visit. That foreground row remains available after playback stops, but leaving and returning to the app starts a new visit that must produce audio again. Hidden apps remain excluded in every case. If Shizuku disconnects, these controls are replaced with a compact disconnected indicator until the privileged service recovers.
 
 ---
 

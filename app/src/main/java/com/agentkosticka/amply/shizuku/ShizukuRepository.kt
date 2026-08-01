@@ -3,6 +3,7 @@ package com.agentkosticka.amply.shizuku
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
+import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,26 +25,33 @@ class ShizukuRepository(private val context: Context) {
     val permissionState: StateFlow<ShizukuPermissionState> = _permissionState.asStateFlow()
 
     private val requestCode = 1001
+    @Volatile private var lastPermissionCheckElapsedMs = Long.MIN_VALUE
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Log.i(TAG, "Shizuku binder received")
-        checkPermissionState()
+        runCatching { checkPermissionState() }
+            .onFailure { Log.w(TAG, "Binder-received permission refresh failed", it) }
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         Log.w(TAG, "Shizuku binder died")
-        _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING
+        runCatching { _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING }
     }
 
     private val requestPermissionResultListener =
         Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
             if (requestCode == this.requestCode) {
-                _permissionState.value = if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                    ShizukuPermissionState.GRANTED
-                } else {
-                    ShizukuPermissionState.DENIED
+                runCatching {
+                    _permissionState.value = if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                        ShizukuPermissionState.GRANTED
+                    } else {
+                        ShizukuPermissionState.DENIED
+                    }
+                    Log.i(TAG, "Shizuku permission result: ${_permissionState.value}")
+                }.onFailure {
+                    Log.w(TAG, "Shizuku permission-result callback failed", it)
+                    _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING
                 }
-                Log.i(TAG, "Shizuku permission result: ${_permissionState.value}")
             }
         }
 
@@ -64,7 +72,7 @@ class ShizukuRepository(private val context: Context) {
         return try {
             context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
             true
-        } catch (_: PackageManager.NameNotFoundException) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -84,14 +92,17 @@ class ShizukuRepository(private val context: Context) {
      * Checks current permission state and updates the StateFlow
      */
     fun checkPermissionState() {
-        val newState = when {
-            !isShizukuInstalled() -> ShizukuPermissionState.SHIZUKU_NOT_INSTALLED
-            !isShizukuRunning() -> ShizukuPermissionState.SHIZUKU_NOT_RUNNING
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED ->
-                ShizukuPermissionState.GRANTED
-            Shizuku.shouldShowRequestPermissionRationale() ->
-                ShizukuPermissionState.SHOULD_SHOW_RATIONALE
-            else -> ShizukuPermissionState.NOT_GRANTED
+        lastPermissionCheckElapsedMs = SystemClock.elapsedRealtime()
+        val newState = runCatching {
+            resolveShizukuPermissionState(
+                installed = isShizukuInstalled(),
+                running = isShizukuRunning(),
+                checkPermission = { Shizuku.checkSelfPermission() },
+                shouldShowRationale = { Shizuku.shouldShowRequestPermissionRationale() }
+            )
+        }.getOrElse {
+            Log.w(TAG, "Shizuku permission refresh failed", it)
+            ShizukuPermissionState.SHIZUKU_NOT_RUNNING
         }
         if (_permissionState.value != newState) {
             Log.i(TAG, "Shizuku state ${_permissionState.value} -> $newState")
@@ -99,13 +110,30 @@ class ShizukuRepository(private val context: Context) {
         _permissionState.value = newState
     }
 
+    fun checkPermissionStateThrottled(minIntervalMs: Long = 1_000L) {
+        val now = SystemClock.elapsedRealtime()
+        if (lastPermissionCheckElapsedMs != Long.MIN_VALUE &&
+            now - lastPermissionCheckElapsedMs < minIntervalMs
+        ) return
+        runCatching { checkPermissionState() }
+            .onFailure {
+                Log.w(TAG, "Throttled Shizuku permission refresh failed", it)
+                _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING
+            }
+    }
+
     /**
      * Requests Shizuku permission from the user
      */
     fun requestPermission() {
-        if (isShizukuRunning()) {
-            Shizuku.requestPermission(requestCode)
-        } else {
+        try {
+            if (isShizukuRunning()) {
+                Shizuku.requestPermission(requestCode)
+            } else {
+                _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Shizuku permission request failed", e)
             _permissionState.value = ShizukuPermissionState.SHIZUKU_NOT_RUNNING
         }
     }
@@ -386,6 +414,25 @@ class ShizukuRepository(private val context: Context) {
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
         Shizuku.removeRequestPermissionResultListener(requestPermissionResultListener)
+    }
+}
+
+internal fun resolveShizukuPermissionState(
+    installed: Boolean,
+    running: Boolean,
+    checkPermission: () -> Int,
+    shouldShowRationale: () -> Boolean
+): ShizukuPermissionState {
+    if (!installed) return ShizukuPermissionState.SHIZUKU_NOT_INSTALLED
+    if (!running) return ShizukuPermissionState.SHIZUKU_NOT_RUNNING
+    return try {
+        when {
+            checkPermission() == PackageManager.PERMISSION_GRANTED -> ShizukuPermissionState.GRANTED
+            shouldShowRationale() -> ShizukuPermissionState.SHOULD_SHOW_RATIONALE
+            else -> ShizukuPermissionState.NOT_GRANTED
+        }
+    } catch (_: RuntimeException) {
+        ShizukuPermissionState.SHIZUKU_NOT_RUNNING
     }
 }
 

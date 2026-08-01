@@ -158,7 +158,12 @@ class VolumeKeyService : AccessibilityService() {
             if (!packageName.isNullOrBlank() && 
                 !packageName.startsWith("com.android.systemui") &&
                 !packageName.startsWith("com.nothing.systemui")) {
-                foregroundPackage = packageName
+                if (foregroundPackage != packageName) {
+                    foregroundPackage = packageName
+                    val runtime = (application as AmplyApplication).runtime
+                    runtime.onForegroundPackageChanged(packageName)
+                    runtime.shizukuRepository.checkPermissionStateThrottled()
+                }
             }
         }
     }

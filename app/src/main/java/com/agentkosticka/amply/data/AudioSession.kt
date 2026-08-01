@@ -1,5 +1,6 @@
 package com.agentkosticka.amply.data
 
+import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
@@ -16,6 +17,17 @@ data class AudioSession(
     val streamType: Int,
     val volume: Float,
     val lastSeenTimestamp: Long
+)
+
+/** Package-level row displayed in Amply's expanded overlay. */
+data class OverlayAppEntry(
+    val packageName: String,
+    val uid: Int,
+    val appName: String,
+    val appIcon: Drawable?,
+    val appIconBitmap: Bitmap? = null,
+    val volume: Float,
+    val isPlaying: Boolean
 )
 
 /**

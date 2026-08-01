@@ -3,6 +3,7 @@ package com.agentkosticka.amply
 import android.content.Context
 import android.util.Log
 import com.agentkosticka.amply.audio.AudioSessionManager
+import com.agentkosticka.amply.audio.ForegroundVisitTracker
 import com.agentkosticka.amply.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.ShizukuRepository
 import com.agentkosticka.amply.shizuku.ShizukuVolumeManager
@@ -12,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class AmplyRuntime(context: Context) {
     companion object {
@@ -29,11 +31,14 @@ class AmplyRuntime(context: Context) {
         preferencesManager = preferencesManager,
         shizukuVolumeManager = shizukuVolumeManager
     )
+    val foregroundVisitTracker = ForegroundVisitTracker()
+    val foregroundVisitState = foregroundVisitTracker.state
 
     private val connectionCoordinator = VolumeServiceConnectionCoordinator(
         scope = runtimeScope,
         permissionState = shizukuRepository.permissionState,
-        connector = shizukuVolumeManager
+        connector = shizukuVolumeManager,
+        permissionRefresher = { shizukuRepository.checkPermissionState() }
     )
 
     val sessionState = audioSessionManager.sessionState
@@ -42,8 +47,17 @@ class AmplyRuntime(context: Context) {
 
     init {
         Log.i(TAG, "Creating process-owned Amply runtime")
+        runtimeScope.launch {
+            sessionState.collect { state ->
+                foregroundVisitTracker.onSessionsChanged(state.sessions)
+            }
+        }
         connectionCoordinator.start()
         audioSessionManager.startPolling()
+    }
+
+    fun onForegroundPackageChanged(packageName: String?) {
+        foregroundVisitTracker.onForegroundChanged(packageName)
     }
 
     fun retryVolumeServiceConnection() {

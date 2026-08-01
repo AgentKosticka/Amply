@@ -1,8 +1,10 @@
 package com.agentkosticka.amply
 
 import android.content.Intent
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Bundle
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -30,14 +32,20 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.agentkosticka.amply.ui.settings.SettingsDashboard
+import com.agentkosticka.amply.data.AppPermissionState
+import com.agentkosticka.amply.service.VolumeKeyService
 import com.agentkosticka.amply.ui.setup.SetupViewModel
 import com.agentkosticka.amply.ui.setup.SetupWizardScreen
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import com.agentkosticka.amply.ui.theme.NothingColors
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var runtime: AmplyRuntime
+    private val _appPermissionState = MutableStateFlow(AppPermissionState())
+    private val appPermissionState = _appPermissionState.asStateFlow()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install splash screen BEFORE super.onCreate()
@@ -51,6 +59,14 @@ class MainActivity : ComponentActivity() {
             AmplyTheme {
                 MainContent()
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::runtime.isInitialized) {
+            refreshPermissionState()
+            runtime.shizukuRepository.checkPermissionState()
         }
     }
 
@@ -82,10 +98,30 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun MainAppScreen() {
+        val permissionState by appPermissionState.collectAsState()
         SettingsDashboard(
             runtime = runtime,
+            appPermissionState = permissionState,
             onOverlayPermissionClick = { requestOverlayPermission() },
             onAccessibilityClick = { openAccessibilitySettings() }
+        )
+    }
+
+    private fun refreshPermissionState() {
+        val accessibilityManager = getSystemService(AccessibilityManager::class.java)
+        val volumeKeysGranted = runCatching {
+            accessibilityManager
+                .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                .any { service ->
+                    val serviceInfo = service.resolveInfo.serviceInfo
+                    serviceInfo.packageName == packageName &&
+                        serviceInfo.name == VolumeKeyService::class.java.name
+                }
+        }.getOrDefault(false)
+
+        _appPermissionState.value = AppPermissionState(
+            overlayGranted = Settings.canDrawOverlays(this),
+            volumeKeysGranted = volumeKeysGranted
         )
     }
 

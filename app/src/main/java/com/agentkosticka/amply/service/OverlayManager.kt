@@ -2,9 +2,11 @@ package com.agentkosticka.amply.service
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
+import android.util.LruCache
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -22,13 +24,15 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.agentkosticka.amply.data.AudioSession
+import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import kotlinx.coroutines.*
@@ -113,16 +117,17 @@ object OverlayManager {
     private val maxCallVolume = mutableIntStateOf(5)
     private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
-    private val currentSessions = mutableStateOf<List<AudioSession>>(emptyList())
+    private val currentApps = mutableStateOf<List<OverlayAppEntry>>(emptyList())
+    private val appIconBitmapCache = LruCache<String, Bitmap>(32)
     private val currentOverlaySide = mutableStateOf(OverlaySide.LEFT)
     private val currentOverlayVerticalFraction = mutableFloatStateOf(0.5f)
     private val availableOverlayWidthDp = mutableFloatStateOf(0f)
     
-    // Phase 3.5: Smart Focus - the foreground app if detected
-    private val focusedApp = mutableStateOf<AudioSession?>(null)
+    private val shizukuConnectionState = mutableStateOf(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
+    private val shizukuIcon = mutableStateOf<Bitmap?>(null)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
-    private var onSessionVolumeChangeCallback: ((Int, String?, Float) -> Unit)? = null
+    private var onAppVolumeChangeCallback: ((OverlayAppEntry, Float) -> Unit)? = null
     private var onPauseAmplyCallback: (() -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
     private var isOverlayExpanded = false
@@ -134,13 +139,12 @@ object OverlayManager {
      * Set the callback for per-app volume changes
      * This should be called by OverlayService to wire up to AudioSessionManager
      */
-    fun setSessionVolumeCallback(callback: (Int, String?, Float) -> Unit) {
-        Log.d("OverlayManager", "setSessionVolumeCallback: callback set")
-        onSessionVolumeChangeCallback = callback
+    fun setAppVolumeCallback(callback: (OverlayAppEntry, Float) -> Unit) {
+        onAppVolumeChangeCallback = callback
     }
 
-    fun clearSessionVolumeCallback() {
-        onSessionVolumeChangeCallback = null
+    fun clearAppVolumeCallback() {
+        onAppVolumeChangeCallback = null
     }
 
     fun setPauseAmplyCallback(callback: () -> Unit) {
@@ -151,44 +155,39 @@ object OverlayManager {
         onPauseAmplyCallback = null
     }
 
-    fun updateSessions(sessions: List<AudioSession>, focusedAppSession: AudioSession?) {
-        currentSessions.value = sessions
-        focusedApp.value = focusedAppSession
+    fun updateApps(
+        apps: List<OverlayAppEntry>,
+        connectionState: VolumeServiceConnectionState
+    ) {
+        currentApps.value = prepareAppIcons(apps)
+        shizukuConnectionState.value = connectionState
     }
+
+    private fun prepareAppIcons(apps: List<OverlayAppEntry>): List<OverlayAppEntry> =
+        apps.map { app ->
+            val bitmap = app.appIconBitmap
+                ?: appIconBitmapCache.get(app.packageName)
+                ?: runCatching { app.appIcon?.toBitmap(52, 52) }
+                    .getOrNull()
+                    ?.also { appIconBitmapCache.put(app.packageName, it) }
+            if (app.appIconBitmap === bitmap) app else app.copy(appIconBitmap = bitmap)
+        }
 
     /**
      * Invoke the session volume callback
      * This method ensures the callback is always read fresh from the property
      */
-    private fun invokeSessionVolumeCallback(sessionId: Int, packageName: String?, volume: Float) {
-        Log.d("OverlayManager", "invokeSessionVolumeCallback: sessionId=$sessionId, package=$packageName, volume=$volume")
-        val callback = onSessionVolumeChangeCallback
-        if (callback != null) {
-            Log.d("OverlayManager", "Callback exists, invoking...")
-            callback.invoke(sessionId, packageName, volume)
-        } else {
-            Log.e("OverlayManager", "ERROR: onSessionVolumeChangeCallback is NULL!")
-        }
+    private fun invokeAppVolumeCallback(app: OverlayAppEntry, volume: Float) {
+        onAppVolumeChangeCallback?.invoke(app, volume)
     }
 
-    /**
-     * Show or update the overlay
-     * CRITICAL: Context is passed in, not stored
-     * Phase 3.5: Added focusedAppSession for Smart Focus feature
-     * Phase 3: Added volumeReceiver for robust IPC volume control
-     *
-     * @param context Service context
-     * @param volume Current global volume
-     * @param newIconType Device icon type (MUSIC, BLUETOOTH, HEADPHONE)
-     * @param sessions List of active audio sessions (Phase 3)
-     * @param focusedAppSession The currently focused/foreground app (Phase 3.5 Smart Focus)
-     */
+    /** Show or update the overlay using the latest package-level app entries. */
     fun show(
         context: Context,
         volume: Int,
         newIconType: String = "MUSIC",
-        sessions: List<AudioSession> = emptyList(),
-        focusedAppSession: AudioSession? = null,
+        apps: List<OverlayAppEntry> = emptyList(),
+        connectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
         overlaySide: OverlaySide = OverlaySide.LEFT,
         overlayVerticalFraction: Float = 0.5f,
         windowType: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -204,20 +203,27 @@ object OverlayManager {
         }
 
         // DEBUG: Log incoming state
-        Log.d("OverlayManager", "show() called: volume=$volume, sessions=${sessions.size}, focused=${focusedAppSession?.appName}")
+        Log.d("OverlayManager", "show() called: volume=$volume, apps=${apps.size}, connection=$connectionState")
 
         // Update state
         updateAvailableOverlayWidth(context)
         refreshSystemStreamVolumes(mediaVolumeOverride = volume)
         isMuted.value = (currentVolume.intValue == 0)
         iconType.value = newIconType
-        currentSessions.value = sessions
-        focusedApp.value = focusedAppSession
+        currentApps.value = prepareAppIcons(apps)
+        shizukuConnectionState.value = connectionState
+        if (shizukuIcon.value == null) {
+            shizukuIcon.value = runCatching {
+                context.packageManager
+                    .getApplicationIcon("moe.shizuku.privileged.api")
+                    .toBitmap(68, 68)
+            }.getOrNull()
+        }
         currentOverlaySide.value = overlaySide
         currentOverlayVerticalFraction.floatValue = overlayVerticalFraction.coerceIn(0f, 1f)
         
         // DEBUG: Verify state was set
-        Log.d("OverlayManager", "State updated: currentSessions.value has ${currentSessions.value.size} items")
+        Log.d("OverlayManager", "State updated: currentApps.value has ${currentApps.value.size} items")
 
         if (overlayContainer != null && currentWindowType != windowType) {
             removeOverlay()
@@ -292,8 +298,9 @@ object OverlayManager {
                     maxCallVolume = maxCallVolume.intValue,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
-                    sessions = currentSessions.value,
-                    focusedApp = focusedApp.value, // Phase 3.5: Smart Focus
+                    apps = currentApps.value,
+                    shizukuConnectionState = shizukuConnectionState.value,
+                    shizukuIcon = shizukuIcon.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
                     onVolumeChange = { newVolume ->
@@ -302,12 +309,8 @@ object OverlayManager {
                     onStreamVolumeChange = { streamType, newVolume ->
                         setStreamVolume(streamType, newVolume)
                     },
-                    onSessionVolumeChange = { session, volume ->
-                        Log.d(
-                            "OverlayManager",
-                            "Sending volume change via runtime callback: id=${session.sessionId} pkg=${session.packageName} vol=$volume"
-                        )
-                        invokeSessionVolumeCallback(session.sessionId, session.packageName, volume)
+                    onAppVolumeChange = { app, volume ->
+                        invokeAppVolumeCallback(app, volume)
                     },
                     onMuteToggle = {
                         toggleMute()
@@ -492,6 +495,7 @@ object OverlayManager {
         removeJob?.cancel()
         removeOverlay()
         managerScope.cancel()
+        appIconBitmapCache.evictAll()
         windowManager = null
         audioManager = null
     }

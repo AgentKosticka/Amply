@@ -10,6 +10,7 @@ import android.util.LruCache
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
+import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
@@ -471,6 +472,37 @@ class AudioSessionManager(
     fun getExpandedOverlaySessions(): List<AudioSession> =
         getDefaultOverlaySessions()
 
+    fun getOverlayApps(
+        foregroundVisitSession: AudioSession?,
+        shizukuConnected: Boolean = shizukuVolumeManager.isConnected.value,
+        settings: Map<String, AppSettings> = appSettingsCache
+    ): List<OverlayAppEntry> {
+        val activeByPackage = compactSessionsByPackage(_sessionState.value.sessions)
+            .associateBy { it.packageName }
+        return selectOverlayPackages(
+            activeSessions = _sessionState.value.sessions,
+            appSettings = settings,
+            foregroundVisitSession = foregroundVisitSession,
+            shizukuConnected = shizukuConnected
+        ).mapNotNull { packageName ->
+            val active = activeByPackage[packageName]
+            val setting = settings[packageName]
+            val foreground = foregroundVisitSession?.takeIf { it.packageName == packageName }
+            if (active == null && setting == null && foreground == null) return@mapNotNull null
+
+            OverlayAppEntry(
+                packageName = packageName,
+                uid = active?.uid ?: foreground?.uid ?: setting!!.uid,
+                appName = active?.appName ?: foreground?.appName ?: setting!!.appName,
+                appIcon = active?.appIcon ?: foreground?.appIcon ?: runCatching {
+                    packageManager.getApplicationIcon(packageName)
+                }.getOrNull(),
+                volume = setting?.defaultVolume ?: active?.volume ?: foreground!!.volume,
+                isPlaying = active != null
+            )
+        }
+    }
+
     /**
      * Check if any apps are currently playing audio
      */
@@ -568,6 +600,33 @@ class AudioSessionManager(
 
     fun setSessionVolume(sessionId: Int, volume: Float) {
         setSessionVolume(sessionId, null, volume)
+    }
+
+    fun setAppVolume(packageName: String, volume: Float) {
+        val active = _sessionState.value.sessions.firstOrNull { it.packageName == packageName }
+        if (active != null) {
+            setSessionVolume(active.sessionId, packageName, volume)
+        } else {
+            managerScope.launch {
+                preferencesManager.setAppDefaultVolume(packageName, volume)
+            }
+        }
+    }
+
+    fun setAppVolume(app: OverlayAppEntry, volume: Float) {
+        val active = _sessionState.value.sessions.firstOrNull { it.packageName == app.packageName }
+        if (active != null) {
+            setSessionVolume(active.sessionId, app.packageName, volume)
+        } else {
+            managerScope.launch {
+                preferencesManager.persistAppVolume(
+                    packageName = app.packageName,
+                    appName = app.appName,
+                    uid = app.uid,
+                    volume = volume
+                )
+            }
+        }
     }
 
     /**
