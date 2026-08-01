@@ -17,7 +17,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -44,7 +44,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -400,16 +403,35 @@ fun VolumeOverlay(
                 pillContent()
                 AnimatedVisibility(
                     visibleState = panelTransitionState,
-                    enter = slideInHorizontally(
-                        initialOffsetX = { if (expandToStart) it else -it }
-                    ) + fadeIn(animationSpec = tween(180)),
-                    exit = slideOutHorizontally(
-                        targetOffsetX = { if (expandToStart) it else -it }
-                    ) + fadeOut(animationSpec = tween(120))
+                    enter = fadeIn(animationSpec = tween(170)),
+                    exit = fadeOut(animationSpec = tween(120))
                 ) {
+                    val horizontalReveal by transition.animateFloat(
+                        transitionSpec = {
+                            if (targetState == EnterExitState.Visible) {
+                                tween(210, easing = FastOutSlowInEasing)
+                            } else {
+                                tween(140, easing = FastOutSlowInEasing)
+                            }
+                        },
+                        label = "portraitPanelHorizontalReveal"
+                    ) { state ->
+                        if (state == EnterExitState.Visible) 1f else 0.86f
+                    }
                     Column {
                         Spacer(modifier = Modifier.height(PanelSpacing))
-                        panelBody(ExpandedPillWidth, 360.dp)
+                        Box(
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = horizontalReveal
+                                scaleY = 1f
+                                transformOrigin = TransformOrigin(
+                                    pivotFractionX = if (expandToStart) 1f else 0f,
+                                    pivotFractionY = 0.5f
+                                )
+                            }
+                        ) {
+                            panelBody(ExpandedPillWidth, 360.dp)
+                        }
                     }
                 }
             }
@@ -706,11 +728,12 @@ private fun AmplyPanel(
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 100.dp, max = maxHeight)
+            .clip(RoundedCornerShape(OverlayCornerRadius))
             .background(
                 color = Color(0xFF1C1C1C),
                 shape = RoundedCornerShape(OverlayCornerRadius)
             )
-            .padding(14.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     // Wait for first touch down
@@ -727,65 +750,36 @@ private fun AmplyPanel(
             },
         horizontalAlignment = Alignment.Start
     ) {
-        // Header
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // Dot grid icon
-                Canvas(modifier = Modifier.size(10.dp)) {
-                    val dotRadius = 1.2.dp.toPx()
-                    val spacing = size.width / 3
-                    for (row in 0..2) {
-                        for (col in 0..2) {
-                            drawCircle(
-                                color = NothingColors.Red,
-                                radius = dotRadius,
-                                center = Offset(
-                                    col * spacing + spacing / 2,
-                                    row * spacing + spacing / 2
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
         LazyColumn(
             modifier = Modifier
                 .weight(1f, fill = false)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxWidth()
         ) {
-            items(
+            itemsIndexed(
                 items = apps,
-                key = { it.packageName },
-                contentType = { "app-volume" }
-            ) { app ->
-                AppVolumeRow(
-                    app = app,
-                    onVolumeChange = { newVolume ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAppVolumeChange(app, newVolume)
+                key = { _, app -> app.packageName },
+                contentType = { _, _ -> "app-volume" }
+            ) { index, app ->
+                Column {
+                    if (index > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp)
+                                .height(1.dp)
+                                .background(Color(0xFF2D2D2D))
+                        )
                     }
-                )
+                    AppVolumeRow(
+                        app = app,
+                        onVolumeChange = { newVolume ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAppVolumeChange(app, newVolume)
+                        }
+                    )
+                }
             }
         }
-
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = "${apps.size} ${if (apps.size == 1) "app" else "apps"}",
-            color = NothingColors.GreyDim,
-            style = MaterialTheme.typography.labelSmall
-        )
     }
 }
 
@@ -795,6 +789,7 @@ private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 82.dp)
+            .clip(RoundedCornerShape(OverlayCornerRadius))
             .background(Color(0xFF1C1C1C), RoundedCornerShape(OverlayCornerRadius))
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -847,23 +842,12 @@ private fun AppVolumeRow(
     }
     val volumePercent = (localVolume * 100).toInt()
 
-    val backgroundColor by animateColorAsState(
-        Color(0xFF262626),
-        animationSpec = tween(200),
-        label = "rowBackground"
-    )
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                color = backgroundColor,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(horizontal = 2.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // App info row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -874,28 +858,39 @@ private fun AppVolumeRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // App Icon
                 Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .background(
-                            color = Color(0xFF3A3A3A),
-                            shape = RoundedCornerShape(7.dp)
-                        ),
-                    contentAlignment = Alignment.Center
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    app.appIconBitmap?.let { icon ->
-                        Image(
-                            bitmap = icon.asImageBitmap(),
-                            contentDescription = app.appName,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    } ?: run {
-                        Icon(
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF343434)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        app.appIconBitmap?.let { icon ->
+                            Image(
+                                bitmap = icon.asImageBitmap(),
+                                contentDescription = app.appName,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                            )
+                        } ?: Icon(
                             imageVector = Icons.Default.MusicNote,
                             contentDescription = app.appName,
                             tint = NothingColors.GreyMedium,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                    if (app.isPlaying) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(10.dp)
+                                .background(Color(0xFF1C1C1C), CircleShape)
+                                .padding(2.dp)
+                                .background(NothingColors.Red, CircleShape)
                         )
                     }
                 }
@@ -904,7 +899,7 @@ private fun AppVolumeRow(
                     text = app.appName,
                     color = NothingColors.White,
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Normal,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -913,15 +908,14 @@ private fun AppVolumeRow(
 
             Text(
                 text = "$volumePercent%",
-                color = if (volumePercent > 80) NothingColors.Red else NothingColors.GreyMedium,
+                color = if (volumePercent > 75) NothingColors.Red else NothingColors.GreyMedium,
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold
             )
         }
 
-        // Horizontal slider - updates local state and backend immediately
-        HorizontalDotSlider(
+        HorizontalVolumeRail(
             volume = localVolume,
             onVolumeChange = { newVolume ->
                 localVolume = newVolume
@@ -933,59 +927,74 @@ private fun AppVolumeRow(
 }
 
 /**
- * Horizontal dot slider for per-app volume
+ * Rounded continuous volume rail for per-app volume.
  */
 @Composable
-private fun HorizontalDotSlider(
+private fun HorizontalVolumeRail(
     volume: Float,
     onVolumeChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dotCount = 14
-
     Canvas(
         modifier = modifier
-            .height(18.dp)
+            .height(20.dp)
             .pointerInput(Unit) {
                 detectHorizontalDragGestures { change, _ ->
                     change.consume()
-                    val x = change.position.x
-                    val width = size.width.toFloat()
-                    val newVolume = (x / width).coerceIn(0f, 1f)
+                    val inset = 5.dp.toPx()
+                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                    val newVolume = ((change.position.x - inset) / usableWidth).coerceIn(0f, 1f)
                     onVolumeChange(newVolume)
                 }
             }
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    val x = offset.x
-                    val width = size.width.toFloat()
-                    val newVolume = (x / width).coerceIn(0f, 1f)
+                    val inset = 5.dp.toPx()
+                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                    val newVolume = ((offset.x - inset) / usableWidth).coerceIn(0f, 1f)
                     onVolumeChange(newVolume)
                 }
             }
     ) {
-        val dotRadius = 2.8.dp.toPx()
-        val spacing = size.width / (dotCount - 1)
-        val filledDots = (volume * dotCount).toInt()
+        val thumbRadius = 5.dp.toPx()
+        val trackWidth = 4.dp.toPx()
+        val startX = thumbRadius
+        val endX = size.width - thumbRadius
+        val usableWidth = (endX - startX).coerceAtLeast(1f)
+        val valueX = startX + usableWidth * volume.coerceIn(0f, 1f)
+        val warningX = startX + usableWidth * 0.75f
+        val centerY = size.height / 2f
 
-        for (i in 0 until dotCount) {
-            val x = i * spacing
-            val y = size.height / 2
-            val dotPercentage = i.toFloat() / (dotCount - 1)
-
-            val dotColor = when {
-                i < filledDots -> {
-                    if (dotPercentage > 0.75f) NothingColors.Red else NothingColors.White
-                }
-                else -> Color(0xFF444444)
-            }
-
-            drawCircle(
-                color = dotColor,
-                radius = dotRadius,
-                center = Offset(x, y)
+        drawLine(
+            color = Color(0xFF444444),
+            start = Offset(startX, centerY),
+            end = Offset(endX, centerY),
+            strokeWidth = trackWidth,
+            cap = StrokeCap.Round
+        )
+        if (valueX > startX) {
+            drawLine(
+                color = NothingColors.White,
+                start = Offset(startX, centerY),
+                end = Offset(valueX.coerceAtMost(warningX), centerY),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round
             )
         }
+        if (valueX > warningX) {
+            drawLine(
+                color = NothingColors.Red,
+                start = Offset(warningX, centerY),
+                end = Offset(valueX, centerY),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round
+            )
+        }
+        drawCircle(
+            color = if (volume > 0.75f) NothingColors.Red else NothingColors.White,
+            radius = thumbRadius,
+            center = Offset(valueX, centerY)
+        )
     }
 }
 
