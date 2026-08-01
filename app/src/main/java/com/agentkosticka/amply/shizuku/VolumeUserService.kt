@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.shizuku
 
 import android.media.AudioPlaybackConfiguration
+import android.media.AudioManager
 import android.os.IBinder
 import android.os.Process
 import android.util.Log
@@ -19,6 +20,11 @@ class VolumeUserService : IVolumeService.Stub() {
 
     companion object {
         private const val TAG = "VolumeUserService"
+        private const val STATUS_OK = 1
+        private const val STATUS_FAILED = -1
+        private const val STATUS_DENIED = -2
+        private const val STATUS_UNSUPPORTED = -3
+        private const val STATUS_UNAVAILABLE = -4
     }
 
     // Direct access to IAudioService for privileged operations
@@ -197,6 +203,101 @@ class VolumeUserService : IVolumeService.Stub() {
         return setVolumeForConfig(config, volume)
     }
 
+    override fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int {
+        val service: Any = audioService ?: run {
+            if (initializeAudioService()) audioService else null
+        } ?: return STATUS_UNAVAILABLE
+        val targetMode = when (target) {
+            0 -> AudioManager.RINGER_MODE_NORMAL
+            1 -> AudioManager.RINGER_MODE_VIBRATE
+            2 -> AudioManager.RINGER_MODE_SILENT
+            else -> return STATUS_UNSUPPORTED
+        }
+        return try {
+            when (method) {
+                6 -> invokeAudioService(service, "setRingerModeExternal", targetMode, "com.android.shell")
+                7 -> invokeAudioService(service, "setRingerModeInternal", targetMode, "com.android.shell")
+                8 -> adjustPrivilegedStream(service, AudioManager.STREAM_NOTIFICATION, targetMode)
+                9 -> adjustPrivilegedStream(service, AudioManager.STREAM_RING, targetMode)
+                else -> return STATUS_UNSUPPORTED
+            }
+            if (targetMode == AudioManager.RINGER_MODE_NORMAL && restoreVolume > 0) {
+                runCatching {
+                    invokeCompatible(
+                        service,
+                        listOf("setStreamVolumeWithAttribution", "setStreamVolume"),
+                        AudioManager.STREAM_NOTIFICATION,
+                        restoreVolume,
+                        0,
+                        "com.android.shell",
+                        null
+                    )
+                }
+            }
+            STATUS_OK
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Ringer experiment denied method=$method", e)
+            STATUS_DENIED
+        } catch (e: NoSuchMethodException) {
+            Log.w(TAG, "Ringer experiment unsupported method=$method", e)
+            STATUS_UNSUPPORTED
+        } catch (e: Exception) {
+            Log.e(TAG, "Ringer experiment failed method=$method", e)
+            STATUS_FAILED
+        }
+    }
+
+    private fun adjustPrivilegedStream(service: Any, stream: Int, targetMode: Int) {
+        repeat(20) {
+            val currentMode = invokeAudioService(service, "getRingerModeExternal") as Int
+            if (currentMode == targetMode) return
+            val direction = if (targetMode == AudioManager.RINGER_MODE_NORMAL) {
+                AudioManager.ADJUST_RAISE
+            } else {
+                AudioManager.ADJUST_LOWER
+            }
+            invokeCompatible(
+                service,
+                listOf("adjustStreamVolumeWithAttribution", "adjustStreamVolume"),
+                stream,
+                direction,
+                AudioManager.FLAG_ALLOW_RINGER_MODES,
+                "com.android.shell",
+                null
+            )
+        }
+    }
+
+    private fun invokeAudioService(service: Any, name: String, vararg args: Any?): Any? {
+        val method = service.javaClass.methods.firstOrNull {
+            it.name == name && it.parameterTypes.size == args.size
+        } ?: throw NoSuchMethodException(name)
+        return method.invoke(service, *args)
+    }
+
+    private fun invokeCompatible(
+        service: Any,
+        names: List<String>,
+        stream: Int,
+        value: Int,
+        flags: Int,
+        packageName: String,
+        attributionTag: String?
+    ): Any? {
+        names.forEach { name ->
+            val candidates = service.javaClass.methods.filter { it.name == name }
+            candidates.forEach { method ->
+                val args: Array<Any?> = when (method.parameterTypes.size) {
+                    4 -> arrayOf(stream, value, flags, packageName)
+                    5 -> arrayOf(stream, value, flags, packageName, attributionTag)
+                    else -> return@forEach
+                }
+                return method.invoke(service, *args)
+            }
+        }
+        throw NoSuchMethodException(names.joinToString())
+    }
+
     private fun setVolumeForConfig(config: AudioPlaybackConfiguration, volume: Float): Boolean {
         try {
             val uid = getClientUid(config)
@@ -232,6 +333,7 @@ class VolumeUserService : IVolumeService.Stub() {
         clearAudioService()
         System.exit(0)
     }
+
 
     private fun initializeReflection() {
         try {

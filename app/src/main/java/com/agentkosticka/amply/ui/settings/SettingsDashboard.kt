@@ -18,6 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -28,6 +30,8 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.NavigationBar
@@ -56,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,6 +78,9 @@ import com.agentkosticka.amply.data.AppPermissionState
 import com.agentkosticka.amply.data.AmplyPauseDuration
 import com.agentkosticka.amply.data.OverlayAppMode
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.audio.NotificationAlertMode
+import com.agentkosticka.amply.audio.RingerExperimentMethod
+import com.agentkosticka.amply.audio.RingerMethodTestResult
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -101,12 +109,15 @@ private data class InstalledAppEntry(
     val uid: Int
 )
 
+private val CompatibilityControlGrey = Color(0xFF555555)
+
 @Composable
 fun SettingsDashboard(
     runtime: AmplyRuntime,
     appPermissionState: AppPermissionState,
     onOverlayPermissionClick: () -> Unit,
-    onAccessibilityClick: () -> Unit
+    onAccessibilityClick: () -> Unit,
+    onNotificationPolicyClick: () -> Unit
 ) {
     val context = LocalContext.current
     val preferences = runtime.preferencesManager
@@ -119,6 +130,11 @@ fun SettingsDashboard(
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
+    val selectedExperiment by runtime.ringerExperimentExecutor.selectedMethod.collectAsState()
+    val experimentResults by runtime.ringerExperimentExecutor.methodTestResults.collectAsState()
+    val experimentProgress by runtime.ringerExperimentExecutor.methodTestProgress.collectAsState()
+    val runningExperiment by runtime.ringerExperimentExecutor.runningMethod.collectAsState()
+    val experimentBusy by runtime.ringerExperimentExecutor.busy.collectAsState()
     val scope = rememberCoroutineScope()
     val inactiveVolumeSaveJobs = remember { mutableMapOf<String, Job>() }
     var selectedTabName by rememberSaveable { mutableStateOf(SettingsTab.ACCESS.name) }
@@ -167,6 +183,12 @@ fun SettingsDashboard(
     }
 
     LaunchedEffect(Unit) { shizukuRepository.checkPermissionState() }
+    LaunchedEffect(Unit) {
+        while (true) {
+            runtime.ringerExperimentExecutor.refresh()
+            delay(1_000L)
+        }
+    }
     LaunchedEffect(verticalFraction) { previewVerticalFraction = verticalFraction }
     LaunchedEffect(pickerExpanded) {
         if (pickerExpanded && installedApps.isEmpty()) {
@@ -404,11 +426,197 @@ fun SettingsDashboard(
                             appPermissionState.volumeKeysGranted,
                             onAccessibilityClick
                         )
+                        Spacer(Modifier.height(10.dp))
+                        PermissionButton(
+                            "3",
+                            "NOTIFICATION MODES",
+                            "Allow silent-mode changes",
+                            appPermissionState.notificationPolicyGranted,
+                            onNotificationPolicyClick
+                        )
+                    }
+                    item {
+                        RingerExperimentPanel(
+                            selected = selectedExperiment,
+                            results = experimentResults,
+                            progress = experimentProgress,
+                            runningMethod = runningExperiment,
+                            busy = experimentBusy,
+                            shizukuConnected = connectionState == VolumeServiceConnectionState.CONNECTED,
+                            onSelect = runtime.ringerExperimentExecutor::select,
+                            onTest = { method ->
+                                scope.launch { runtime.ringerExperimentExecutor.testAllTransitions(method) }
+                            }
+                        )
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun RingerExperimentPanel(
+    selected: RingerExperimentMethod,
+    results: Map<RingerExperimentMethod, RingerMethodTestResult>,
+    progress: Map<RingerExperimentMethod, Float>,
+    runningMethod: RingerExperimentMethod?,
+    busy: Boolean,
+    shizukuConnected: Boolean,
+    onSelect: (RingerExperimentMethod) -> Unit,
+    onTest: (RingerExperimentMethod) -> Unit
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var explainedMethod by rememberSaveable { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SettingsPanel {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("RINGER MODE COMPATIBILITY", color = NothingColors.White, fontWeight = FontWeight.Bold)
+                    Text("Device-specific control checks", color = NothingColors.GreyMedium)
+                }
+                Icon(
+                    Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Hide ringer tests" else "Show ringer tests",
+                    tint = NothingColors.GreyMedium,
+                    modifier = Modifier.rotate(if (expanded) 180f else 0f)
+                )
+            }
+        }
+
+        if (expanded) {
+            SettingsPanel {
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = "Experimental controls warning",
+                        tint = NothingColors.Red,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Column {
+                        Text(
+                            "FOR TROUBLESHOOTING ONLY",
+                            color = NothingColors.Red,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Run these checks only if silent, vibrate, or loud mode is not behaving correctly. Some methods can enable DND or interfere with volume keys; Amply will disable DND if a check turns it on.",
+                            color = NothingColors.White,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+        }
+
+        if (expanded) RingerExperimentMethod.entries.forEach { method ->
+            val enabled = !busy && (!method.requiresShizuku || shizukuConnected)
+            val result = results[method]
+            val methodProgress = progress[method] ?: 0f
+            val isRunning = runningMethod == method
+            SettingsPanel {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.size(34.dp).background(NothingColors.Red, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("E${method.number}", color = NothingColors.White, fontWeight = FontWeight.Bold)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(method.title.uppercase(), color = NothingColors.White, fontWeight = FontWeight.Bold)
+                        if (method.requiresShizuku) {
+                            Text("Requires Shizuku", color = NothingColors.GreyMedium, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    IconButton(
+                        onClick = {
+                            explainedMethod = if (explainedMethod == method.name) null else method.name
+                        },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = "What E${method.number} tests",
+                            tint = NothingColors.GreyMedium,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Button(
+                        onClick = { onSelect(method) },
+                        enabled = enabled,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selected == method) NothingColors.Red else CompatibilityControlGrey,
+                            disabledContainerColor = CompatibilityControlGrey.copy(alpha = 0.35f)
+                        )
+                    ) { Text(if (selected == method) "ACTIVE" else "USE") }
+                }
+                if (explainedMethod == method.name) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(method.description, color = NothingColors.GreyMedium, style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { onTest(method) },
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CompatibilityControlGrey,
+                        disabledContainerColor = CompatibilityControlGrey.copy(alpha = 0.35f)
+                    )
+                ) { Text(if (isRunning) "TESTING…" else "TEST ALL TRANSITIONS") }
+                if (isRunning) {
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { methodProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = NothingColors.Red,
+                        trackColor = CompatibilityControlGrey
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Testing ${(methodProgress * 6).toInt().coerceIn(0, 6)} of 6 transitions",
+                        color = NothingColors.GreyMedium,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (result != null) {
+                    Spacer(Modifier.height(8.dp))
+                    if (result.detail.isNotBlank()) {
+                        Text(result.detail, color = NothingColors.Red, style = MaterialTheme.typography.bodySmall)
+                    }
+                    result.transitions.forEach { transition ->
+                        Text(
+                            "${transition.from.readableName()} → ${transition.to.readableName()}: ${transition.detail}",
+                            color = if (transition.passed) NothingColors.GreyMedium else NothingColors.Red,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun NotificationAlertMode.readableName(): String = when (this) {
+    NotificationAlertMode.MUTED -> "Muted"
+    NotificationAlertMode.VIBRATIONS -> "Vibrate"
+    NotificationAlertMode.LOUD -> "Loud"
 }
 
 private fun loadLaunchableApps(context: Context): List<InstalledAppEntry> {

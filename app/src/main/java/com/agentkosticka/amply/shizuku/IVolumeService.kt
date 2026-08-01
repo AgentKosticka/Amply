@@ -12,7 +12,8 @@ import android.os.RemoteException
  * Transaction codes:
  * - TRANSACTION_getActivePlaybacks = 1
  * - TRANSACTION_setPlayerVolume = 2
- * - TRANSACTION_destroy = 3
+ * - TRANSACTION_applyRingerExperiment = 3
+ * - TRANSACTION_destroy = 4
  */
 interface IVolumeService : IInterface {
 
@@ -20,7 +21,8 @@ interface IVolumeService : IInterface {
         const val DESCRIPTOR = "com.agentkosticka.amply.shizuku.IVolumeService"
         const val TRANSACTION_getActivePlaybacks = IBinder.FIRST_CALL_TRANSACTION + 0
         const val TRANSACTION_setPlayerVolume = IBinder.FIRST_CALL_TRANSACTION + 1
-        const val TRANSACTION_destroy = IBinder.FIRST_CALL_TRANSACTION + 2
+        const val TRANSACTION_applyRingerExperiment = IBinder.FIRST_CALL_TRANSACTION + 2
+        const val TRANSACTION_destroy = IBinder.FIRST_CALL_TRANSACTION + 3
         const val TRANSACTION_destroyUserService = 16777115
 
         fun asInterface(binder: IBinder?): IVolumeService? {
@@ -43,6 +45,8 @@ interface IVolumeService : IInterface {
      * @return true if successful
      */
     fun setPlayerVolume(piid: Int, volume: Float): Boolean
+
+    fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int
 
     /**
      * Destroys the service
@@ -79,6 +83,13 @@ interface IVolumeService : IInterface {
                     val result = setPlayerVolume(piid, volume)
                     reply?.writeNoException()
                     reply?.writeInt(if (result) 1 else 0)
+                    return true
+                }
+                TRANSACTION_applyRingerExperiment -> {
+                    data.enforceInterface(DESCRIPTOR)
+                    val result = applyRingerExperiment(data.readInt(), data.readInt(), data.readInt())
+                    reply?.writeNoException()
+                    reply?.writeInt(result)
                     return true
                 }
                 TRANSACTION_destroy,
@@ -127,6 +138,25 @@ interface IVolumeService : IInterface {
                 }
                 reply.readException()
                 reply.readInt() != 0
+            } finally {
+                reply.recycle()
+                data.recycle()
+            }
+        }
+
+        override fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int {
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            return try {
+                data.writeInterfaceToken(DESCRIPTOR)
+                data.writeInt(method)
+                data.writeInt(target)
+                data.writeInt(restoreVolume)
+                if (!remote.transact(TRANSACTION_applyRingerExperiment, data, reply, 0)) {
+                    throw RemoteException("Volume service rejected ringer experiment")
+                }
+                reply.readException()
+                reply.readInt()
             } finally {
                 reply.recycle()
                 data.recycle()

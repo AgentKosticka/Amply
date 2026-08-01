@@ -117,7 +117,7 @@ object OverlayManager {
     private val maxAlarmVolume = mutableIntStateOf(7)
     private val notificationVolume = mutableIntStateOf(0)
     private val maxNotificationVolume = mutableIntStateOf(7)
-    private val notificationAlertMode = mutableStateOf(NotificationAlertMode.SOUND)
+    private val notificationAlertMode = mutableStateOf(NotificationAlertMode.LOUD)
     private val callVolume = mutableIntStateOf(0)
     private val maxCallVolume = mutableIntStateOf(5)
     private val selectedVolumeTarget = mutableStateOf(VolumeTarget.MEDIA)
@@ -137,6 +137,7 @@ object OverlayManager {
     private var onOverlayShownCallback: (() -> Unit)? = null
     private var onOverlayHiddenCallback: (() -> Unit)? = null
     private var onPauseAmplyCallback: (() -> Unit)? = null
+    private var onNotificationModeToggleCallback: (() -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
     private var isOverlayExpanded = false
 
@@ -187,6 +188,18 @@ object OverlayManager {
 
     fun clearPauseAmplyCallback() {
         onPauseAmplyCallback = null
+    }
+
+    fun setNotificationModeToggleCallback(callback: () -> Unit) {
+        onNotificationModeToggleCallback = callback
+    }
+
+    fun clearNotificationModeToggleCallback() {
+        onNotificationModeToggleCallback = null
+    }
+
+    fun refreshStreamVolumes() {
+        refreshSystemStreamVolumes()
     }
 
     fun updateApps(
@@ -495,12 +508,15 @@ object OverlayManager {
             AudioManager.STREAM_NOTIFICATION -> notificationVolume.intValue = clampedVolume
             AudioManager.STREAM_VOICE_CALL -> callVolume.intValue = clampedVolume
         }
-        manager.setStreamVolume(
-            streamType,
-            clampedVolume,
-            0 // No system UI
-        )
+        manager.setStreamVolume(streamType, clampedVolume, 0)
         if (streamType == AudioManager.STREAM_NOTIFICATION) {
+            runCatching {
+                manager.ringerMode = if (clampedVolume <= manager.getStreamMinVolume(streamType)) {
+                    AudioManager.RINGER_MODE_VIBRATE
+                } else {
+                    AudioManager.RINGER_MODE_NORMAL
+                }
+            }
             notificationAlertMode.value = NotificationAlertMode.resolve(
                 ringerMode = manager.ringerMode,
                 currentVolume = clampedVolume,
@@ -517,6 +533,10 @@ object OverlayManager {
         if (streamType != AudioManager.STREAM_MUSIC &&
             streamType != AudioManager.STREAM_NOTIFICATION
         ) {
+            return
+        }
+        if (streamType == AudioManager.STREAM_NOTIFICATION) {
+            onNotificationModeToggleCallback?.invoke()
             return
         }
         val manager = audioManager ?: return

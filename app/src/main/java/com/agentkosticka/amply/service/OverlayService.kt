@@ -175,6 +175,14 @@ class OverlayService : Service() {
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
             }
+            OverlayManager.setNotificationModeToggleCallback {
+                serviceScope.launch {
+                    runtime.ringerExperimentExecutor.toggleSelected {
+                        OverlayManager.refreshStreamVolumes()
+                    }
+                    OverlayManager.refreshStreamVolumes()
+                }
+            }
 
             Log.d("OverlayService", "Connected to process-owned audio runtime")
         } catch (e: Exception) {
@@ -256,5 +264,6 @@ class OverlayService : Service() {
         OverlayManager.clearAppVolumeCallback()
         OverlayManager.clearVolumeTargetCallbacks()
         OverlayManager.clearPauseAmplyCallback()
+        OverlayManager.clearNotificationModeToggleCallback()
     }
 }

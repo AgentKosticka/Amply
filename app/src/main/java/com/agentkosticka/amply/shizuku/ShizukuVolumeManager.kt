@@ -42,7 +42,7 @@ class ShizukuVolumeManager(
         .daemon(false)
         .processNameSuffix("volume_service")
         .debuggable(true)
-        .version(1)
+        .version(2)
 
     override fun onPermissionAvailable() {
         synchronized(lock) {
@@ -249,6 +249,17 @@ class ShizukuVolumeManager(
             Log.e(TAG, "Volume RPC failed piid=$piid", e)
             invalidateConnection("volume RPC failed: ${e.javaClass.simpleName}")
             false
+        }
+    }
+
+    fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int? {
+        val service = synchronized(lock) { volumeService } ?: return null
+        return try {
+            service.applyRingerExperiment(method, target, restoreVolume)
+        } catch (e: Exception) {
+            Log.e(TAG, "Ringer experiment RPC failed method=$method", e)
+            invalidateConnection("ringer experiment RPC failed: ${e.javaClass.simpleName}")
+            null
         }
     }
 }

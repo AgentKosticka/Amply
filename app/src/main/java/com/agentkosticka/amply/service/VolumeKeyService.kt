@@ -6,6 +6,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -60,6 +61,11 @@ class VolumeKeyService : AccessibilityService() {
             "videocall",
             "videochat"
         )
+        @Volatile private var suppressInjectedKeysUntilElapsedMs: Long = 0L
+
+        fun suppressInjectedKeysFor(durationMs: Long) {
+            suppressInjectedKeysUntilElapsedMs = SystemClock.elapsedRealtime() + durationMs
+        }
     }
 
     private var audioManager: AudioManager? = null
@@ -170,6 +176,7 @@ class VolumeKeyService : AccessibilityService() {
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (SystemClock.elapsedRealtime() < suppressInjectedKeysUntilElapsedMs) return false
         val isUp = when (event.keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> true
             KeyEvent.KEYCODE_VOLUME_DOWN -> false
@@ -300,11 +307,16 @@ class VolumeKeyService : AccessibilityService() {
             step = volumeStep
         )
 
-        manager.setStreamVolume(
-            streamType,
-            newVolume,
-            0 // No flags = no system UI
-        )
+        if (target == VolumeTarget.NOTIFICATION) {
+            (application as AmplyApplication).runtime.ringerExperimentExecutor
+                .setNotificationVolumeFromControl(newVolume)
+        } else {
+            manager.setStreamVolume(
+                streamType,
+                newVolume,
+                0 // No flags = no system UI
+            )
+        }
 
         showOverlay(target)
     }

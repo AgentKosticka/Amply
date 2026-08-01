@@ -2,6 +2,7 @@ package com.agentkosticka.amply
 
 import android.content.Intent
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.NotificationManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
@@ -103,7 +104,8 @@ class MainActivity : ComponentActivity() {
             runtime = runtime,
             appPermissionState = permissionState,
             onOverlayPermissionClick = { requestOverlayPermission() },
-            onAccessibilityClick = { openAccessibilitySettings() }
+            onAccessibilityClick = { openAccessibilitySettings() },
+            onNotificationPolicyClick = { openNotificationPolicySettings() }
         )
     }
 
@@ -121,7 +123,9 @@ class MainActivity : ComponentActivity() {
 
         _appPermissionState.value = AppPermissionState(
             overlayGranted = Settings.canDrawOverlays(this),
-            volumeKeysGranted = volumeKeysGranted
+            volumeKeysGranted = volumeKeysGranted,
+            notificationPolicyGranted = getSystemService(NotificationManager::class.java)
+                .isNotificationPolicyAccessGranted
         )
     }
 
@@ -197,6 +201,12 @@ class MainActivity : ComponentActivity() {
     private fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         startActivity(intent)
+    }
+
+    private fun openNotificationPolicySettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        }
     }
 
 }

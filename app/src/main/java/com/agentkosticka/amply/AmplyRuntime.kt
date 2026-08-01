@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import com.agentkosticka.amply.audio.AudioSessionManager
 import com.agentkosticka.amply.audio.ForegroundVisitTracker
+import com.agentkosticka.amply.audio.RingerExperimentExecutor
 import com.agentkosticka.amply.audio.VolumeTargetSessionController
 import com.agentkosticka.amply.audio.VolumeTargetPolicy
 import com.agentkosticka.amply.data.PreferencesManager
@@ -34,6 +35,9 @@ class AmplyRuntime(context: Context) {
     val preferencesManager = PreferencesManager(appContext)
     val shizukuRepository = ShizukuRepository(appContext)
     val shizukuVolumeManager = ShizukuVolumeManager(appContext.packageName)
+    val ringerExperimentExecutor = RingerExperimentExecutor(
+        appContext, shizukuVolumeManager, shizukuRepository
+    )
     val audioSessionManager = AudioSessionManager(
         context = appContext,
         preferencesManager = preferencesManager,
@@ -64,6 +68,7 @@ class AmplyRuntime(context: Context) {
         }
         runtimeScope.launch {
             audioSessionManager.activePlaybackUsages.collect { usages ->
+                ringerExperimentExecutor.onPlaybackUsagesChanged(usages)
                 volumeTargetSessionController.onPlaybackUsagesChanged(usages)
                 notificationExpiryJob?.cancel()
                 notificationExpiryJob = runtimeScope.launch {

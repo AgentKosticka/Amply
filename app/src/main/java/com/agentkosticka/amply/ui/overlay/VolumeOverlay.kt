@@ -98,7 +98,7 @@ fun VolumeOverlay(
     maxAlarmVolume: Int = 7,
     notificationVolume: Int = 0,
     maxNotificationVolume: Int = 7,
-    notificationAlertMode: NotificationAlertMode = NotificationAlertMode.SOUND,
+    notificationAlertMode: NotificationAlertMode = NotificationAlertMode.LOUD,
     callVolume: Int = 0,
     maxCallVolume: Int = 5,
     selectedTarget: VolumeTarget = VolumeTarget.MEDIA,
@@ -576,7 +576,7 @@ private fun StreamVolumeColumn(
                 )
 
                 isNotificationStream -> NotificationAlertIcon(
-                    mode = stream.notificationAlertMode ?: NotificationAlertMode.SOUND
+                    mode = stream.notificationAlertMode ?: NotificationAlertMode.LOUD
                 )
 
                 else -> Icon(
@@ -633,8 +633,8 @@ private fun NotificationAlertIcon(mode: NotificationAlertMode) {
         NothingColors.GreyMedium
     }
     val description = when (mode) {
-        NotificationAlertMode.SOUND -> "Notifications use sound"
-        NotificationAlertMode.VIBRATE -> "Notifications vibrate only"
+        NotificationAlertMode.LOUD -> "Notifications use sound"
+        NotificationAlertMode.VIBRATIONS -> "Notifications vibrate only"
         NotificationAlertMode.MUTED -> "Notifications are muted"
     }
 
@@ -653,7 +653,7 @@ private fun NotificationAlertIcon(mode: NotificationAlertMode) {
             modifier = Modifier.size(18.dp)
         )
 
-        if (mode == NotificationAlertMode.VIBRATE) {
+        if (mode == NotificationAlertMode.VIBRATIONS) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val stroke = 1.2.dp.toPx()
                 val short = size.height * 0.16f

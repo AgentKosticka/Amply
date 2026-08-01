@@ -8,7 +8,7 @@ class NotificationAlertModeTest {
     @Test
     fun `normal ringer with volume is sound`() {
         assertEquals(
-            NotificationAlertMode.SOUND,
+            NotificationAlertMode.LOUD,
             NotificationAlertMode.resolve(AudioManager.RINGER_MODE_NORMAL, 4, 0)
         )
     }
@@ -16,7 +16,7 @@ class NotificationAlertModeTest {
     @Test
     fun `vibrate ringer with volume is vibrate`() {
         assertEquals(
-            NotificationAlertMode.VIBRATE,
+            NotificationAlertMode.VIBRATIONS,
             NotificationAlertMode.resolve(AudioManager.RINGER_MODE_VIBRATE, 4, 0)
         )
     }
@@ -30,9 +30,9 @@ class NotificationAlertModeTest {
     }
 
     @Test
-    fun `minimum stream volume is muted in every ringer mode`() {
+    fun `ringer mode remains authoritative when stream index is zero`() {
         assertEquals(
-            NotificationAlertMode.MUTED,
+            NotificationAlertMode.LOUD,
             NotificationAlertMode.resolve(AudioManager.RINGER_MODE_NORMAL, 0, 0)
         )
     }
