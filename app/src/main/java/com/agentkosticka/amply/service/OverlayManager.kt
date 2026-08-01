@@ -86,6 +86,8 @@ private class OverlayFrameLayout(context: Context) : FrameLayout(context) {
 object OverlayManager {
     private const val COLLAPSED_AUTO_HIDE_DELAY_MS = 2500L
     private const val EXPANDED_AUTO_HIDE_DELAY_MS = 6000L
+    private const val BASE_OVERLAY_HEIGHT_DP = 220
+    private const val PAUSE_CONTROL_SLOT_HEIGHT_DP = 58
 
     private var windowManager: WindowManager? = null
     private var overlayContainerRef: WeakReference<FrameLayout>? = null
@@ -121,6 +123,7 @@ object OverlayManager {
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onSessionVolumeChangeCallback: ((Int, String?, Float) -> Unit)? = null
+    private var onPauseAmplyCallback: (() -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
     private var isOverlayExpanded = false
 
@@ -138,6 +141,14 @@ object OverlayManager {
 
     fun clearSessionVolumeCallback() {
         onSessionVolumeChangeCallback = null
+    }
+
+    fun setPauseAmplyCallback(callback: () -> Unit) {
+        onPauseAmplyCallback = callback
+    }
+
+    fun clearPauseAmplyCallback() {
+        onPauseAmplyCallback = null
     }
 
     fun updateSessions(sessions: List<AudioSession>, focusedAppSession: AudioSession?) {
@@ -313,6 +324,10 @@ object OverlayManager {
                     onExpandedChange = { expanded ->
                         isOverlayExpanded = expanded
                         scheduleHide(currentAutoHideDelayMs())
+                    },
+                    onPauseAmply = {
+                        onPauseAmplyCallback?.invoke()
+                        hide()
                     },
                     onDismissRequest = {
                         hide()
@@ -501,10 +516,14 @@ object OverlayManager {
 
     private fun WindowManager.LayoutParams.applyPosition(context: Context): WindowManager.LayoutParams {
         val margin = (16 * context.resources.displayMetrics.density).toInt()
-        val approximateOverlayHeight = (220 * context.resources.displayMetrics.density).toInt()
+        val baseOverlayHeight = (BASE_OVERLAY_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
+        val pauseControlSlotHeight =
+            (PAUSE_CONTROL_SLOT_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
         val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
-        val maxY = (screenHeight - approximateOverlayHeight).coerceAtLeast(0)
+        val maxPillY = (screenHeight - baseOverlayHeight).coerceAtLeast(0)
+        val pillY = (maxPillY * currentOverlayVerticalFraction.floatValue).toInt()
+        val windowY = pillY - pauseControlSlotHeight
 
         val isLandscape = screenWidth > screenHeight
         width = windowWidthForCurrentOrientation(context)
@@ -514,7 +533,7 @@ object OverlayManager {
             else -> Gravity.END or Gravity.TOP
         }
         x = margin
-        y = (maxY * currentOverlayVerticalFraction.floatValue).toInt().coerceIn(0, maxY)
+        y = windowY.coerceIn(-pauseControlSlotHeight, maxPillY - pauseControlSlotHeight)
         return this
     }
 

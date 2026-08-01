@@ -29,6 +29,8 @@ Amply (1) intercepts hardware volume button presses and displays a custom overla
 - **No Root Required**: Uses Shizuku for privileged operations without root access
 - **Volume Persistence**: Remembers volume levels for each app by UID
 - **Logarithmic Volume Curve**: Natural-feeling volume control that matches human hearing perception
+- **Per-App Volume-Key Stand-Down**: Choose installed apps that should receive hardware volume buttons directly
+- **Temporary Pause**: Pause Amply from the circular control above the expanded pill, with a configurable duration and an in-app Restore now action
 
 ---
 
@@ -86,6 +88,12 @@ An Accessibility Service monitors volume key events. When detected, it triggers 
 ### 5. Real-time Callback
 
 `AudioManager.registerAudioPlaybackCallback()` provides real-time notifications when new audio players start or stop. This allows immediate application of saved volume settings to new streams.
+
+### Volume-key routing
+
+Android sends accessibility key callbacks before the foreground app, so Amply cannot learn afterward whether that app would have consumed a specific press. The **Volume Key Handling** settings provide explicit routing instead: selected packages receive the entire down/repeat/up sequence, while Amply intercepts keys elsewhere. If a selected app declines the event, Android continues with its normal volume behavior and pill.
+
+For one-off situations, expand Amply's pill and press the circular power button above it. Amply then passes volume keys through globally for the configured period (five minutes by default). The duration can be changed in settings, and **Restore now** re-enables Amply immediately.
 
 ---
 

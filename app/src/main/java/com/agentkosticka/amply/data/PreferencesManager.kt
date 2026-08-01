@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
@@ -29,11 +31,17 @@ data class AppSettings(
     val uid: Int,
     val defaultVolume: Float = 1.0f,
     val hiddenInOverlay: Boolean = false,
+    val passVolumeKeysToApp: Boolean = false,
     val lastSeenTimestamp: Long = 0L
 ) {
     val isCustomized: Boolean
-        get() = hiddenInOverlay || kotlin.math.abs(defaultVolume - 1.0f) > 0.001f
+        get() = hiddenInOverlay || passVolumeKeysToApp || kotlin.math.abs(defaultVolume - 1.0f) > 0.001f
 }
+
+const val DEFAULT_AMPLY_PAUSE_MINUTES = 5
+
+internal fun calculateAmplyPauseUntil(nowEpochMs: Long, durationMinutes: Int): Long =
+    nowEpochMs + durationMinutes.coerceIn(1, 120) * 60_000L
 
 /**
  * Manages app preferences using DataStore
@@ -47,6 +55,8 @@ class PreferencesManager(private val context: Context) {
         private val OVERLAY_SIDE = stringPreferencesKey("overlay_side")
         private val OVERLAY_VERTICAL_FRACTION = floatPreferencesKey("overlay_vertical_fraction")
         private val APP_SETTINGS_JSON = stringPreferencesKey("app_settings_json")
+        private val AMPLY_PAUSE_DURATION_MINUTES = intPreferencesKey("amply_pause_duration_minutes")
+        private val AMPLY_PAUSED_UNTIL_EPOCH_MS = longPreferencesKey("amply_paused_until_epoch_ms")
     }
 
     /**
@@ -107,8 +117,35 @@ class PreferencesManager(private val context: Context) {
 
     val appSettings: Flow<Map<String, AppSettings>> = context.dataStore.data
         .map { preferences ->
-            decodeAppSettings(preferences[APP_SETTINGS_JSON])
+            AppSettingsCodec.decode(preferences[APP_SETTINGS_JSON])
         }
+
+    val volumeKeyPassThroughPackages: Flow<Set<String>> = appSettings.map { settings ->
+        settings.values.filter { it.passVolumeKeysToApp }.mapTo(mutableSetOf()) { it.packageName }
+    }
+
+    val amplyPauseDurationMinutes: Flow<Int> = context.dataStore.data.map { preferences ->
+        (preferences[AMPLY_PAUSE_DURATION_MINUTES] ?: DEFAULT_AMPLY_PAUSE_MINUTES).coerceIn(1, 120)
+    }
+
+    val amplyPausedUntilEpochMs: Flow<Long> = context.dataStore.data.map { preferences ->
+        preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] ?: 0L
+    }
+
+    suspend fun setAmplyPauseDurationMinutes(minutes: Int) {
+        context.dataStore.edit { it[AMPLY_PAUSE_DURATION_MINUTES] = minutes.coerceIn(1, 120) }
+    }
+
+    suspend fun pauseAmply(nowEpochMs: Long = System.currentTimeMillis()) {
+        context.dataStore.edit { preferences ->
+            val minutes = preferences[AMPLY_PAUSE_DURATION_MINUTES] ?: DEFAULT_AMPLY_PAUSE_MINUTES
+            preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] = calculateAmplyPauseUntil(nowEpochMs, minutes)
+        }
+    }
+
+    suspend fun restoreAmplyNow() {
+        context.dataStore.edit { it[AMPLY_PAUSED_UNTIL_EPOCH_MS] = 0L }
+    }
 
     suspend fun getAppSettingsSnapshot(): Map<String, AppSettings> =
         appSettings.first()
@@ -128,6 +165,7 @@ class PreferencesManager(private val context: Context) {
                 uid = uid,
                 defaultVolume = existing?.defaultVolume ?: observedVolume ?: 1.0f,
                 hiddenInOverlay = existing?.hiddenInOverlay ?: false,
+                passVolumeKeysToApp = existing?.passVolumeKeysToApp ?: false,
                 lastSeenTimestamp = timestamp
             )
         }
@@ -159,6 +197,7 @@ class PreferencesManager(private val context: Context) {
                 uid = uid,
                 defaultVolume = volume.coerceIn(0f, 1f),
                 hiddenInOverlay = existing?.hiddenInOverlay ?: false,
+                passVolumeKeysToApp = existing?.passVolumeKeysToApp ?: false,
                 lastSeenTimestamp = timestamp
             )
         }
@@ -175,15 +214,33 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    private suspend fun updateAppSettings(update: (MutableMap<String, AppSettings>) -> Unit) {
-        context.dataStore.edit { preferences ->
-            val current = decodeAppSettings(preferences[APP_SETTINGS_JSON]).toMutableMap()
-            update(current)
-            preferences[APP_SETTINGS_JSON] = encodeAppSettings(current)
+    suspend fun setPassVolumeKeysToApp(
+        packageName: String,
+        appName: String,
+        uid: Int,
+        enabled: Boolean
+    ) {
+        updateAppSettings { current ->
+            val existing = current[packageName] ?: AppSettings(packageName, appName, uid)
+            current[packageName] = existing.copy(
+                appName = appName,
+                uid = uid,
+                passVolumeKeysToApp = enabled
+            )
         }
     }
 
-    private fun decodeAppSettings(raw: String?): Map<String, AppSettings> {
+    private suspend fun updateAppSettings(update: (MutableMap<String, AppSettings>) -> Unit) {
+        context.dataStore.edit { preferences ->
+            val current = AppSettingsCodec.decode(preferences[APP_SETTINGS_JSON]).toMutableMap()
+            update(current)
+            preferences[APP_SETTINGS_JSON] = AppSettingsCodec.encode(current)
+        }
+    }
+}
+
+internal object AppSettingsCodec {
+    fun decode(raw: String?): Map<String, AppSettings> {
         if (raw.isNullOrBlank()) return emptyMap()
 
         return runCatching {
@@ -201,6 +258,7 @@ class PreferencesManager(private val context: Context) {
                             uid = item.optInt("uid", -1),
                             defaultVolume = item.optDouble("defaultVolume", 1.0).toFloat().coerceIn(0f, 1f),
                             hiddenInOverlay = item.optBoolean("hiddenInOverlay", false),
+                            passVolumeKeysToApp = item.optBoolean("passVolumeKeysToApp", false),
                             lastSeenTimestamp = item.optLong("lastSeenTimestamp", 0L)
                         )
                     )
@@ -211,7 +269,7 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    private fun encodeAppSettings(settings: Map<String, AppSettings>): String {
+    fun encode(settings: Map<String, AppSettings>): String {
         val root = JSONObject()
         settings.forEach { (packageName, setting) ->
             root.put(
@@ -221,6 +279,7 @@ class PreferencesManager(private val context: Context) {
                     .put("uid", setting.uid)
                     .put("defaultVolume", setting.defaultVolume.toDouble())
                     .put("hiddenInOverlay", setting.hiddenInOverlay)
+                    .put("passVolumeKeysToApp", setting.passVolumeKeysToApp)
                     .put("lastSeenTimestamp", setting.lastSeenTimestamp)
             )
         }

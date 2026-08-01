@@ -9,7 +9,9 @@ import android.media.AudioManager
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import com.agentkosticka.amply.AmplyApplication
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.combine
 import java.util.Locale
 
 /**
@@ -76,6 +78,11 @@ class VolumeKeyService : AccessibilityService() {
     private var foregroundPackage: String? = null
     private val activeCameraIds = mutableSetOf<String>()
     private val volumeKeyCameraAppCache = mutableMapOf<String, Boolean>()
+    private val sequenceRouter = VolumeKeySequenceRouter()
+    private var routingPreferencesLoaded = false
+    private var passThroughPackages: Set<String> = emptySet()
+    private var pausedUntilEpochMs: Long = 0L
+    private var routingPreferencesJob: Job? = null
 
     // Audio device callback for dynamic icon updates
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -128,6 +135,19 @@ class VolumeKeyService : AccessibilityService() {
         // Initial icon type detection
         updateIconType()
 
+        val preferences = (application as AmplyApplication).runtime.preferencesManager
+        routingPreferencesJob = serviceScope.launch {
+            combine(
+                preferences.volumeKeyPassThroughPackages,
+                preferences.amplyPausedUntilEpochMs
+            ) { packages, pausedUntil -> packages to pausedUntil }
+                .collect { (packages, pausedUntil) ->
+                    passThroughPackages = packages
+                    pausedUntilEpochMs = pausedUntil
+                    routingPreferencesLoaded = true
+                }
+        }
+
         OverlayService.startRuntime(this)
     }
 
@@ -148,49 +168,43 @@ class VolumeKeyService : AccessibilityService() {
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        when (event.keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                if (shouldBypassForCamera()) {
-                    handleVolumeKeyUp()
-                    Log.d(TAG, "Bypassing volume up for foreground camera app: $foregroundPackage")
-                    return false
-                }
-
-                return when (event.action) {
-                    KeyEvent.ACTION_DOWN -> {
-                        handleVolumeKeyDown(isUp = true)
-                        true // Consume event
-                    }
-                    KeyEvent.ACTION_UP -> {
-                        handleVolumeKeyUp()
-                        true
-                    }
-                    else -> false
-                }
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                if (shouldBypassForCamera()) {
-                    handleVolumeKeyUp()
-                    Log.d(TAG, "Bypassing volume down for foreground camera app: $foregroundPackage")
-                    return false
-                }
-
-                return when (event.action) {
-                    KeyEvent.ACTION_DOWN -> {
-                        handleVolumeKeyDown(isUp = false)
-                        true // Consume event
-                    }
-                    KeyEvent.ACTION_UP -> {
-                        handleVolumeKeyUp()
-                        true
-                    }
-                    else -> false
-                }
-            }
+        val isUp = when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> true
+            KeyEvent.KEYCODE_VOLUME_DOWN -> false
+            else -> return false
         }
 
-        return false // Let other keys pass through
+        return when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                val route = sequenceRouter.onDown(event.keyCode, event.repeatCount, ::currentRoute)
+                if (route == VolumeKeyRoute.PASS_THROUGH) {
+                    handleVolumeKeyUp()
+                    Log.d(TAG, "Passing volume key through to $foregroundPackage")
+                    false
+                } else {
+                    if (event.repeatCount == 0) handleVolumeKeyDown(isUp)
+                    true
+                }
+            }
+            KeyEvent.ACTION_UP -> {
+                val route = sequenceRouter.onUp(event.keyCode) ?: currentRoute()
+                handleVolumeKeyUp()
+                route == VolumeKeyRoute.INTERCEPT
+            }
+            else -> false
+        }
     }
+
+    private fun currentRoute(): VolumeKeyRoute = VolumeKeyRoutingPolicy.route(
+        VolumeKeyRoutingState(
+            preferencesLoaded = routingPreferencesLoaded,
+            foregroundPackage = foregroundPackage,
+            passThroughPackages = passThroughPackages,
+            pausedUntilEpochMs = pausedUntilEpochMs,
+            cameraBypassActive = shouldBypassForCamera(),
+            nowEpochMs = System.currentTimeMillis()
+        )
+    )
 
     private fun shouldBypassForCamera(): Boolean {
         val packageName = foregroundPackage ?: return false
@@ -305,6 +319,8 @@ class VolumeKeyService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         repeatJob?.cancel()
+        routingPreferencesJob?.cancel()
+        sequenceRouter.clear()
         serviceScope.cancel()
 
         // Unregister audio device callback

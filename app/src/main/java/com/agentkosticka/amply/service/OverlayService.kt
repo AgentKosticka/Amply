@@ -154,6 +154,9 @@ class OverlayService : Service() {
                     sessionManager.setSessionVolume(sessionId, packageName, volume)
                 }
             }
+            OverlayManager.setPauseAmplyCallback {
+                serviceScope.launch { preferences.pauseAmply() }
+            }
 
             Log.d("OverlayService", "Connected to process-owned audio runtime")
         } catch (e: Exception) {
@@ -228,6 +231,7 @@ class OverlayService : Service() {
         preferenceJobs.forEach { it.cancel() }
         serviceScope.cancel()
         OverlayManager.clearSessionVolumeCallback()
+        OverlayManager.clearPauseAmplyCallback()
         OverlayManager.cleanup()
     }
 }

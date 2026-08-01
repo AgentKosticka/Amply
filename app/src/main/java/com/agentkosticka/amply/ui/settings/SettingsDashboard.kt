@@ -2,9 +2,11 @@ package com.agentkosticka.amply.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -16,10 +18,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -27,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,14 +63,22 @@ import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private enum class AppListMode {
     DEFAULT,
     EXPANDED
 }
+
+private data class InstalledAppEntry(
+    val packageName: String,
+    val appName: String,
+    val uid: Int
+)
 
 @Composable
 fun SettingsDashboard(
@@ -78,6 +93,8 @@ fun SettingsDashboard(
     val overlaySide by preferencesManager.overlaySide.collectAsState(initial = OverlaySide.LEFT)
     val verticalFraction by preferencesManager.overlayVerticalFraction.collectAsState(initial = 0.5f)
     val appSettings by preferencesManager.appSettings.collectAsState(initial = emptyMap())
+    val pauseDurationMinutes by preferencesManager.amplyPauseDurationMinutes.collectAsState(initial = 5)
+    val pausedUntilEpochMs by preferencesManager.amplyPausedUntilEpochMs.collectAsState(initial = 0L)
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(
         initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION
@@ -88,6 +105,10 @@ fun SettingsDashboard(
     var positionSaveJob by remember { mutableStateOf<Job?>(null) }
     var previewVerticalFraction by remember { mutableFloatStateOf(verticalFraction) }
     var appListMode by remember { mutableStateOf(AppListMode.DEFAULT) }
+    var standDownPickerExpanded by remember { mutableStateOf(false) }
+    var standDownSearch by remember { mutableStateOf("") }
+    var installedApps by remember { mutableStateOf<List<InstalledAppEntry>>(emptyList()) }
+    var currentTimeEpochMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var orderedPackageNames by remember(appListMode) { mutableStateOf<List<String>>(emptyList()) }
     val now = System.currentTimeMillis()
     val activeSessionsByPackage = sessionState.sessions.associateBy { it.packageName }
@@ -110,6 +131,15 @@ fun SettingsDashboard(
     val apps = nextOrderedPackageNames.mapNotNull { packageName ->
         appsByPackage[packageName]
     }
+    val standDownApps = remember(installedApps, appSettings, standDownSearch) {
+        val query = standDownSearch.trim().lowercase()
+        installedApps
+            .filter { query.isEmpty() || query in it.appName.lowercase() || query in it.packageName.lowercase() }
+            .sortedWith(
+                compareByDescending<InstalledAppEntry> { appSettings[it.packageName]?.passVolumeKeysToApp == true }
+                    .thenBy { it.appName.lowercase() }
+            )
+    }
 
     LaunchedEffect(appListMode, candidatePackageNames) {
         if (orderedPackageNames != nextOrderedPackageNames) {
@@ -123,6 +153,20 @@ fun SettingsDashboard(
 
     LaunchedEffect(verticalFraction) {
         previewVerticalFraction = verticalFraction
+    }
+
+    LaunchedEffect(standDownPickerExpanded) {
+        if (standDownPickerExpanded && installedApps.isEmpty()) {
+            installedApps = withContext(Dispatchers.IO) { loadLaunchableApps(context) }
+        }
+    }
+
+    LaunchedEffect(pausedUntilEpochMs) {
+        currentTimeEpochMs = System.currentTimeMillis()
+        while (pausedUntilEpochMs > currentTimeEpochMs) {
+            delay(1_000L)
+            currentTimeEpochMs = System.currentTimeMillis()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -228,6 +272,52 @@ fun SettingsDashboard(
         }
 
         item {
+            SectionTitle("VOLUME KEY HANDLING")
+            Spacer(modifier = Modifier.height(10.dp))
+            VolumeKeyHandlingPanel(
+                pauseDurationMinutes = pauseDurationMinutes,
+                pausedUntilEpochMs = pausedUntilEpochMs,
+                currentTimeEpochMs = currentTimeEpochMs,
+                pickerExpanded = standDownPickerExpanded,
+                onDurationSelected = { minutes ->
+                    scope.launch { preferencesManager.setAmplyPauseDurationMinutes(minutes) }
+                },
+                onRestoreNow = {
+                    scope.launch { preferencesManager.restoreAmplyNow() }
+                },
+                onPickerToggle = { standDownPickerExpanded = !standDownPickerExpanded }
+            )
+        }
+
+        if (standDownPickerExpanded) {
+            item {
+                OutlinedTextField(
+                    value = standDownSearch,
+                    onValueChange = { standDownSearch = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Search app or package") },
+                    singleLine = true
+                )
+            }
+            items(standDownApps, key = { "stand-down-${it.packageName}" }) { app ->
+                StandDownAppRow(
+                    app = app,
+                    enabled = appSettings[app.packageName]?.passVolumeKeysToApp == true,
+                    onEnabledChange = { enabled ->
+                        scope.launch {
+                            preferencesManager.setPassVolumeKeysToApp(
+                                packageName = app.packageName,
+                                appName = app.appName,
+                                uid = app.uid,
+                                enabled = enabled
+                            )
+                        }
+                    }
+                )
+            }
+        }
+
+        item {
             SectionTitle("APP VOLUMES")
             Spacer(modifier = Modifier.height(10.dp))
             AppListModeSelector(
@@ -274,6 +364,168 @@ fun SettingsDashboard(
                     }
                 )
             }
+        }
+    }
+}
+
+private fun loadLaunchableApps(context: Context): List<InstalledAppEntry> {
+    val packageManager = context.packageManager
+    val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+    return packageManager.queryIntentActivities(launcherIntent, PackageManager.MATCH_ALL)
+        .mapNotNull { resolveInfo ->
+            val applicationInfo = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
+            val packageName = applicationInfo.packageName
+            if (packageName == context.packageName) return@mapNotNull null
+            InstalledAppEntry(
+                packageName = packageName,
+                appName = packageManager.getApplicationLabel(applicationInfo).toString(),
+                uid = applicationInfo.uid
+            )
+        }
+        .distinctBy { it.packageName }
+        .sortedBy { it.appName.lowercase() }
+}
+
+@Composable
+private fun VolumeKeyHandlingPanel(
+    pauseDurationMinutes: Int,
+    pausedUntilEpochMs: Long,
+    currentTimeEpochMs: Long,
+    pickerExpanded: Boolean,
+    onDurationSelected: (Int) -> Unit,
+    onRestoreNow: () -> Unit,
+    onPickerToggle: () -> Unit
+) {
+    val remainingSeconds = ((pausedUntilEpochMs - currentTimeEpochMs).coerceAtLeast(0L) + 999L) / 1_000L
+    val isPaused = remainingSeconds > 0
+
+    SettingsPanel {
+        if (isPaused) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(NothingColors.Red.copy(alpha = 0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PowerSettingsNew,
+                        contentDescription = null,
+                        tint = NothingColors.Red
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("AMPLY IS PAUSED", color = NothingColors.White, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "${remainingSeconds / 60}:${(remainingSeconds % 60).toString().padStart(2, '0')} remaining",
+                        color = NothingColors.GreyMedium,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
+                }
+                Button(
+                    onClick = onRestoreNow,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingColors.Red)
+                ) {
+                    Text("RESTORE NOW", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        Text("EXPANDED-PILL PAUSE DURATION", color = NothingColors.GreyMedium, fontSize = 11.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(1, 5, 15, 30).forEach { minutes ->
+                Button(
+                    onClick = { onDurationSelected(minutes) },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (pauseDurationMinutes == minutes) NothingColors.Red else Color(0xFF2A2A2A)
+                    )
+                ) {
+                    Text("${minutes}m", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "Apps selected below receive volume-button presses directly. Amply handles every other app unless it is temporarily paused.",
+            color = NothingColors.GreyMedium,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Button(
+            onClick = onPickerToggle,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A))
+        ) {
+            Text(if (pickerExpanded) "HIDE APP LIST" else "CHOOSE STAND-DOWN APPS", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun StandDownAppRow(
+    app: InstalledAppEntry,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val icon = remember(app.packageName) {
+        runCatching { context.packageManager.getApplicationIcon(app.packageName) }.getOrNull()
+    }
+    SettingsPanel {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onEnabledChange(!enabled) },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(40.dp).background(Color(0xFF303030), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                icon?.let {
+                    Image(
+                        bitmap = it.toBitmap(80, 80).asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp)
+                    )
+                } ?: Icon(Icons.Default.MusicNote, contentDescription = null, tint = NothingColors.GreyMedium)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(app.appName, color = NothingColors.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    app.packageName,
+                    color = NothingColors.GreyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text("Let app use volume buttons", color = NothingColors.GreyMedium, fontSize = 11.sp)
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = NothingColors.White,
+                    checkedTrackColor = NothingColors.Red,
+                    uncheckedThumbColor = NothingColors.GreyMedium,
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
         }
     }
 }
@@ -328,6 +580,7 @@ private fun mergeAppSettingsWithActiveSessions(
             uid = session.uid,
             defaultVolume = existing?.defaultVolume ?: session.volume,
             hiddenInOverlay = existing?.hiddenInOverlay ?: false,
+            passVolumeKeysToApp = existing?.passVolumeKeysToApp ?: false,
             lastSeenTimestamp = maxOf(existing?.lastSeenTimestamp ?: 0L, session.lastSeenTimestamp)
         )
     }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material3.Icon
@@ -63,6 +65,7 @@ private val PanelSpacing = 16.dp
 private val ExpandControlHeight = 48.dp
 private val ExpandControlIconSize = 16.dp
 private val ExpandControlSideInset = (CollapsedPillWidth - ExpandControlHeight) / 2
+private val PauseControlSlotHeight = 58.dp
 
 private data class OverlayStreamVolume(
     val streamType: Int,
@@ -101,6 +104,7 @@ fun VolumeOverlay(
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {},
     onExpandedChange: (Boolean) -> Unit = {},
+    onPauseAmply: () -> Unit = {},
     onDismissRequest: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -189,27 +193,62 @@ fun VolumeOverlay(
     )
 
     val pillContent: @Composable () -> Unit = {
-        MainVolumePill(
-            streams = streamVolumes,
-            isExpanded = isExpanded,
-            chevronRotation = chevronRotation,
-            keepMediaAtEnd = expandToStart,
-            onStreamVolumeChange = { streamType, newVolume ->
-                if (streamType == AudioManager.STREAM_MUSIC) {
-                    onVolumeChange(newVolume)
-                } else {
-                    onStreamVolumeChange(streamType, newVolume)
+        Column(
+            horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(CollapsedPillWidth)
+                    .height(PauseControlSlotHeight),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isExpanded,
+                    enter = fadeIn(tween(180)) + slideInVertically { it },
+                    exit = fadeOut(tween(120)) + slideOutVertically { it }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(NothingColors.Red)
+                            .clickable {
+                                onPauseAmply()
+                                onInteraction()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PowerSettingsNew,
+                            contentDescription = "Pause Amply temporarily",
+                            tint = NothingColors.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
-            },
-            onMuteToggle = onMuteToggle,
-            onExpandToggle = {
-                val nextExpanded = !isExpanded
-                isExpanded = nextExpanded
-                onExpandedChange(nextExpanded)
-                onInteraction()
-            },
-            onInteraction = onInteraction
-        )
+            }
+            MainVolumePill(
+                streams = streamVolumes,
+                isExpanded = isExpanded,
+                chevronRotation = chevronRotation,
+                keepMediaAtEnd = expandToStart,
+                onStreamVolumeChange = { streamType, newVolume ->
+                    if (streamType == AudioManager.STREAM_MUSIC) {
+                        onVolumeChange(newVolume)
+                    } else {
+                        onStreamVolumeChange(streamType, newVolume)
+                    }
+                },
+                onMuteToggle = onMuteToggle,
+                onExpandToggle = {
+                    val nextExpanded = !isExpanded
+                    isExpanded = nextExpanded
+                    onExpandedChange(nextExpanded)
+                    onInteraction()
+                },
+                onInteraction = onInteraction
+            )
+        }
     }
 
     val panelBody: @Composable (Dp) -> Unit = { panelWidth ->
@@ -348,14 +387,14 @@ fun VolumeOverlay(
                 AnimatedVisibility(
                     visibleState = panelTransitionState,
                     enter = slideInVertically(
-                        initialOffsetY = { -it / 2 },
+                        initialOffsetY = { it / 2 },
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioMediumBouncy,
                             stiffness = Spring.StiffnessMedium
                         )
                     ) + fadeIn(animationSpec = tween(200)),
                     exit = slideOutVertically(
-                        targetOffsetY = { -it / 2 },
+                        targetOffsetY = { it / 2 },
                         animationSpec = tween(200, easing = FastOutSlowInEasing)
                     ) + fadeOut(animationSpec = tween(150))
                 ) {
