@@ -400,11 +400,11 @@ fun VolumeOverlay(
                 pillContent()
                 AnimatedVisibility(
                     visibleState = panelTransitionState,
-                    enter = slideInVertically(
-                        initialOffsetY = { -it }
+                    enter = slideInHorizontally(
+                        initialOffsetX = { if (expandToStart) it else -it }
                     ) + fadeIn(animationSpec = tween(180)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { -it }
+                    exit = slideOutHorizontally(
+                        targetOffsetX = { if (expandToStart) it else -it }
                     ) + fadeOut(animationSpec = tween(120))
                 ) {
                     Column {
