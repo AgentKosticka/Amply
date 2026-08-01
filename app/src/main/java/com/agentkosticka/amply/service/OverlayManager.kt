@@ -255,6 +255,11 @@ object OverlayManager {
         onAppVolumeChangeCallback?.invoke(app, volume)
     }
 
+    /** Update an already-visible media action icon without reopening or retiming the overlay. */
+    fun updateMediaIconType(newIconType: String) {
+        iconType.value = newIconType
+    }
+
     /** Show or update the overlay using the latest package-level app entries. */
     fun show(
         context: Context,

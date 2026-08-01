@@ -29,7 +29,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CancelPresentation
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MusicNote
@@ -42,7 +45,6 @@ import androidx.compose.material.icons.filled.RingVolume
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.rounded.Bluetooth
-import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -578,8 +580,7 @@ private fun StreamVolumeColumn(
     val isRingStream = stream.target == VolumeTarget.RING && !stream.combinedRinger
     val supportsMuteToggle = isMediaStream || isNotificationStream || isRingStream
     val semanticIcon = streamIcon(
-        if (stream.combinedRinger) StreamIcon.NOTIFICATION else stream.target.icon,
-        iconType
+        if (stream.combinedRinger) StreamIcon.NOTIFICATION else stream.target.icon
     )
 
     Column(
@@ -596,15 +597,10 @@ private fun StreamVolumeColumn(
             modifier = Modifier.size(26.dp)
         ) {
             when {
-                isMediaStream -> Icon(
-                    imageVector = if (stream.currentVolume <= stream.minVolume) {
-                        Icons.AutoMirrored.Filled.VolumeOff
-                    } else {
-                        Icons.AutoMirrored.Filled.VolumeUp
-                    },
-                    contentDescription = "Mute or restore ${stream.label}",
-                    tint = if (stream.currentVolume <= stream.minVolume) NothingColors.Red else NothingColors.White,
-                    modifier = Modifier.size(18.dp)
+                isMediaStream -> MediaAlertIcon(
+                    route = iconType,
+                    muted = stream.currentVolume <= stream.minVolume,
+                    label = stream.label
                 )
 
                 isNotificationStream -> NotificationAlertIcon(
@@ -664,12 +660,9 @@ private fun StreamVolumeColumn(
     }
 }
 
-private fun streamIcon(icon: StreamIcon, mediaIconType: String): ImageVector = when (icon) {
-    StreamIcon.MEDIA -> when (mediaIconType) {
-        "BLUETOOTH" -> Icons.Rounded.Bluetooth
-        "HEADPHONE" -> Icons.Rounded.Headphones
-        else -> Icons.Default.MusicNote
-    }
+private fun streamIcon(icon: StreamIcon): ImageVector = when (icon) {
+    // Bottom icons identify streams. Routing is shown only by the large media action icon.
+    StreamIcon.MEDIA -> Icons.Default.MusicNote
     StreamIcon.ALARM -> Icons.Default.Alarm
     StreamIcon.NOTIFICATION -> Icons.Default.Notifications
     StreamIcon.CALL -> Icons.Default.Call
@@ -681,6 +674,30 @@ private fun streamIcon(icon: StreamIcon, mediaIconType: String): ImageVector = w
     StreamIcon.SPOKEN_TEXT -> Icons.Default.RecordVoiceOver
     StreamIcon.ACCESSIBILITY -> Icons.Default.Accessibility
     StreamIcon.ASSISTANT -> Icons.Default.AutoAwesome
+}
+
+@Composable
+private fun MediaAlertIcon(route: String, muted: Boolean, label: String) {
+    val icon = when (route) {
+        "BLUETOOTH" -> if (muted) Icons.Default.BluetoothDisabled else Icons.Rounded.Bluetooth
+        "CAST" -> if (muted) Icons.Default.CancelPresentation else Icons.Default.Cast
+        else -> if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp
+    }
+    val destination = when (route) {
+        "BLUETOOTH" -> "Bluetooth"
+        "CAST" -> "Cast device"
+        else -> "device speaker"
+    }
+    Icon(
+        imageVector = icon,
+        contentDescription = if (muted) {
+            "$label muted on $destination"
+        } else {
+            "Mute $label on $destination"
+        },
+        tint = if (muted) NothingColors.Red else NothingColors.White,
+        modifier = Modifier.size(18.dp)
+    )
 }
 
 @Composable

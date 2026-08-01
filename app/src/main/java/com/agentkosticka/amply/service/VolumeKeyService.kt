@@ -3,14 +3,21 @@ package com.agentkosticka.amply.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.hardware.camera2.CameraManager
+import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.MediaRouter
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.agentkosticka.amply.AmplyApplication
+import com.agentkosticka.amply.audio.MediaOutputRoute
+import com.agentkosticka.amply.audio.MediaOutputRoutePolicy
+import com.agentkosticka.amply.audio.MediaRouteDeviceKind
+import com.agentkosticka.amply.audio.MediaRouteSnapshot
 import com.agentkosticka.amply.audio.VolumeKeyStreamAction
 import com.agentkosticka.amply.audio.VolumeLimitFeedbackPolicy
 import com.agentkosticka.amply.audio.VolumeTarget
@@ -70,6 +77,7 @@ class VolumeKeyService : AccessibilityService() {
     }
 
     private var audioManager: AudioManager? = null
+    private var mediaRouter: MediaRouter? = null
     private var cameraManager: CameraManager? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -78,8 +86,11 @@ class VolumeKeyService : AccessibilityService() {
 
     private val volumeStep = 1 // Change by 1 step per press
 
-    // Current icon type
-    private var currentIconType = "MUSIC"
+    // Current media output presentation for the large icon above the media bar.
+    private var currentIconType = MediaOutputRoute.LOCAL.wireName
+    private val mediaAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .build()
 
     // Phase 3.5: Smart Focus - track foreground app package
     private var foregroundPackage: String? = null
@@ -130,10 +141,16 @@ class VolumeKeyService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        mediaRouter = getSystemService(MEDIA_ROUTER_SERVICE) as MediaRouter
         cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
 
         // Register audio device callback
         audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
+        mediaRouter?.addCallback(
+            MediaRouter.ROUTE_TYPE_LIVE_AUDIO,
+            mediaRouteCallback,
+            MediaRouter.CALLBACK_FLAG_UNFILTERED_EVENTS
+        )
         cameraManager?.registerAvailabilityCallback(mainExecutor, cameraAvailabilityCallback)
 
         // Initial icon type detection
@@ -223,6 +240,28 @@ class VolumeKeyService : AccessibilityService() {
                     streamAction != VolumeKeyStreamAction.SilenceIncomingRinger
             }
             else -> false
+        }
+    }
+
+    private val mediaRouteCallback = object : MediaRouter.SimpleCallback() {
+        override fun onRouteSelected(
+            router: MediaRouter,
+            type: Int,
+            info: MediaRouter.RouteInfo
+        ) {
+            updateIconType()
+        }
+
+        override fun onRouteUnselected(
+            router: MediaRouter,
+            type: Int,
+            info: MediaRouter.RouteInfo
+        ) {
+            updateIconType()
+        }
+
+        override fun onRouteChanged(router: MediaRouter, info: MediaRouter.RouteInfo) {
+            updateIconType()
         }
     }
 
@@ -363,25 +402,52 @@ class VolumeKeyService : AccessibilityService() {
         )
     }
 
-    /**
-     * Detect connected audio devices and update icon type
-     */
+    /** Detect the destination Android would currently use for media playback. */
     private fun updateIconType() {
-        val devices = audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: return
+        val manager = audioManager ?: return
+        val selectedRoute = runCatching {
+            mediaRouter?.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_AUDIO)
+        }.getOrNull()
 
-        // Priority: Bluetooth > Wired > Default
-        currentIconType = when {
-            devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                         it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                         it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO } -> "BLUETOOTH"
-
-            devices.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                         it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                         it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
-                         it.type == AudioDeviceInfo.TYPE_USB_DEVICE } -> "HEADPHONE"
-
-            else -> "MUSIC"
+        val routedDevices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
+                manager.getAudioDevicesForAttributes(mediaAttributes)
+                    .mapTo(mutableSetOf()) { it.toMediaRouteDeviceKind() }
+            }.getOrDefault(emptySet())
+        } else {
+            emptySet()
         }
+
+        val selectedDevice = when (selectedRoute?.deviceType) {
+            MediaRouter.RouteInfo.DEVICE_TYPE_BLUETOOTH -> MediaRouteDeviceKind.BLUETOOTH
+            MediaRouter.RouteInfo.DEVICE_TYPE_TV -> MediaRouteDeviceKind.REMOTE
+            else -> MediaRouteDeviceKind.LOCAL
+        }
+        val route = MediaOutputRoutePolicy.resolve(
+            MediaRouteSnapshot(
+                routedDevices = routedDevices,
+                selectedRouteDevice = selectedDevice,
+                selectedRouteIsRemote = selectedRoute?.playbackType ==
+                    MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE
+            )
+        )
+        if (currentIconType != route.wireName) {
+            currentIconType = route.wireName
+            OverlayManager.updateMediaIconType(route.wireName)
+            Log.d(TAG, "Media output route=${route.name}")
+        }
+    }
+
+    private fun AudioDeviceInfo.toMediaRouteDeviceKind(): MediaRouteDeviceKind = when (type) {
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        AudioDeviceInfo.TYPE_HEARING_AID,
+        AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        AudioDeviceInfo.TYPE_BLE_BROADCAST -> MediaRouteDeviceKind.BLUETOOTH
+
+        AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> MediaRouteDeviceKind.REMOTE
+        else -> MediaRouteDeviceKind.LOCAL
     }
 
     override fun onDestroy() {
@@ -394,6 +460,7 @@ class VolumeKeyService : AccessibilityService() {
 
         // Unregister audio device callback
         audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
+        mediaRouter?.removeCallback(mediaRouteCallback)
         cameraManager?.unregisterAvailabilityCallback(cameraAvailabilityCallback)
         stopService(Intent(this, OverlayService::class.java))
         Log.d(TAG, "VolumeKeyService destroyed")
