@@ -109,7 +109,7 @@ private data class InstalledAppEntry(
     val uid: Int
 )
 
-private val CompatibilityControlGrey = Color(0xFF555555)
+private val DarkControlBackground = Color(0xFF2A2A2A)
 
 @Composable
 fun SettingsDashboard(
@@ -560,8 +560,10 @@ private fun RingerExperimentPanel(
                         onClick = { onSelect(method) },
                         enabled = enabled,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (selected == method) NothingColors.Red else CompatibilityControlGrey,
-                            disabledContainerColor = CompatibilityControlGrey.copy(alpha = 0.35f)
+                            containerColor = if (selected == method) NothingColors.Red else DarkControlBackground,
+                            contentColor = NothingColors.White,
+                            disabledContainerColor = DarkControlBackground.copy(alpha = 0.35f),
+                            disabledContentColor = NothingColors.White.copy(alpha = 0.5f)
                         )
                     ) { Text(if (selected == method) "ACTIVE" else "USE") }
                 }
@@ -575,8 +577,10 @@ private fun RingerExperimentPanel(
                     enabled = enabled,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = CompatibilityControlGrey,
-                        disabledContainerColor = CompatibilityControlGrey.copy(alpha = 0.35f)
+                        containerColor = DarkControlBackground,
+                        contentColor = NothingColors.White,
+                        disabledContainerColor = DarkControlBackground.copy(alpha = 0.35f),
+                        disabledContentColor = NothingColors.White.copy(alpha = 0.5f)
                     )
                 ) { Text(if (isRunning) "TESTING…" else "TEST ALL TRANSITIONS") }
                 if (isRunning) {
@@ -585,7 +589,7 @@ private fun RingerExperimentPanel(
                         progress = { methodProgress },
                         modifier = Modifier.fillMaxWidth(),
                         color = NothingColors.Red,
-                        trackColor = CompatibilityControlGrey
+                        trackColor = NothingColors.GreyDim
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -687,7 +691,10 @@ private fun VolumeKeyHandlingPanel(
                 Button(
                     onClick = onRestoreNow,
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NothingColors.Red)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NothingColors.Red,
+                        contentColor = NothingColors.White
+                    )
                 ) {
                     Text("RESTORE NOW", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
@@ -705,7 +712,8 @@ private fun VolumeKeyHandlingPanel(
                     contentPadding = PaddingValues(horizontal = 4.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (pauseDuration == duration) NothingColors.Red else Color(0xFF2A2A2A)
+                        containerColor = if (pauseDuration == duration) NothingColors.Red else DarkControlBackground,
+                        contentColor = NothingColors.White
                     )
                 ) {
                     Text("${duration.minutes}m", fontWeight = FontWeight.Bold)
@@ -718,7 +726,8 @@ private fun VolumeKeyHandlingPanel(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (pauseDuration == AmplyPauseDuration.MANUAL) NothingColors.Red else Color(0xFF2A2A2A)
+                containerColor = if (pauseDuration == AmplyPauseDuration.MANUAL) NothingColors.Red else DarkControlBackground,
+                contentColor = NothingColors.White
             )
         ) {
             Text("TURN BACK ON ONLY MANUALLY", fontWeight = FontWeight.Bold, fontSize = 11.sp)
@@ -735,7 +744,10 @@ private fun VolumeKeyHandlingPanel(
             onClick = onPickerToggle,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A))
+            colors = ButtonDefaults.buttonColors(
+                containerColor = DarkControlBackground,
+                contentColor = NothingColors.White
+            )
         ) {
             Text(if (pickerExpanded) "HIDE APP LIST" else "CHOOSE STAND-DOWN APPS", fontWeight = FontWeight.Bold)
         }
