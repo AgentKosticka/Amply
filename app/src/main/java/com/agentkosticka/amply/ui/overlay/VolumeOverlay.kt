@@ -10,6 +10,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -57,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
@@ -403,6 +405,9 @@ fun VolumeOverlay(
                                     pivotFractionX = if (expandToStart) 1f else 0f,
                                     pivotFractionY = 0.5f
                                 )
+                                shape = RoundedCornerShape(OverlayCornerRadius)
+                                clip = true
+                                compositingStrategy = CompositingStrategy.Offscreen
                             }
                         ) {
                             panelBody(ExpandedPillWidth, 360.dp)
@@ -437,6 +442,9 @@ private fun MainVolumePill(
 ) {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val expandInteractionSource = remember { MutableInteractionSource() }
+    val pillShape = RoundedCornerShape(OverlayCornerRadius)
+    val expandControlShape = RoundedCornerShape(ExpandControlHeight / 2)
     val streamScroll = rememberScrollState()
     val animatedExpandedWidth by animateDpAsState(
         targetValue = expandedWidth,
@@ -477,10 +485,14 @@ private fun MainVolumePill(
         modifier = modifier
             .width(pillWidth)
             .wrapContentHeight()
-            .clip(RoundedCornerShape(OverlayCornerRadius))
+            .graphicsLayer {
+                shape = pillShape
+                clip = true
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
             .background(
                 color = Color(0xFF1C1C1C),
-                shape = RoundedCornerShape(OverlayCornerRadius)
+                shape = pillShape
             )
             .padding(top = 14.dp, bottom = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -535,12 +547,16 @@ private fun MainVolumePill(
             modifier = Modifier
                 .width(arrowWidth)
                 .height(ExpandControlHeight)
+                .clip(expandControlShape)
                 .background(
                     color = if (isExpanded) NothingColors.Red.copy(alpha = 0.2f)
                     else Color(0xFF2A2A2A),
-                    shape = RoundedCornerShape(ExpandControlHeight / 2)
+                    shape = expandControlShape
                 )
-                .clickable {
+                .clickable(
+                    interactionSource = expandInteractionSource,
+                    indication = null
+                ) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onExpandToggle()
                 },
@@ -802,15 +818,20 @@ private fun AmplyPanel(
     onTouchEnd: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
+    val panelShape = RoundedCornerShape(OverlayCornerRadius)
 
     Column(
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 100.dp, max = maxHeight)
-            .clip(RoundedCornerShape(OverlayCornerRadius))
+            .graphicsLayer {
+                shape = panelShape
+                clip = true
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
             .background(
                 color = Color(0xFF1C1C1C),
-                shape = RoundedCornerShape(OverlayCornerRadius)
+                shape = panelShape
             )
             .padding(horizontal = 14.dp, vertical = 12.dp)
             .pointerInput(Unit) {
@@ -864,12 +885,17 @@ private fun AmplyPanel(
 
 @Composable
 private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
+    val panelShape = RoundedCornerShape(OverlayCornerRadius)
     Row(
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 82.dp)
-            .clip(RoundedCornerShape(OverlayCornerRadius))
-            .background(Color(0xFF1C1C1C), RoundedCornerShape(OverlayCornerRadius))
+            .graphicsLayer {
+                shape = panelShape
+                clip = true
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .background(Color(0xFF1C1C1C), panelShape)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1180,7 +1206,7 @@ fun DraggableDotSlider(
                 radius = dotRadius,
                 center = Offset(x, y)
             )
-            if (minVolume > 0 && level == minVolume && available) {
+            if (enabled && minVolume > 0 && level == minVolume && available) {
                 drawCircle(
                     color = NothingColors.GreyMedium.copy(alpha = 0.7f),
                     radius = dotRadius + 2.dp.toPx(),
