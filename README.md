@@ -95,6 +95,8 @@ An Accessibility Service monitors volume key events. When detected, it triggers 
 
 Android sends accessibility key callbacks before the foreground app, so Amply cannot learn afterward whether that app would have consumed a specific press. The **Volume Key Handling** settings provide explicit routing instead: selected packages receive the entire down/repeat/up sequence, while Amply intercepts keys elsewhere. If a selected app declines the event, Android continues with its normal volume behavior and pill.
 
+For intercepted keys, Amply automatically targets an active call, alarm, or recent notification before falling back to media volume. Incoming-call volume keys are passed to Android to silence the ringtone without showing Amply. Interacting with a stream while the pill is expanded makes it the active collapsed stream until the overlay hides; expanded stream order remains unchanged.
+
 For one-off situations, expand Amply's pill and press the circular power button above it. Amply then passes volume keys through globally for the configured period (five minutes by default). The duration can be changed in settings, and **Restore now** re-enables Amply immediately.
 
 The pause duration can also be set to **Turn back on only manually**. This state persists until **Restore now** is selected, including after a reboot.

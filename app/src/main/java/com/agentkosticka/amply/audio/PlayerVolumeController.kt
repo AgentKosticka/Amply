@@ -557,4 +557,11 @@ class PlayerVolumeController(
         audioManager.unregisterAudioPlaybackCallback(callback)
         Log.d(TAG, "Unregistered playback callback")
     }
+
+    /** Returns usages for players that are actively rendering in a playback callback snapshot. */
+    fun getActivePlaybackUsages(configs: List<AudioPlaybackConfiguration>): Set<Int> =
+        configs.asSequence()
+            .filter { getPlayerState(it) == PLAYER_STATE_STARTED }
+            .map { it.audioAttributes.usage }
+            .toSet()
 }

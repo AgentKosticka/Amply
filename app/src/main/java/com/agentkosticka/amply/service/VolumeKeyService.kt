@@ -10,6 +10,8 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.agentkosticka.amply.AmplyApplication
+import com.agentkosticka.amply.audio.VolumeKeyStreamAction
+import com.agentkosticka.amply.audio.VolumeTarget
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
 import java.util.Locale
@@ -67,8 +69,6 @@ class VolumeKeyService : AccessibilityService() {
     // Hold-to-repeat job
     private var repeatJob: Job? = null
 
-    // Volume step configuration
-    private var maxVolume = 30
     private val volumeStep = 1 // Change by 1 step per press
 
     // Current icon type
@@ -79,6 +79,7 @@ class VolumeKeyService : AccessibilityService() {
     private val activeCameraIds = mutableSetOf<String>()
     private val volumeKeyCameraAppCache = mutableMapOf<String, Boolean>()
     private val sequenceRouter = VolumeKeySequenceRouter()
+    private val streamActionRouter = VolumeKeyStreamActionRouter()
     private var routingPreferencesLoaded = false
     private var passThroughPackages: Set<String> = emptySet()
     private var pausedUntilEpochMs: Long = 0L
@@ -92,8 +93,7 @@ class VolumeKeyService : AccessibilityService() {
             serviceScope.launch {
                 delay(300)
                 updateIconType()
-                val currentVol = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
-                showOverlay(currentVol)
+                showOverlay((application as AmplyApplication).runtime.selectedVolumeTarget.value)
             }
         }
 
@@ -124,9 +124,6 @@ class VolumeKeyService : AccessibilityService() {
         super.onServiceConnected()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
-
-        // Get real max volume from system
-        maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 30
 
         // Register audio device callback
         audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
@@ -187,14 +184,29 @@ class VolumeKeyService : AccessibilityService() {
                     Log.d(TAG, "Passing volume key through to $foregroundPackage")
                     false
                 } else {
-                    if (event.repeatCount == 0) handleVolumeKeyDown(isUp)
-                    true
+                    val action = streamActionRouter.onDown(
+                        event.keyCode,
+                        event.repeatCount,
+                        ::resolveStreamAction
+                    )
+                    when (action) {
+                        VolumeKeyStreamAction.SilenceIncomingRinger -> {
+                            handleVolumeKeyUp()
+                            false
+                        }
+                        is VolumeKeyStreamAction.Adjust -> {
+                            if (event.repeatCount == 0) handleVolumeKeyDown(isUp, action.target)
+                            true
+                        }
+                    }
                 }
             }
             KeyEvent.ACTION_UP -> {
                 val route = sequenceRouter.onUp(event.keyCode) ?: currentRoute()
+                val streamAction = streamActionRouter.onUp(event.keyCode)
                 handleVolumeKeyUp()
-                route == VolumeKeyRoute.INTERCEPT
+                route == VolumeKeyRoute.INTERCEPT &&
+                    streamAction != VolumeKeyStreamAction.SilenceIncomingRinger
             }
             else -> false
         }
@@ -236,12 +248,12 @@ class VolumeKeyService : AccessibilityService() {
     /**
      * Handle volume key down with hold-to-repeat logic
      */
-    private fun handleVolumeKeyDown(isUp: Boolean) {
+    private fun handleVolumeKeyDown(isUp: Boolean, target: VolumeTarget) {
         // Cancel any existing repeat job
         repeatJob?.cancel()
 
         // Change volume once immediately
-        changeVolume(isUp)
+        changeVolume(isUp, target)
 
         // Start repeat after initial debounce
         repeatJob = serviceScope.launch {
@@ -249,7 +261,7 @@ class VolumeKeyService : AccessibilityService() {
 
             // Repeat every 150ms while held
             while (isActive) {
-                changeVolume(isUp)
+                changeVolume(isUp, target)
                 delay(150)
             }
         }
@@ -267,34 +279,44 @@ class VolumeKeyService : AccessibilityService() {
      * Change volume by one step
      * Uses real max volume and proper mapping
      */
-    private fun changeVolume(isUp: Boolean) {
-        val currentVolume = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
+    private fun resolveStreamAction(): VolumeKeyStreamAction {
+        val manager = audioManager ?: return VolumeKeyStreamAction.Adjust(VolumeTarget.MEDIA)
+        return (application as AmplyApplication).runtime.volumeTargetSessionController
+            .resolveForInitialKeyDown(manager.mode)
+    }
 
-        val newVolume = if (isUp) {
-            (currentVolume + volumeStep).coerceAtMost(maxVolume)
-        } else {
-            (currentVolume - volumeStep).coerceAtLeast(0)
-        }
+    private fun changeVolume(isUp: Boolean, target: VolumeTarget) {
+        val manager = audioManager ?: return
+        val streamType = target.streamType
+        val currentVolume = manager.getStreamVolume(streamType)
+        val minVolume = manager.getStreamMinVolume(streamType)
+        val maxVolume = manager.getStreamMaxVolume(streamType)
 
-        // CRITICAL: Set volume using real system values
-        audioManager?.setStreamVolume(
-            AudioManager.STREAM_MUSIC,
+        val newVolume = VolumeStepPolicy.next(
+            current = currentVolume,
+            min = minVolume,
+            max = maxVolume,
+            isUp = isUp,
+            step = volumeStep
+        )
+
+        manager.setStreamVolume(
+            streamType,
             newVolume,
             0 // No flags = no system UI
         )
 
-        // Show/update custom overlay
-        showOverlay(newVolume)
+        showOverlay(target)
     }
 
     /**
      * Show or update the overlay with current sessions
      * Phase 3.5: Now includes focused app detection for Smart Focus
      */
-    private fun showOverlay(volume: Int) {
+    private fun showOverlay(target: VolumeTarget) {
         OverlayService.showFromAccessibilityHost(
             host = this,
-            volume = volume,
+            target = target,
             iconType = currentIconType,
             foregroundPackage = foregroundPackage
         )
@@ -326,6 +348,7 @@ class VolumeKeyService : AccessibilityService() {
         repeatJob?.cancel()
         routingPreferencesJob?.cancel()
         sequenceRouter.clear()
+        streamActionRouter.clear()
         serviceScope.cancel()
 
         // Unregister audio device callback

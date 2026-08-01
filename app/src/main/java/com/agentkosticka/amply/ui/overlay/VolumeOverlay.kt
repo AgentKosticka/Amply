@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
 
@@ -95,6 +96,7 @@ fun VolumeOverlay(
     maxNotificationVolume: Int = 7,
     callVolume: Int = 0,
     maxCallVolume: Int = 5,
+    selectedTarget: VolumeTarget = VolumeTarget.MEDIA,
     visible: Boolean = true,
     iconType: String = "MUSIC",
     apps: List<OverlayAppEntry> = emptyList(),
@@ -102,8 +104,8 @@ fun VolumeOverlay(
     shizukuIcon: Bitmap? = null,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
-    onVolumeChange: (Int) -> Unit = {},
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
+    onStreamSelected: (VolumeTarget) -> Unit = {},
     onAppVolumeChange: (OverlayAppEntry, Float) -> Unit = { _, _ -> },
     onMuteToggle: () -> Unit = {},
     onInteraction: () -> Unit = {},
@@ -240,16 +242,14 @@ fun VolumeOverlay(
             MainVolumePill(
                 modifier = Modifier.onSizeChanged { mainPillHeightPx = it.height },
                 streams = streamVolumes,
+                selectedTarget = selectedTarget,
                 isExpanded = isExpanded,
                 chevronRotation = chevronRotation,
                 keepMediaAtEnd = expandToStart,
                 onStreamVolumeChange = { streamType, newVolume ->
-                    if (streamType == AudioManager.STREAM_MUSIC) {
-                        onVolumeChange(newVolume)
-                    } else {
-                        onStreamVolumeChange(streamType, newVolume)
-                    }
+                    onStreamVolumeChange(streamType, newVolume)
                 },
+                onStreamSelected = onStreamSelected,
                 onMuteToggle = onMuteToggle,
                 onExpandToggle = {
                     val nextExpanded = !isExpanded
@@ -418,10 +418,12 @@ fun VolumeOverlay(
 private fun MainVolumePill(
     modifier: Modifier = Modifier,
     streams: List<OverlayStreamVolume>,
+    selectedTarget: VolumeTarget,
     isExpanded: Boolean,
     chevronRotation: Float,
     keepMediaAtEnd: Boolean,
     onStreamVolumeChange: (Int, Int) -> Unit,
+    onStreamSelected: (VolumeTarget) -> Unit,
     onMuteToggle: () -> Unit,
     onExpandToggle: () -> Unit,
     onInteraction: () -> Unit
@@ -438,6 +440,9 @@ private fun MainVolumePill(
         label = "expandArrowWidth"
     )
     val mediaStream = streams.first()
+    val collapsedStream = streams.firstOrNull { it.streamType == selectedTarget.streamType }
+        ?: mediaStream
+    val primaryStream = if (isExpanded) mediaStream else collapsedStream
     val secondaryStreams = streams.drop(1)
 
     Column(
@@ -473,6 +478,7 @@ private fun MainVolumePill(
                         StreamVolumeColumn(
                             stream = stream,
                             onVolumeChange = { newVolume ->
+                                onStreamSelected(VolumeTarget.fromStreamType(stream.streamType))
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onInteraction()
                                 onStreamVolumeChange(stream.streamType, newVolume)
@@ -484,13 +490,17 @@ private fun MainVolumePill(
             }
 
             StreamVolumeColumn(
-                stream = mediaStream,
+                stream = primaryStream,
                 onVolumeChange = { newVolume ->
+                    if (isExpanded) {
+                        onStreamSelected(VolumeTarget.fromStreamType(primaryStream.streamType))
+                    }
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onInteraction()
-                    onStreamVolumeChange(mediaStream.streamType, newVolume)
+                    onStreamVolumeChange(primaryStream.streamType, newVolume)
                 },
                 onMediaMuteToggle = {
+                    if (isExpanded) onStreamSelected(VolumeTarget.MEDIA)
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onInteraction()
                     onMuteToggle()

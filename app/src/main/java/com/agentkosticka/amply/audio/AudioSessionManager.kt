@@ -62,6 +62,8 @@ class AudioSessionManager(
     // Session state observable
     private val _sessionState = MutableStateFlow(AudioSessionState.empty())
     val sessionState: StateFlow<AudioSessionState> = _sessionState.asStateFlow()
+    private val _activePlaybackUsages = MutableStateFlow<Set<Int>>(emptySet())
+    val activePlaybackUsages: StateFlow<Set<Int>> = _activePlaybackUsages.asStateFlow()
 
     private var refreshJob: Job? = null
     private var safetyRefreshJob: Job? = null
@@ -194,6 +196,7 @@ class AudioSessionManager(
 
         playbackCallback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
+                _activePlaybackUsages.value = playerVolumeController.getActivePlaybackUsages(configs.orEmpty())
                 requestRefresh()
             }
         }
@@ -236,6 +239,7 @@ class AudioSessionManager(
             playerVolumeController.unregisterPlaybackCallback(it)
             playbackCallback = null
         }
+        _activePlaybackUsages.value = emptySet()
     }
 
     /**

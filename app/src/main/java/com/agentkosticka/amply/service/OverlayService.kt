@@ -15,6 +15,7 @@ import com.agentkosticka.amply.AmplyApplication
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.R
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.audio.VolumeTarget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +37,7 @@ class OverlayService : Service() {
 
         const val ACTION_START_RUNTIME = "com.agentkosticka.amply.ACTION_START_RUNTIME"
         const val ACTION_SHOW_OVERLAY = "com.agentkosticka.amply.ACTION_SHOW_OVERLAY"
-        const val EXTRA_VOLUME = "extra_volume"
+        const val EXTRA_VOLUME_TARGET = "extra_volume_target"
         const val EXTRA_ICON_TYPE = "extra_icon_type"
         const val EXTRA_FOCUSED_PACKAGE = "extra_focused_package"
 
@@ -51,7 +52,7 @@ class OverlayService : Service() {
 
         fun showFromAccessibilityHost(
             host: Context,
-            volume: Int,
+            target: VolumeTarget,
             iconType: String,
             foregroundPackage: String?
         ) {
@@ -59,7 +60,7 @@ class OverlayService : Service() {
             if (runtime == null) {
                 val intent = Intent(host, OverlayService::class.java).apply {
                     action = ACTION_SHOW_OVERLAY
-                    putExtra(EXTRA_VOLUME, volume)
+                    putExtra(EXTRA_VOLUME_TARGET, target.name)
                     putExtra(EXTRA_ICON_TYPE, iconType)
                     putExtra(EXTRA_FOCUSED_PACKAGE, foregroundPackage)
                 }
@@ -69,7 +70,7 @@ class OverlayService : Service() {
 
             runtime.showOverlay(
                 hostContext = host,
-                volume = volume,
+                target = target,
                 iconType = iconType,
                 foregroundPackage = foregroundPackage,
                 windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -98,12 +99,14 @@ class OverlayService : Service() {
 
         when (intent?.action) {
             ACTION_SHOW_OVERLAY -> {
-                val volume = intent.getIntExtra(EXTRA_VOLUME, 0)
+                val target = intent.getStringExtra(EXTRA_VOLUME_TARGET)
+                    ?.let { runCatching { VolumeTarget.valueOf(it) }.getOrNull() }
+                    ?: VolumeTarget.MEDIA
                 val iconType = intent.getStringExtra(EXTRA_ICON_TYPE) ?: "MUSIC"
                 val focusedPackage = intent.getStringExtra(EXTRA_FOCUSED_PACKAGE)
                 showOverlay(
                     hostContext = this,
-                    volume = volume,
+                    target = target,
                     iconType = iconType,
                     foregroundPackage = focusedPackage,
                     windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -138,6 +141,11 @@ class OverlayService : Service() {
                     }
                 },
                 serviceScope.launch {
+                    runtime.selectedVolumeTarget.collect { target ->
+                        OverlayManager.updateSelectedVolumeTarget(target)
+                    }
+                },
+                serviceScope.launch {
                     combine(
                         runtime.sessionState,
                         preferences.appSettings,
@@ -159,6 +167,11 @@ class OverlayService : Service() {
             OverlayManager.setAppVolumeCallback { app, volume ->
                 sessionManager.setAppVolume(app, volume)
             }
+            OverlayManager.setVolumeTargetCallbacks(
+                onSelected = runtime.volumeTargetSessionController::onUserSelected,
+                onShown = runtime.volumeTargetSessionController::onOverlayShown,
+                onHidden = runtime.volumeTargetSessionController::onOverlayHidden
+            )
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
             }
@@ -171,7 +184,7 @@ class OverlayService : Service() {
 
     private fun showOverlay(
         hostContext: Context,
-        volume: Int,
+        target: VolumeTarget,
         iconType: String,
         foregroundPackage: String?,
         windowType: Int
@@ -193,12 +206,12 @@ class OverlayService : Service() {
 
         Log.d(
             "OverlayService",
-            "showOverlay: volume=$volume apps=${apps.size} connection=$connectionState windowType=$windowType"
+            "showOverlay: target=$target apps=${apps.size} connection=$connectionState windowType=$windowType"
         )
 
         OverlayManager.show(
             context = hostContext,
-            volume = volume,
+            selectedTarget = target,
             newIconType = iconType,
             apps = apps,
             connectionState = connectionState,
@@ -239,8 +252,9 @@ class OverlayService : Service() {
         }
         preferenceJobs.forEach { it.cancel() }
         serviceScope.cancel()
-        OverlayManager.clearAppVolumeCallback()
-        OverlayManager.clearPauseAmplyCallback()
         OverlayManager.cleanup()
+        OverlayManager.clearAppVolumeCallback()
+        OverlayManager.clearVolumeTargetCallbacks()
+        OverlayManager.clearPauseAmplyCallback()
     }
 }

@@ -32,6 +32,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
 import com.agentkosticka.amply.ui.theme.AmplyTheme
@@ -115,6 +116,7 @@ object OverlayManager {
     private val maxNotificationVolume = mutableIntStateOf(7)
     private val callVolume = mutableIntStateOf(0)
     private val maxCallVolume = mutableIntStateOf(5)
+    private val selectedVolumeTarget = mutableStateOf(VolumeTarget.MEDIA)
     private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
     private val currentApps = mutableStateOf<List<OverlayAppEntry>>(emptyList())
@@ -128,6 +130,9 @@ object OverlayManager {
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((OverlayAppEntry, Float) -> Unit)? = null
+    private var onVolumeTargetSelectedCallback: ((VolumeTarget) -> Unit)? = null
+    private var onOverlayShownCallback: (() -> Unit)? = null
+    private var onOverlayHiddenCallback: (() -> Unit)? = null
     private var onPauseAmplyCallback: (() -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
     private var isOverlayExpanded = false
@@ -145,6 +150,27 @@ object OverlayManager {
 
     fun clearAppVolumeCallback() {
         onAppVolumeChangeCallback = null
+    }
+
+    fun setVolumeTargetCallbacks(
+        onSelected: (VolumeTarget) -> Unit,
+        onShown: () -> Unit,
+        onHidden: () -> Unit
+    ) {
+        onVolumeTargetSelectedCallback = onSelected
+        onOverlayShownCallback = onShown
+        onOverlayHiddenCallback = onHidden
+    }
+
+    fun clearVolumeTargetCallbacks() {
+        onVolumeTargetSelectedCallback = null
+        onOverlayShownCallback = null
+        onOverlayHiddenCallback = null
+    }
+
+    fun updateSelectedVolumeTarget(target: VolumeTarget) {
+        selectedVolumeTarget.value = target
+        if (overlayVisible.value) refreshSystemStreamVolumes()
     }
 
     fun setPauseAmplyCallback(callback: () -> Unit) {
@@ -184,7 +210,7 @@ object OverlayManager {
     /** Show or update the overlay using the latest package-level app entries. */
     fun show(
         context: Context,
-        volume: Int,
+        selectedTarget: VolumeTarget,
         newIconType: String = "MUSIC",
         apps: List<OverlayAppEntry> = emptyList(),
         connectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
@@ -203,12 +229,13 @@ object OverlayManager {
         }
 
         // DEBUG: Log incoming state
-        Log.d("OverlayManager", "show() called: volume=$volume, apps=${apps.size}, connection=$connectionState")
+        Log.d("OverlayManager", "show() called: target=$selectedTarget, apps=${apps.size}, connection=$connectionState")
 
         // Update state
         updateAvailableOverlayWidth(context)
-        refreshSystemStreamVolumes(mediaVolumeOverride = volume)
+        refreshSystemStreamVolumes()
         isMuted.value = (currentVolume.intValue == 0)
+        selectedVolumeTarget.value = selectedTarget
         iconType.value = newIconType
         currentApps.value = prepareAppIcons(apps)
         shizukuConnectionState.value = connectionState
@@ -235,6 +262,7 @@ object OverlayManager {
             updateOverlayPosition(context)
         }
         overlayVisible.value = true
+        onOverlayShownCallback?.invoke()
 
         // Reset auto-hide timer
         scheduleHide(currentAutoHideDelayMs())
@@ -296,6 +324,7 @@ object OverlayManager {
                     maxNotificationVolume = maxNotificationVolume.intValue,
                     callVolume = callVolume.intValue,
                     maxCallVolume = maxCallVolume.intValue,
+                    selectedTarget = selectedVolumeTarget.value,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
                     apps = currentApps.value,
@@ -303,11 +332,12 @@ object OverlayManager {
                     shizukuIcon = shizukuIcon.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
-                    onVolumeChange = { newVolume ->
-                        setStreamVolume(AudioManager.STREAM_MUSIC, newVolume)
-                    },
                     onStreamVolumeChange = { streamType, newVolume ->
                         setStreamVolume(streamType, newVolume)
+                    },
+                    onStreamSelected = { target ->
+                        selectedVolumeTarget.value = target
+                        onVolumeTargetSelectedCallback?.invoke(target)
                     },
                     onAppVolumeChange = { app, volume ->
                         invokeAppVolumeCallback(app, volume)
@@ -380,6 +410,9 @@ object OverlayManager {
             return
         }
 
+        if (overlayVisible.value) {
+            onOverlayHiddenCallback?.invoke()
+        }
         overlayVisible.value = false
         removeJob?.cancel()
         removeJob = managerScope.launch {
@@ -413,9 +446,9 @@ object OverlayManager {
         removeJob = null
     }
 
-    private fun refreshSystemStreamVolumes(mediaVolumeOverride: Int? = null) {
+    private fun refreshSystemStreamVolumes() {
         val manager = audioManager ?: return
-        currentVolume.intValue = mediaVolumeOverride ?: manager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        currentVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_MUSIC)
         maxVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         alarmVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_ALARM)
         maxAlarmVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
@@ -493,6 +526,9 @@ object OverlayManager {
     fun cleanup() {
         hideJob?.cancel()
         removeJob?.cancel()
+        if (overlayVisible.value) {
+            onOverlayHiddenCallback?.invoke()
+        }
         removeOverlay()
         managerScope.cancel()
         appIconBitmapCache.evictAll()

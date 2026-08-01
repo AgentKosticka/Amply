@@ -1,5 +1,7 @@
 package com.agentkosticka.amply.service
 
+import com.agentkosticka.amply.audio.VolumeKeyStreamAction
+
 internal enum class VolumeKeyRoute { INTERCEPT, PASS_THROUGH }
 
 internal data class VolumeKeyRoutingState(
@@ -38,4 +40,30 @@ internal class VolumeKeySequenceRouter {
     fun onUp(keyCode: Int): VolumeKeyRoute? = routes.remove(keyCode)
 
     fun clear() = routes.clear()
+}
+
+internal class VolumeKeyStreamActionRouter {
+    private val actions = mutableMapOf<Int, VolumeKeyStreamAction>()
+
+    fun onDown(
+        keyCode: Int,
+        repeatCount: Int,
+        decide: () -> VolumeKeyStreamAction
+    ): VolumeKeyStreamAction {
+        if (repeatCount == 0 || keyCode !in actions) actions[keyCode] = decide()
+        return actions.getValue(keyCode)
+    }
+
+    fun onUp(keyCode: Int): VolumeKeyStreamAction? = actions.remove(keyCode)
+
+    fun clear() = actions.clear()
+}
+
+internal object VolumeStepPolicy {
+    fun next(current: Int, min: Int, max: Int, isUp: Boolean, step: Int = 1): Int =
+        if (isUp) {
+            (current + step).coerceAtMost(max)
+        } else {
+            (current - step).coerceAtLeast(min)
+        }
 }
