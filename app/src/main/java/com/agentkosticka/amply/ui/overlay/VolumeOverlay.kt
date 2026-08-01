@@ -3,7 +3,6 @@ package com.agentkosticka.amply.ui.overlay
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.media.AudioManager
-import android.util.Log
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -53,12 +52,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
@@ -68,6 +64,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -76,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.data.OverlayAppEntry
@@ -90,7 +88,6 @@ import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlin.math.roundToInt
 
-private const val TAG = "VolumeOverlay"
 private val CollapsedPillWidth = 54.dp
 private val ExpandedPillWidth = 216.dp
 private val PanelSpacing = 16.dp
@@ -99,6 +96,21 @@ private val ExpandControlIconSize = 16.dp
 private val ExpandControlSideInset = (CollapsedPillWidth - ExpandControlHeight) / 2
 private val PauseControlSlotHeight = 58.dp
 private val OverlayCornerRadius = 27.dp
+
+/**
+ * Reads animated width state during measurement instead of composition. This confines
+ * per-frame work to layout and keeps the expensive stream/app subtrees skippable.
+ */
+private fun Modifier.dynamicWidth(widthPx: Density.() -> Float): Modifier = layout {
+    measurable, constraints ->
+    val width = widthPx().roundToInt().coerceIn(constraints.minWidth, constraints.maxWidth)
+    val placeable = measurable.measure(
+        constraints.copy(minWidth = width, maxWidth = width)
+    )
+    layout(width, placeable.height) {
+        placeable.placeRelative(0, 0)
+    }
+}
 
 /**
  * Volume overlay with Nothing OS design
@@ -173,7 +185,7 @@ fun VolumeOverlay(
     panelTransitionState.targetState = isExpanded && hasPanelContent
 
     // Chevron rotation animation
-    val chevronRotation by animateFloatAsState(
+    val chevronRotation = animateFloatAsState(
         targetValue = if (expandToStart) {
             if (isExpanded) 0f else 180f
         } else {
@@ -254,8 +266,6 @@ fun VolumeOverlay(
                 maxHeight = maxHeight,
                 apps = apps,
                 onAppVolumeChange = { app, volume ->
-                    Log.d(TAG, "App volume change: package=${app.packageName}, volume=$volume")
-                    onInteraction()
                     onAppVolumeChange(app, volume)
                 },
                 onClose = {
@@ -383,7 +393,7 @@ fun VolumeOverlay(
                     enter = fadeIn(animationSpec = tween(170)),
                     exit = fadeOut(animationSpec = tween(120))
                 ) {
-                    val horizontalReveal by transition.animateFloat(
+                    val horizontalReveal = transition.animateFloat(
                         transitionSpec = {
                             if (targetState == EnterExitState.Visible) {
                                 tween(210, easing = FastOutSlowInEasing)
@@ -399,7 +409,7 @@ fun VolumeOverlay(
                         Spacer(modifier = Modifier.height(PanelSpacing))
                         Box(
                             modifier = Modifier.graphicsLayer {
-                                scaleX = horizontalReveal
+                                scaleX = horizontalReveal.value
                                 scaleY = 1f
                                 transformOrigin = TransformOrigin(
                                     pivotFractionX = if (expandToStart) 1f else 0f,
@@ -407,7 +417,6 @@ fun VolumeOverlay(
                                 )
                                 shape = RoundedCornerShape(OverlayCornerRadius)
                                 clip = true
-                                compositingStrategy = CompositingStrategy.Offscreen
                             }
                         ) {
                             panelBody(ExpandedPillWidth, 360.dp)
@@ -431,7 +440,7 @@ private fun MainVolumePill(
     selectedTarget: VolumeTarget,
     volumeLimitFeedback: VolumeLimitFeedback?,
     isExpanded: Boolean,
-    chevronRotation: Float,
+    chevronRotation: State<Float>,
     keepMediaAtEnd: Boolean,
     iconType: String,
     onStreamVolumeChange: (Int, Int) -> Unit,
@@ -446,49 +455,48 @@ private fun MainVolumePill(
     val pillShape = RoundedCornerShape(OverlayCornerRadius)
     val expandControlShape = RoundedCornerShape(ExpandControlHeight / 2)
     val streamScroll = rememberScrollState()
-    val animatedExpandedWidth by animateDpAsState(
+    val animatedExpandedWidth = animateDpAsState(
         targetValue = expandedWidth,
         animationSpec = tween(220, easing = FastOutSlowInEasing),
         label = "dynamicExpandedPillWidth"
     )
-    val expansionProgress by animateFloatAsState(
+    val expansionProgress = animateFloatAsState(
         targetValue = if (isExpanded) 1f else 0f,
         animationSpec = tween(250, easing = FastOutSlowInEasing),
         label = "pillExpansionProgress"
     )
-    // Keep every moving part on the same animation clock. Deriving widths and stream
-    // offsets from one progress value makes rapid direction changes remain coherent.
-    val pillWidth = CollapsedPillWidth +
-        ((animatedExpandedWidth - CollapsedPillWidth) * expansionProgress)
-    val expandedArrowWidth = animatedExpandedWidth - (ExpandControlSideInset * 2)
-    val arrowWidth = ExpandControlHeight +
-        ((expandedArrowWidth - ExpandControlHeight) * expansionProgress)
     val selectedStreamType = streams
         .firstOrNull { selectedTarget.streamType in it.aliases }
         ?.target?.streamType
         ?: AudioManager.STREAM_MUSIC
 
     LaunchedEffect(isExpanded, selectedStreamType, streams.size) {
-        if (!isExpanded) {
+        if (!isExpanded && streamScroll.value != 0) {
             streamScroll.animateScrollTo(0, tween(250, easing = FastOutSlowInEasing))
         } else if (fullExpandedWidth > expandedWidth) {
             val index = streams.indexOfFirst { it.target.streamType == selectedStreamType }.coerceAtLeast(0)
+            val targetScroll = with(density) { (CollapsedPillWidth * index).roundToPx() }
             // Reveal the selected slot without introducing a second movement clock.
-            streamScroll.animateScrollTo(
-                with(density) { (CollapsedPillWidth * index).roundToPx() },
-                tween(250, easing = FastOutSlowInEasing)
-            )
+            if (streamScroll.value != targetScroll) {
+                streamScroll.animateScrollTo(
+                    targetScroll,
+                    tween(250, easing = FastOutSlowInEasing)
+                )
+            }
         }
     }
 
     Column(
         modifier = modifier
-            .width(pillWidth)
+            .dynamicWidth {
+                val collapsed = CollapsedPillWidth.toPx()
+                collapsed +
+                    (animatedExpandedWidth.value.toPx() - collapsed) * expansionProgress.value
+            }
             .wrapContentHeight()
             .graphicsLayer {
                 shape = pillShape
                 clip = true
-                compositingStrategy = CompositingStrategy.Offscreen
             }
             .background(
                 color = Color(0xFF1C1C1C),
@@ -499,7 +507,7 @@ private fun MainVolumePill(
     ) {
         Box(
             modifier = Modifier
-                .width(pillWidth)
+                .fillMaxWidth()
                 .then(if (fullExpandedWidth > expandedWidth) Modifier.horizontalScroll(streamScroll) else Modifier),
         ) {
             Spacer(modifier = Modifier.width(fullExpandedWidth).height(1.dp))
@@ -509,8 +517,9 @@ private fun MainVolumePill(
                     feedback.target == stream.target || feedback.target.streamType in stream.aliases
                 }
                 val expandedSlot = if (keepMediaAtEnd) streams.lastIndex - index else index
-                val streamOffset = CollapsedPillWidth * expandedSlot * expansionProgress
-                val streamAlpha = if (isSelected) 1f else expansionProgress
+                val expandedSlotOffsetPx = with(density) {
+                    (CollapsedPillWidth * expandedSlot).toPx()
+                }
 
                 StreamVolumeColumn(
                     stream = stream,
@@ -534,8 +543,10 @@ private fun MainVolumePill(
                         onMuteToggle(stream.target.streamType)
                     },
                     modifier = Modifier
-                        .offset(x = streamOffset)
-                        .alpha(streamAlpha)
+                        .graphicsLayer {
+                            translationX = expandedSlotOffsetPx * expansionProgress.value
+                            alpha = if (isSelected) 1f else expansionProgress.value
+                        }
                         .zIndex(if (isSelected) 1f else 0f)
                 )
             }
@@ -545,7 +556,12 @@ private fun MainVolumePill(
 
         Box(
             modifier = Modifier
-                .width(arrowWidth)
+                .dynamicWidth {
+                    val collapsed = ExpandControlHeight.toPx()
+                    val expanded = animatedExpandedWidth.value.toPx() -
+                        (ExpandControlSideInset.toPx() * 2f)
+                    collapsed + (expanded - collapsed) * expansionProgress.value
+                }
                 .height(ExpandControlHeight)
                 .clip(expandControlShape)
                 .background(
@@ -568,7 +584,9 @@ private fun MainVolumePill(
                 tint = if (isExpanded) NothingColors.Red else NothingColors.GreyMedium,
                 modifier = Modifier
                     .size(ExpandControlIconSize)
-                    .rotate(chevronRotation)
+                    .graphicsLayer {
+                        rotationZ = chevronRotation.value
+                    }
             )
         }
     }
@@ -827,7 +845,6 @@ private fun AmplyPanel(
             .graphicsLayer {
                 shape = panelShape
                 clip = true
-                compositingStrategy = CompositingStrategy.Offscreen
             }
             .background(
                 color = Color(0xFF1C1C1C),
@@ -886,6 +903,7 @@ private fun AmplyPanel(
 @Composable
 private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
     val panelShape = RoundedCornerShape(OverlayCornerRadius)
+    val shizukuImage = remember(shizukuIcon) { shizukuIcon?.asImageBitmap() }
     Row(
         modifier = Modifier
             .width(panelWidth)
@@ -893,7 +911,6 @@ private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
             .graphicsLayer {
                 shape = panelShape
                 clip = true
-                compositingStrategy = CompositingStrategy.Offscreen
             }
             .background(Color(0xFF1C1C1C), panelShape)
             .padding(14.dp),
@@ -901,9 +918,9 @@ private fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Box(modifier = Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-            if (shizukuIcon != null) {
+            if (shizukuImage != null) {
                 Image(
-                    bitmap = shizukuIcon.asImageBitmap(),
+                    bitmap = shizukuImage,
                     contentDescription = null,
                     modifier = Modifier.size(30.dp)
                 )
@@ -942,6 +959,7 @@ private fun AppVolumeRow(
     onVolumeChange: (Float) -> Unit
 ) {
     var localVolume by remember(app.packageName) { mutableFloatStateOf(app.volume) }
+    val appIconImage = remember(app.appIconBitmap) { app.appIconBitmap?.asImageBitmap() }
     LaunchedEffect(app.volume) {
         localVolume = app.volume
     }
@@ -973,9 +991,9 @@ private fun AppVolumeRow(
                             .background(Color(0xFF343434)),
                         contentAlignment = Alignment.Center
                     ) {
-                        app.appIconBitmap?.let { icon ->
+                        appIconImage?.let { icon ->
                             Image(
-                                bitmap = icon.asImageBitmap(),
+                                bitmap = icon,
                                 contentDescription = app.appName,
                                 modifier = Modifier
                                     .size(24.dp)
@@ -1144,7 +1162,9 @@ fun DraggableDotSlider(
                 if (enabled) {
                     Modifier
                         .pointerInput(minVolume, maxVolume) {
+                            var lastEmittedVolume: Int? = null
                             detectDragGestures(
+                                onDragStart = { lastEmittedVolume = null },
                                 onDrag = { change, _ ->
                                     change.consume()
                                     val y = change.position.y
@@ -1155,7 +1175,10 @@ fun DraggableDotSlider(
                                         minVolume,
                                         maxVolume
                                     )
-                                    onVolumeChange(newVolume)
+                                    if (newVolume != lastEmittedVolume) {
+                                        lastEmittedVolume = newVolume
+                                        onVolumeChange(newVolume)
+                                    }
                                 }
                             )
                         }

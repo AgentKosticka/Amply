@@ -281,9 +281,6 @@ object OverlayManager {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         }
 
-        // DEBUG: Log incoming state
-        Log.d("OverlayManager", "show() called: target=$selectedTarget, apps=${apps.size}, connection=$connectionState")
-
         // Update state
         updateAvailableOverlayWidth(context)
         refreshSystemStreamVolumes()
@@ -302,9 +299,6 @@ object OverlayManager {
         currentOverlaySide.value = overlaySide
         currentOverlayVerticalFraction.floatValue = overlayVerticalFraction.coerceIn(0f, 1f)
         
-        // DEBUG: Verify state was set
-        Log.d("OverlayManager", "State updated: currentApps.value has ${currentApps.value.size} items")
-
         if (overlayContainer != null && currentWindowType != windowType) {
             removeOverlay()
         }
@@ -544,7 +538,33 @@ object OverlayManager {
         val target = VolumeTarget.findByStreamType(streamType) ?: return
         onSystemStreamVolumeChangeCallback?.invoke(target, clampedVolume)
             ?: runCatching { manager.setStreamVolume(streamType, clampedVolume, 0) }
-        refreshSystemStreamVolumes()
+        refreshSystemStreamVolume(streamType)
+    }
+
+    /** Refresh only the model affected by a direct slider/icon interaction. */
+    private fun refreshSystemStreamVolume(streamType: Int) {
+        val manager = audioManager ?: return
+        val bars = volumeBars.value
+        val index = bars.indexOfFirst { streamType in it.aliases }
+        if (index < 0) return
+
+        val bar = bars[index]
+        val canonicalStream = bar.target.streamType
+        val current = runCatching { manager.getStreamVolume(canonicalStream) }
+            .getOrDefault(bar.currentVolume)
+        val ringerControl = VolumeTarget.NOTIFICATION.streamType in bar.aliases ||
+            VolumeTarget.RING.streamType in bar.aliases
+        val updated = bar.copy(
+            currentVolume = current,
+            notificationAlertMode = if (ringerControl) {
+                NotificationAlertMode.resolve(manager.ringerMode, current, bar.minVolume)
+            } else {
+                null
+            }
+        )
+        if (updated == bar) return
+
+        volumeBars.value = bars.toMutableList().apply { this[index] = updated }
     }
 
     /** Screen-off cannot visibly finish a Compose exit animation; remove the window now. */
@@ -640,7 +660,18 @@ object OverlayManager {
         val container = overlayContainer ?: return
         val params = container.layoutParams as? WindowManager.LayoutParams ?: return
         updateAvailableOverlayWidth(context)
+        val previousWidth = params.width
+        val previousGravity = params.gravity
+        val previousX = params.x
+        val previousY = params.y
         params.applyPosition(context)
+        if (params.width == previousWidth &&
+            params.gravity == previousGravity &&
+            params.x == previousX &&
+            params.y == previousY
+        ) {
+            return
+        }
         try {
             windowManager?.updateViewLayout(container, params)
         } catch (e: Exception) {
