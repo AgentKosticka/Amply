@@ -169,4 +169,20 @@ class SystemStreamsTest {
             state.coreTargets()
         )
     }
+
+    @Test
+    fun rejectedStepsShakePinnedOrFirstUnavailableDot() {
+        assertEquals(
+            1,
+            VolumeLimitFeedbackPolicy.rejectedDotLevel(isUp = false, min = 1, max = 16)
+        )
+        assertEquals(
+            16,
+            VolumeLimitFeedbackPolicy.rejectedDotLevel(isUp = true, min = 1, max = 15)
+        )
+        assertEquals(
+            16,
+            VolumeLimitFeedbackPolicy.rejectedDotLevel(isUp = true, min = 0, max = 16)
+        )
+    }
 }

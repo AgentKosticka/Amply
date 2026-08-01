@@ -80,6 +80,7 @@ import com.agentkosticka.amply.audio.NotificationAlertMode
 import com.agentkosticka.amply.audio.FixedVolumeDotScale
 import com.agentkosticka.amply.audio.StreamIcon
 import com.agentkosticka.amply.audio.VolumeBarModel
+import com.agentkosticka.amply.audio.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -104,6 +105,7 @@ private val OverlayCornerRadius = 27.dp
 fun VolumeOverlay(
     volumeBars: List<VolumeBarModel> = emptyList(),
     selectedTarget: VolumeTarget = VolumeTarget.MEDIA,
+    volumeLimitFeedback: VolumeLimitFeedback? = null,
     visible: Boolean = true,
     iconType: String = "MUSIC",
     apps: List<OverlayAppEntry> = emptyList(),
@@ -221,6 +223,7 @@ fun VolumeOverlay(
                 expandedWidth = expandedPillWidth,
                 fullExpandedWidth = desiredPillWidth,
                 selectedTarget = selectedTarget,
+                volumeLimitFeedback = volumeLimitFeedback,
                 isExpanded = isExpanded,
                 chevronRotation = chevronRotation,
                 keepMediaAtEnd = expandToStart,
@@ -419,6 +422,7 @@ private fun MainVolumePill(
     expandedWidth: Dp,
     fullExpandedWidth: Dp,
     selectedTarget: VolumeTarget,
+    volumeLimitFeedback: VolumeLimitFeedback?,
     isExpanded: Boolean,
     chevronRotation: Float,
     keepMediaAtEnd: Boolean,
@@ -487,6 +491,9 @@ private fun MainVolumePill(
             Spacer(modifier = Modifier.width(fullExpandedWidth).height(1.dp))
             streams.forEachIndexed { index, stream ->
                 val isSelected = stream.target.streamType == selectedStreamType
+                val streamLimitFeedback = volumeLimitFeedback?.takeIf { feedback ->
+                    feedback.target == stream.target || feedback.target.streamType in stream.aliases
+                }
                 val expandedSlot = if (keepMediaAtEnd) streams.lastIndex - index else index
                 val streamOffset = CollapsedPillWidth * expandedSlot * expansionProgress
                 val streamAlpha = if (isSelected) 1f else expansionProgress
@@ -495,6 +502,7 @@ private fun MainVolumePill(
                     stream = stream,
                     enabled = stream.enabled && (isExpanded || isSelected),
                     iconType = iconType,
+                    limitFeedback = streamLimitFeedback,
                     onVolumeChange = { newVolume ->
                         if (isExpanded) {
                             onStreamSelected(stream.target)
@@ -554,6 +562,7 @@ private fun StreamVolumeColumn(
     onVolumeChange: (Int) -> Unit,
     onMuteToggle: () -> Unit,
     iconType: String,
+    limitFeedback: VolumeLimitFeedback?,
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -637,6 +646,8 @@ private fun StreamVolumeColumn(
             maxVolume = stream.maxVolume,
             onVolumeChange = onVolumeChange,
             enabled = enabled,
+            limitFeedbackLevel = limitFeedback?.dotLevel,
+            limitFeedbackEventId = limitFeedback?.eventId,
             modifier = Modifier
                 .height(130.dp)
                 .width(40.dp)
@@ -1059,9 +1070,30 @@ fun DraggableDotSlider(
     maxVolume: Int,
     onVolumeChange: (Int) -> Unit,
     enabled: Boolean = true,
+    limitFeedbackLevel: Int? = null,
+    limitFeedbackEventId: Long? = null,
     modifier: Modifier = Modifier
 ) {
     val dotCount = FixedVolumeDotScale.MAX_LEVEL
+    val rejectedDotShake = remember { Animatable(0f) }
+
+    LaunchedEffect(limitFeedbackEventId) {
+        if (limitFeedbackEventId == null || limitFeedbackLevel == null) return@LaunchedEffect
+        rejectedDotShake.snapTo(0f)
+        rejectedDotShake.animateTo(
+            targetValue = 0f,
+            animationSpec = keyframes {
+                durationMillis = 230
+                0f at 0
+                -1f at 35
+                1f at 75
+                -0.75f at 115
+                0.55f at 155
+                -0.25f at 195
+                0f at 230
+            }
+        )
+    }
 
     Canvas(
         modifier = modifier
@@ -1108,9 +1140,14 @@ fun DraggableDotSlider(
 
         for (i in 0 until dotCount) {
             val y = size.height - (i * spacing)
-            val x = size.width / 2
-            val dotPercentage = i.toFloat() / (dotCount - 1)
             val level = i + 1
+            val shakeX = if (level == limitFeedbackLevel) {
+                rejectedDotShake.value * 3.5.dp.toPx()
+            } else {
+                0f
+            }
+            val x = size.width / 2 + shakeX
+            val dotPercentage = i.toFloat() / (dotCount - 1)
             val available = FixedVolumeDotScale.isLevelAvailable(level, minVolume, maxVolume)
 
             val dotColor = when {

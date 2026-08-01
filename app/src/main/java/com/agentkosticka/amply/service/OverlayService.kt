@@ -4,9 +4,12 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -85,11 +88,30 @@ class OverlayService : Service() {
     private var overlaySide: OverlaySide = OverlaySide.LEFT
     private var overlayVerticalFraction: Float = 0.5f
     private var preferenceJobs: List<Job> = emptyList()
+    private var screenOffReceiverRegistered = false
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                OverlayManager.dismissImmediatelyForScreenOff()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         activeRuntimeRef = WeakReference(this)
         createNotificationChannel()
+        runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                screenOffReceiver,
+                IntentFilter(Intent.ACTION_SCREEN_OFF),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            screenOffReceiverRegistered = true
+        }.onFailure { error ->
+            Log.w("OverlayService", "Could not register screen-off receiver", error)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -202,6 +224,11 @@ class OverlayService : Service() {
         windowType: Int
     ) {
         initializeRuntime()
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (!powerManager.isInteractive) {
+            OverlayManager.dismissImmediatelyForScreenOff()
+            return
+        }
         runtime.onForegroundPackageChanged(foregroundPackage)
 
         val sessionManager = runtime.audioSessionManager
@@ -258,6 +285,10 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        if (screenOffReceiverRegistered) {
+            runCatching { unregisterReceiver(screenOffReceiver) }
+            screenOffReceiverRegistered = false
+        }
         super.onDestroy()
         if (activeRuntimeRef?.get() === this) {
             activeRuntimeRef = null

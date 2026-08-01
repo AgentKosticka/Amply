@@ -35,6 +35,7 @@ import com.agentkosticka.amply.audio.NotificationAlertMode
 import com.agentkosticka.amply.audio.DynamicStreamState
 import com.agentkosticka.amply.audio.StreamMuteToggleController
 import com.agentkosticka.amply.audio.VolumeBarModel
+import com.agentkosticka.amply.audio.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
@@ -87,6 +88,13 @@ private class OverlayFrameLayout(context: Context) : FrameLayout(context) {
     }
 }
 
+internal object OverlayWindowPolicy {
+    val flags: Int = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+}
+
 /**
  * Manages the floating volume overlay using WindowManager
  * CRITICAL FIX: Self-contained lifecycle and proper window token management
@@ -115,6 +123,8 @@ object OverlayManager {
     private val volumeBars = mutableStateOf<List<VolumeBarModel>>(emptyList())
     private val dynamicStreamState = mutableStateOf(DynamicStreamState())
     private val selectedVolumeTarget = mutableStateOf(VolumeTarget.MEDIA)
+    private val volumeLimitFeedback = mutableStateOf<VolumeLimitFeedback?>(null)
+    private var volumeLimitFeedbackSequence = 0L
     private val iconType = mutableStateOf("MUSIC")
     private val currentApps = mutableStateOf<List<OverlayAppEntry>>(emptyList())
     private val appIconBitmapCache = LruCache<String, Bitmap>(32)
@@ -175,6 +185,15 @@ object OverlayManager {
             selectedVolumeTarget.value = target
             refreshSystemStreamVolumes()
         }
+    }
+
+    fun signalVolumeLimit(target: VolumeTarget, dotLevel: Int) {
+        volumeLimitFeedbackSequence += 1L
+        volumeLimitFeedback.value = VolumeLimitFeedback(
+            target = target,
+            dotLevel = dotLevel,
+            eventId = volumeLimitFeedbackSequence
+        )
     }
 
     fun setPauseAmplyCallback(callback: () -> Unit) {
@@ -347,6 +366,7 @@ object OverlayManager {
                 VolumeOverlay(
                     volumeBars = volumeBars.value,
                     selectedTarget = selectedVolumeTarget.value,
+                    volumeLimitFeedback = volumeLimitFeedback.value,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
                     apps = currentApps.value,
@@ -395,14 +415,13 @@ object OverlayManager {
         composeView = view
 
         // Step 9: Configure window params
-        // Note: Removed FLAG_NOT_FOCUSABLE to allow touch events on sliders
+        // The overlay needs pointer input, but never keyboard focus. A non-focusable
+        // window still receives touch events and does not dismiss the app's IME.
         val params = WindowManager.LayoutParams(
             windowWidthForCurrentOrientation(context),
             WindowManager.LayoutParams.WRAP_CONTENT,
             windowType,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            OverlayWindowPolicy.flags,
             PixelFormat.TRANSLUCENT
         ).applyPosition(context)
 
@@ -466,6 +485,7 @@ object OverlayManager {
         currentWindowType = null
         overlayVisible.value = false
         isOverlayExpanded = false
+        volumeLimitFeedback.value = null
         removeJob = null
     }
 
@@ -520,6 +540,18 @@ object OverlayManager {
         onSystemStreamVolumeChangeCallback?.invoke(target, clampedVolume)
             ?: runCatching { manager.setStreamVolume(streamType, clampedVolume, 0) }
         refreshSystemStreamVolumes()
+    }
+
+    /** Screen-off cannot visibly finish a Compose exit animation; remove the window now. */
+    fun dismissImmediatelyForScreenOff() {
+        hideJob?.cancel()
+        hideJob = null
+        removeJob?.cancel()
+        removeJob = null
+        val wasVisible = overlayVisible.value
+        overlayVisible.value = false
+        if (wasVisible) onOverlayHiddenCallback?.invoke()
+        removeOverlay()
     }
 
     /**

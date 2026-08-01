@@ -12,6 +12,7 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.agentkosticka.amply.AmplyApplication
 import com.agentkosticka.amply.audio.VolumeKeyStreamAction
+import com.agentkosticka.amply.audio.VolumeLimitFeedbackPolicy
 import com.agentkosticka.amply.audio.VolumeTarget
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
@@ -328,6 +329,19 @@ class VolumeKeyService : AccessibilityService() {
             isUp = isUp,
             step = volumeStep
         )
+
+        if (newVolume == currentVolume) {
+            showOverlay(target)
+            OverlayManager.signalVolumeLimit(
+                target = target,
+                dotLevel = VolumeLimitFeedbackPolicy.rejectedDotLevel(
+                    isUp = isUp,
+                    min = minVolume,
+                    max = maxVolume
+                )
+            )
+            return true
+        }
 
         val applied = (application as AmplyApplication).runtime
             .setSystemStreamVolume(target, newVolume)

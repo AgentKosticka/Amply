@@ -293,3 +293,18 @@ object FixedVolumeDotScale {
     fun isLevelAvailable(level: Int, min: Int, max: Int): Boolean =
         level in 1..MAX_LEVEL && level in min..max
 }
+
+data class VolumeLimitFeedback(
+    val target: VolumeTarget,
+    val dotLevel: Int,
+    val eventId: Long
+)
+
+object VolumeLimitFeedbackPolicy {
+    fun rejectedDotLevel(isUp: Boolean, min: Int, max: Int): Int =
+        if (isUp) {
+            (max + 1).coerceIn(1, FixedVolumeDotScale.MAX_LEVEL)
+        } else {
+            min.coerceIn(1, FixedVolumeDotScale.MAX_LEVEL)
+        }
+}
