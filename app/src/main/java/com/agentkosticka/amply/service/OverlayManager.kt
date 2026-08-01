@@ -32,6 +32,8 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.audio.NotificationAlertMode
+import com.agentkosticka.amply.audio.StreamMuteToggleController
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
@@ -101,6 +103,7 @@ object OverlayManager {
     private var recomposer: Recomposer? = null
     private var audioManager: AudioManager? = null
     private var currentWindowType: Int? = null
+    private val streamMuteToggleController = StreamMuteToggleController()
 
     // Auto-hide timer
     private var managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -114,10 +117,10 @@ object OverlayManager {
     private val maxAlarmVolume = mutableIntStateOf(7)
     private val notificationVolume = mutableIntStateOf(0)
     private val maxNotificationVolume = mutableIntStateOf(7)
+    private val notificationAlertMode = mutableStateOf(NotificationAlertMode.SOUND)
     private val callVolume = mutableIntStateOf(0)
     private val maxCallVolume = mutableIntStateOf(5)
     private val selectedVolumeTarget = mutableStateOf(VolumeTarget.MEDIA)
-    private val isMuted = mutableStateOf(false)
     private val iconType = mutableStateOf("MUSIC")
     private val currentApps = mutableStateOf<List<OverlayAppEntry>>(emptyList())
     private val appIconBitmapCache = LruCache<String, Bitmap>(32)
@@ -239,7 +242,7 @@ object OverlayManager {
         // Update state
         updateAvailableOverlayWidth(context)
         refreshSystemStreamVolumes()
-        isMuted.value = (currentVolume.intValue == 0)
+        streamMuteToggleController.onVolumeChangedOutsideToggle(selectedTarget.streamType)
         selectedVolumeTarget.value = selectedTarget
         iconType.value = newIconType
         currentApps.value = prepareAppIcons(apps)
@@ -327,6 +330,7 @@ object OverlayManager {
                     maxAlarmVolume = maxAlarmVolume.intValue,
                     notificationVolume = notificationVolume.intValue,
                     maxNotificationVolume = maxNotificationVolume.intValue,
+                    notificationAlertMode = notificationAlertMode.value,
                     callVolume = callVolume.intValue,
                     maxCallVolume = maxCallVolume.intValue,
                     selectedTarget = selectedVolumeTarget.value,
@@ -347,8 +351,8 @@ object OverlayManager {
                     onAppVolumeChange = { app, volume ->
                         invokeAppVolumeCallback(app, volume)
                     },
-                    onMuteToggle = {
-                        toggleMute()
+                    onMuteToggle = { streamType ->
+                        toggleMute(streamType)
                     },
                     onInteraction = {
                         scheduleHide(currentAutoHideDelayMs()) // Reset timer on interaction
@@ -460,6 +464,11 @@ object OverlayManager {
         maxAlarmVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         notificationVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
         maxNotificationVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
+        notificationAlertMode.value = NotificationAlertMode.resolve(
+            ringerMode = manager.ringerMode,
+            currentVolume = notificationVolume.intValue,
+            minVolume = manager.getStreamMinVolume(AudioManager.STREAM_NOTIFICATION)
+        )
         callVolume.intValue = manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
         maxCallVolume.intValue = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
     }
@@ -467,9 +476,19 @@ object OverlayManager {
     /**
      * Update a system stream from overlay interaction.
      */
-    private fun setStreamVolume(streamType: Int, newVolume: Int) {
+    private fun setStreamVolume(
+        streamType: Int,
+        newVolume: Int,
+        changedThroughMuteToggle: Boolean = false
+    ) {
         val manager = audioManager ?: return
-        val clampedVolume = newVolume.coerceIn(0, manager.getStreamMaxVolume(streamType))
+        val clampedVolume = newVolume.coerceIn(
+            manager.getStreamMinVolume(streamType),
+            manager.getStreamMaxVolume(streamType)
+        )
+        if (!changedThroughMuteToggle) {
+            streamMuteToggleController.onVolumeChangedOutsideToggle(streamType)
+        }
         when (streamType) {
             AudioManager.STREAM_MUSIC -> currentVolume.intValue = clampedVolume
             AudioManager.STREAM_ALARM -> alarmVolume.intValue = clampedVolume
@@ -481,21 +500,33 @@ object OverlayManager {
             clampedVolume,
             0 // No system UI
         )
-        isMuted.value = currentVolume.intValue == 0
+        if (streamType == AudioManager.STREAM_NOTIFICATION) {
+            notificationAlertMode.value = NotificationAlertMode.resolve(
+                ringerMode = manager.ringerMode,
+                currentVolume = clampedVolume,
+                minVolume = manager.getStreamMinVolume(streamType)
+            )
+        }
     }
 
     /**
-     * Smart mute toggle: 0 → 70%, any → 0
+     * Restore the exact level muted through an icon. If the stream reached minimum
+     * through keys or a slider, restore only the first tick above minimum instead.
      */
-    private fun toggleMute() {
-        if (currentVolume.intValue == 0) {
-            // Unmute: Restore to 70%
-            val restoreVolume = (maxVolume.intValue * 0.7f).toInt()
-            setStreamVolume(AudioManager.STREAM_MUSIC, restoreVolume)
-        } else {
-            // Mute: Set to 0
-            setStreamVolume(AudioManager.STREAM_MUSIC, 0)
+    private fun toggleMute(streamType: Int) {
+        if (streamType != AudioManager.STREAM_MUSIC &&
+            streamType != AudioManager.STREAM_NOTIFICATION
+        ) {
+            return
         }
+        val manager = audioManager ?: return
+        val nextVolume = streamMuteToggleController.nextVolume(
+            streamType = streamType,
+            currentVolume = manager.getStreamVolume(streamType),
+            minVolume = manager.getStreamMinVolume(streamType),
+            maxVolume = manager.getStreamMaxVolume(streamType)
+        )
+        setStreamVolume(streamType, nextVolume, changedThroughMuteToggle = true)
     }
 
     /**

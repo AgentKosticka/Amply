@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Headphones
@@ -60,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.audio.NotificationAlertMode
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -79,7 +81,8 @@ private data class OverlayStreamVolume(
     val currentVolume: Int,
     val maxVolume: Int,
     val icon: ImageVector,
-    val contentDescription: String
+    val contentDescription: String,
+    val notificationAlertMode: NotificationAlertMode? = null
 )
 
 /**
@@ -95,6 +98,7 @@ fun VolumeOverlay(
     maxAlarmVolume: Int = 7,
     notificationVolume: Int = 0,
     maxNotificationVolume: Int = 7,
+    notificationAlertMode: NotificationAlertMode = NotificationAlertMode.SOUND,
     callVolume: Int = 0,
     maxCallVolume: Int = 5,
     selectedTarget: VolumeTarget = VolumeTarget.MEDIA,
@@ -108,7 +112,7 @@ fun VolumeOverlay(
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
     onStreamSelected: (VolumeTarget) -> Unit = {},
     onAppVolumeChange: (OverlayAppEntry, Float) -> Unit = { _, _ -> },
-    onMuteToggle: () -> Unit = {},
+    onMuteToggle: (Int) -> Unit = {},
     onInteraction: () -> Unit = {},
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {},
@@ -193,7 +197,8 @@ fun VolumeOverlay(
             currentVolume = notificationVolume,
             maxVolume = maxNotificationVolume,
             icon = Icons.Default.Notifications,
-            contentDescription = "Notification volume"
+            contentDescription = "Notification volume",
+            notificationAlertMode = notificationAlertMode
         ),
         OverlayStreamVolume(
             streamType = AudioManager.STREAM_VOICE_CALL,
@@ -425,7 +430,7 @@ private fun MainVolumePill(
     keepMediaAtEnd: Boolean,
     onStreamVolumeChange: (Int, Int) -> Unit,
     onStreamSelected: (VolumeTarget) -> Unit,
-    onMuteToggle: () -> Unit,
+    onMuteToggle: (Int) -> Unit,
     onExpandToggle: () -> Unit,
     onInteraction: () -> Unit
 ) {
@@ -479,11 +484,13 @@ private fun MainVolumePill(
                         onInteraction()
                         onStreamVolumeChange(stream.streamType, newVolume)
                     },
-                    onMediaMuteToggle = {
-                        if (isExpanded) onStreamSelected(VolumeTarget.MEDIA)
+                    onMuteToggle = {
+                        if (isExpanded) {
+                            onStreamSelected(VolumeTarget.fromStreamType(stream.streamType))
+                        }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onInteraction()
-                        onMuteToggle()
+                        onMuteToggle(stream.streamType)
                     },
                     modifier = Modifier
                         .offset(x = streamOffset)
@@ -526,7 +533,7 @@ private fun MainVolumePill(
 private fun StreamVolumeColumn(
     stream: OverlayStreamVolume,
     onVolumeChange: (Int) -> Unit,
-    onMediaMuteToggle: () -> Unit,
+    onMuteToggle: () -> Unit,
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -540,6 +547,8 @@ private fun StreamVolumeColumn(
         }
     }
     val isMediaStream = stream.streamType == AudioManager.STREAM_MUSIC
+    val isNotificationStream = stream.streamType == AudioManager.STREAM_NOTIFICATION
+    val supportsMuteToggle = isMediaStream || isNotificationStream
 
     Column(
         modifier = modifier
@@ -549,27 +558,34 @@ private fun StreamVolumeColumn(
     ) {
         IconButton(
             onClick = {
-                if (isMediaStream) {
-                    onMediaMuteToggle()
-                }
+                onMuteToggle()
             },
-            enabled = enabled,
+            enabled = enabled && supportsMuteToggle,
             modifier = Modifier.size(26.dp)
         ) {
-            Icon(
-                imageVector = if (isMediaStream) {
-                    if (stream.currentVolume == 0) {
+            when {
+                isMediaStream -> Icon(
+                    imageVector = if (stream.currentVolume == 0) {
                         Icons.AutoMirrored.Filled.VolumeOff
                     } else {
                         Icons.AutoMirrored.Filled.VolumeUp
-                    }
-                } else {
-                    stream.icon
-                },
-                contentDescription = if (isMediaStream) "Mute/Unmute" else stream.contentDescription,
-                tint = if (stream.currentVolume == 0) NothingColors.Red else NothingColors.White,
-                modifier = Modifier.size(18.dp)
-            )
+                    },
+                    contentDescription = "Mute or restore ${stream.contentDescription}",
+                    tint = if (stream.currentVolume == 0) NothingColors.Red else NothingColors.White,
+                    modifier = Modifier.size(18.dp)
+                )
+
+                isNotificationStream -> NotificationAlertIcon(
+                    mode = stream.notificationAlertMode ?: NotificationAlertMode.SOUND
+                )
+
+                else -> Icon(
+                    imageVector = stream.icon,
+                    contentDescription = stream.contentDescription,
+                    tint = NothingColors.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -606,6 +622,68 @@ private fun StreamVolumeColumn(
             tint = NothingColors.GreyMedium,
             modifier = Modifier.size(16.dp)
         )
+    }
+}
+
+@Composable
+private fun NotificationAlertIcon(mode: NotificationAlertMode) {
+    val tint = if (mode == NotificationAlertMode.MUTED) {
+        NothingColors.Red
+    } else {
+        NothingColors.GreyMedium
+    }
+    val description = when (mode) {
+        NotificationAlertMode.SOUND -> "Notifications use sound"
+        NotificationAlertMode.VIBRATE -> "Notifications vibrate only"
+        NotificationAlertMode.MUTED -> "Notifications are muted"
+    }
+
+    Box(
+        modifier = Modifier.size(22.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (mode == NotificationAlertMode.MUTED) {
+                Icons.Default.NotificationsOff
+            } else {
+                Icons.Default.Notifications
+            },
+            contentDescription = description,
+            tint = tint,
+            modifier = Modifier.size(18.dp)
+        )
+
+        if (mode == NotificationAlertMode.VIBRATE) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val stroke = 1.2.dp.toPx()
+                val short = size.height * 0.16f
+                val long = size.height * 0.30f
+                drawLine(
+                    color = tint,
+                    start = Offset(size.width * 0.13f, size.height * 0.34f),
+                    end = Offset(size.width * 0.04f, size.height * 0.34f + short),
+                    strokeWidth = stroke
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(size.width * 0.04f, size.height * 0.50f),
+                    end = Offset(size.width * 0.13f, size.height * 0.50f + short),
+                    strokeWidth = stroke
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(size.width * 0.87f, size.height * 0.35f),
+                    end = Offset(size.width * 0.96f, size.height * 0.35f + long / 2),
+                    strokeWidth = stroke
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(size.width * 0.96f, size.height * 0.50f),
+                    end = Offset(size.width * 0.87f, size.height * 0.50f + long / 2),
+                    strokeWidth = stroke
+                )
+            }
+        }
     }
 }
 
