@@ -40,6 +40,29 @@ class VolumeKeyRoutingPolicyTest {
         VolumeKeyRoutingPolicy.route(state(camera = true))
     )
 
+    @Test fun lockScreenIgnoresStalePackageStandDownButNotSafetyBypasses() {
+        assertEquals(
+            VolumeKeyRoute.INTERCEPT,
+            VolumeKeyRoutingPolicy.route(state(selected = setOf("com.example")).copy(keyguardLocked = true))
+        )
+        assertEquals(
+            VolumeKeyRoute.PASS_THROUGH,
+            VolumeKeyRoutingPolicy.route(state(camera = true).copy(keyguardLocked = true))
+        )
+        assertEquals(
+            VolumeKeyRoute.PASS_THROUGH,
+            VolumeKeyRoutingPolicy.route(state(pausedUntil = 2_000L).copy(keyguardLocked = true))
+        )
+    }
+
+    @Test fun remoteActionIsLatchedAcrossRouteChanges() {
+        val router = VolumeKeyStreamActionRouter()
+        val remote = VolumeKeyStreamAction.AdjustRemoteMedia(9L)
+        assertEquals(remote, router.onDown(24, 0) { remote })
+        assertEquals(remote, router.onDown(24, 1) { VolumeKeyStreamAction.PassThrough })
+        assertEquals(remote, router.onUp(24))
+    }
+
     @Test fun routeIsLatchedForWholePress() {
         val router = VolumeKeySequenceRouter()
         assertEquals(VolumeKeyRoute.PASS_THROUGH, router.onDown(24, 0) { VolumeKeyRoute.PASS_THROUGH })

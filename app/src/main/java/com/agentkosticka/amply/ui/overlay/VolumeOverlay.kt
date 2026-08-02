@@ -3,6 +3,7 @@ package com.agentkosticka.amply.ui.overlay
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.media.AudioManager
+import android.os.Process
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.RingVolume
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,9 +79,10 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.data.OverlayAppEntry
+import com.agentkosticka.amply.data.AppVolumeControlState
 import com.agentkosticka.amply.data.OverlaySide
 import com.agentkosticka.amply.audio.NotificationAlertMode
-import com.agentkosticka.amply.audio.FixedVolumeDotScale
+import com.agentkosticka.amply.audio.VolumeDotScale
 import com.agentkosticka.amply.audio.StreamIcon
 import com.agentkosticka.amply.audio.VolumeBarModel
 import com.agentkosticka.amply.audio.VolumeLimitFeedback
@@ -674,6 +677,8 @@ private fun StreamVolumeColumn(
             currentVolume = stream.currentVolume,
             minVolume = stream.minVolume,
             maxVolume = stream.maxVolume,
+            referenceMaxVolume = stream.referenceMaxVolume,
+            dotCount = stream.dotCount,
             onVolumeChange = onVolumeChange,
             enabled = enabled,
             limitFeedbackLevel = limitFeedback?.dotLevel,
@@ -874,7 +879,7 @@ private fun AmplyPanel(
         ) {
             itemsIndexed(
                 items = apps,
-                key = { _, app -> app.packageName },
+                key = { _, app -> app.identity.storageKey },
                 contentType = { _, _ -> "app-volume" }
             ) { index, app ->
                 Column {
@@ -958,7 +963,7 @@ private fun AppVolumeRow(
     app: OverlayAppEntry,
     onVolumeChange: (Float) -> Unit
 ) {
-    var localVolume by remember(app.packageName) { mutableFloatStateOf(app.volume) }
+    var localVolume by remember(app.identity) { mutableFloatStateOf(app.volume) }
     val appIconImage = remember(app.appIconBitmap) { app.appIconBitmap?.asImageBitmap() }
     LaunchedEffect(app.volume) {
         localVolume = app.volume
@@ -1027,19 +1032,46 @@ private fun AppVolumeRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                if (app.identity.userId != Process.myUid() / 100_000) {
+                    Text(
+                        text = "W",
+                        color = NothingColors.GreyMedium,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
 
-            Text(
-                text = "$volumePercent%",
-                color = if (volumePercent > 75) NothingColors.Red else NothingColors.GreyMedium,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (app.controlState == AppVolumeControlState.PARTIAL ||
+                    app.controlState == AppVolumeControlState.UNAVAILABLE
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = if (app.controlState == AppVolumeControlState.PARTIAL) {
+                            "Some players could not be controlled"
+                        } else {
+                            "Volume unavailable for this playback"
+                        },
+                        tint = if (app.controlState == AppVolumeControlState.UNAVAILABLE) {
+                            NothingColors.Red
+                        } else NothingColors.GreyMedium,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+                Text(
+                    text = "$volumePercent%",
+                    color = if (volumePercent > 75) NothingColors.Red else NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         HorizontalVolumeRail(
             volume = localVolume,
+            enabled = app.controlState != AppVolumeControlState.UNAVAILABLE,
             onVolumeChange = { newVolume ->
                 localVolume = newVolume
                 onVolumeChange(newVolume)
@@ -1056,12 +1088,13 @@ private fun AppVolumeRow(
 private fun HorizontalVolumeRail(
     volume: Float,
     onVolumeChange: (Float) -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Canvas(
         modifier = modifier
             .height(20.dp)
-            .pointerInput(Unit) {
+            .then(if (enabled) Modifier.pointerInput(Unit) {
                 detectHorizontalDragGestures { change, _ ->
                     change.consume()
                     val inset = 5.dp.toPx()
@@ -1069,15 +1102,15 @@ private fun HorizontalVolumeRail(
                     val newVolume = ((change.position.x - inset) / usableWidth).coerceIn(0f, 1f)
                     onVolumeChange(newVolume)
                 }
-            }
-            .pointerInput(Unit) {
+            } else Modifier)
+            .then(if (enabled) Modifier.pointerInput(Unit) {
                 detectTapGestures { offset ->
                     val inset = 5.dp.toPx()
                     val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
                     val newVolume = ((offset.x - inset) / usableWidth).coerceIn(0f, 1f)
                     onVolumeChange(newVolume)
                 }
-            }
+            } else Modifier)
     ) {
         val thumbRadius = 5.dp.toPx()
         val trackWidth = 4.dp.toPx()
@@ -1089,7 +1122,7 @@ private fun HorizontalVolumeRail(
         val centerY = size.height / 2f
 
         drawLine(
-            color = Color(0xFF444444),
+            color = if (enabled) Color(0xFF444444) else Color(0xFF303030),
             start = Offset(startX, centerY),
             end = Offset(endX, centerY),
             strokeWidth = trackWidth,
@@ -1097,7 +1130,7 @@ private fun HorizontalVolumeRail(
         )
         if (valueX > startX) {
             drawLine(
-                color = NothingColors.White,
+                color = if (enabled) NothingColors.White else NothingColors.GreyDim,
                 start = Offset(startX, centerY),
                 end = Offset(valueX.coerceAtMost(warningX), centerY),
                 strokeWidth = trackWidth,
@@ -1106,7 +1139,7 @@ private fun HorizontalVolumeRail(
         }
         if (valueX > warningX) {
             drawLine(
-                color = NothingColors.Red,
+                color = if (enabled) NothingColors.Red else NothingColors.GreyDim,
                 start = Offset(warningX, centerY),
                 end = Offset(valueX, centerY),
                 strokeWidth = trackWidth,
@@ -1114,7 +1147,7 @@ private fun HorizontalVolumeRail(
             )
         }
         drawCircle(
-            color = if (volume > 0.75f) NothingColors.Red else NothingColors.White,
+            color = if (!enabled) NothingColors.GreyDim else if (volume > 0.75f) NothingColors.Red else NothingColors.White,
             radius = thumbRadius,
             center = Offset(valueX, centerY)
         )
@@ -1129,13 +1162,14 @@ fun DraggableDotSlider(
     currentVolume: Int,
     minVolume: Int = 0,
     maxVolume: Int,
+    referenceMaxVolume: Int = maxVolume,
+    dotCount: Int = 16,
     onVolumeChange: (Int) -> Unit,
     enabled: Boolean = true,
     limitFeedbackLevel: Int? = null,
     limitFeedbackEventId: Long? = null,
     modifier: Modifier = Modifier
 ) {
-    val dotCount = FixedVolumeDotScale.MAX_LEVEL
     val rejectedDotShake = remember { Animatable(0f) }
 
     LaunchedEffect(limitFeedbackEventId) {
@@ -1161,7 +1195,7 @@ fun DraggableDotSlider(
             .then(
                 if (enabled) {
                     Modifier
-                        .pointerInput(minVolume, maxVolume) {
+                        .pointerInput(minVolume, maxVolume, referenceMaxVolume) {
                             var lastEmittedVolume: Int? = null
                             detectDragGestures(
                                 onDragStart = { lastEmittedVolume = null },
@@ -1170,10 +1204,11 @@ fun DraggableDotSlider(
                                     val y = change.position.y
                                     val height = size.height
                                     val percentage = 1f - (y / height).coerceIn(0f, 1f)
-                                    val newVolume = FixedVolumeDotScale.levelForFraction(
+                                    val newVolume = VolumeDotScale.levelForFraction(
                                         percentage,
                                         minVolume,
-                                        maxVolume
+                                        maxVolume,
+                                        referenceMaxVolume
                                     )
                                     if (newVolume != lastEmittedVolume) {
                                         lastEmittedVolume = newVolume
@@ -1182,15 +1217,16 @@ fun DraggableDotSlider(
                                 }
                             )
                         }
-                        .pointerInput(minVolume, maxVolume) {
+                        .pointerInput(minVolume, maxVolume, referenceMaxVolume) {
                             detectTapGestures { offset ->
                                 val y = offset.y
                                 val height = size.height
                                 val percentage = 1f - (y / height).coerceIn(0f, 1f)
-                                val newVolume = FixedVolumeDotScale.levelForFraction(
+                                val newVolume = VolumeDotScale.levelForFraction(
                                     percentage,
                                     minVolume,
-                                    maxVolume
+                                    maxVolume,
+                                    referenceMaxVolume
                                 )
                                 onVolumeChange(newVolume)
                             }
@@ -1200,9 +1236,14 @@ fun DraggableDotSlider(
                 }
             )
     ) {
-        val dotRadius = 3.5.dp.toPx()
-        val spacing = size.height / (dotCount - 1)
-        val filledDots = FixedVolumeDotScale.displayLevel(currentVolume)
+        val spacing = if (dotCount <= 1) 0f else size.height / (dotCount - 1)
+        val dotRadius = minOf(3.5.dp.toPx(), (spacing * 0.34f).coerceAtLeast(0.75.dp.toPx()))
+        val filledDots = VolumeDotScale.displayLevel(currentVolume, referenceMaxVolume, dotCount)
+        val projectedMin = VolumeDotScale.projectedLevel(
+            minVolume,
+            referenceMaxVolume,
+            dotCount
+        ).coerceAtLeast(1)
 
         for (i in 0 until dotCount) {
             val y = size.height - (i * spacing)
@@ -1214,7 +1255,13 @@ fun DraggableDotSlider(
             }
             val x = size.width / 2 + shakeX
             val dotPercentage = i.toFloat() / (dotCount - 1)
-            val available = FixedVolumeDotScale.isLevelAvailable(level, minVolume, maxVolume)
+            val available = VolumeDotScale.isLevelAvailable(
+                level,
+                minVolume,
+                maxVolume,
+                referenceMaxVolume,
+                dotCount
+            )
 
             val dotColor = when {
                 !enabled || !available -> Color(0xFF343434)
@@ -1229,7 +1276,7 @@ fun DraggableDotSlider(
                 radius = dotRadius,
                 center = Offset(x, y)
             )
-            if (enabled && minVolume > 0 && level == minVolume && available) {
+            if (enabled && minVolume > 0 && level == projectedMin && available) {
                 drawCircle(
                     color = NothingColors.GreyMedium.copy(alpha = 0.7f),
                     radius = dotRadius + 2.dp.toPx(),

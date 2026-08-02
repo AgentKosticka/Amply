@@ -31,11 +31,14 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.data.VolumeDotScaleConfig
 import com.agentkosticka.amply.audio.NotificationAlertMode
+import com.agentkosticka.amply.audio.MediaRouteVolumeState
 import com.agentkosticka.amply.audio.DynamicStreamState
 import com.agentkosticka.amply.audio.StreamMuteToggleController
 import com.agentkosticka.amply.audio.VolumeBarModel
 import com.agentkosticka.amply.audio.VolumeLimitFeedback
+import com.agentkosticka.amply.audio.VolumeLimitFeedbackPolicy
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.overlay.VolumeOverlay
@@ -95,6 +98,11 @@ internal object OverlayWindowPolicy {
         WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 }
 
+enum class OverlayPresentationMode {
+    NORMAL,
+    LOCK_SCREEN_SYSTEM_ONLY
+}
+
 /**
  * Manages the floating volume overlay using WindowManager
  * CRITICAL FIX: Self-contained lifecycle and proper window token management
@@ -118,6 +126,7 @@ object OverlayManager {
     private var managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var hideJob: Job? = null
     private var removeJob: Job? = null
+    private var volumeObservationJob: Job? = null
 
     // State - persists across hide/show cycles
     private val volumeBars = mutableStateOf<List<VolumeBarModel>>(emptyList())
@@ -126,11 +135,13 @@ object OverlayManager {
     private val volumeLimitFeedback = mutableStateOf<VolumeLimitFeedback?>(null)
     private var volumeLimitFeedbackSequence = 0L
     private val iconType = mutableStateOf("MUSIC")
+    private val mediaRouteVolumeState = mutableStateOf(MediaRouteVolumeState())
     private val currentApps = mutableStateOf<List<OverlayAppEntry>>(emptyList())
     private val appIconBitmapCache = LruCache<String, Bitmap>(32)
     private val currentOverlaySide = mutableStateOf(OverlaySide.LEFT)
     private val currentOverlayVerticalFraction = mutableFloatStateOf(0.5f)
     private val availableOverlayWidthDp = mutableFloatStateOf(0f)
+    private val volumeDotScaleConfig = mutableStateOf(VolumeDotScaleConfig())
     
     private val shizukuConnectionState = mutableStateOf(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     private val shizukuIcon = mutableStateOf<Bitmap?>(null)
@@ -143,8 +154,10 @@ object OverlayManager {
     private var onPauseAmplyCallback: (() -> Unit)? = null
     private var onNotificationModeToggleCallback: (() -> Unit)? = null
     private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
+    private var onRemoteMediaVolumeChangeCallback: ((Long, Int) -> Boolean)? = null
     private val overlayVisible = mutableStateOf(false)
     private var isOverlayExpanded = false
+    private var presentationMode = OverlayPresentationMode.NORMAL
 
     private val overlayContainer: FrameLayout?
         get() = overlayContainerRef?.get()
@@ -196,6 +209,26 @@ object OverlayManager {
         )
     }
 
+    fun signalVolumeLimit(target: VolumeTarget, isUp: Boolean) {
+        val bar = volumeBars.value.firstOrNull { it.target == target } ?: return
+        signalVolumeLimit(
+            target,
+            VolumeLimitFeedbackPolicy.rejectedDotLevel(
+                isUp = isUp,
+                min = bar.minVolume,
+                max = bar.maxVolume,
+                referenceMax = bar.referenceMaxVolume,
+                dotCount = bar.dotCount
+            )
+        )
+    }
+
+    fun updateVolumeDotScaleConfig(config: VolumeDotScaleConfig) {
+        if (volumeDotScaleConfig.value == config) return
+        volumeDotScaleConfig.value = config
+        refreshSystemStreamVolumes()
+    }
+
     fun setPauseAmplyCallback(callback: () -> Unit) {
         onPauseAmplyCallback = callback
     }
@@ -233,6 +266,11 @@ object OverlayManager {
         apps: List<OverlayAppEntry>,
         connectionState: VolumeServiceConnectionState
     ) {
+        if (presentationMode == OverlayPresentationMode.LOCK_SCREEN_SYSTEM_ONLY) {
+            currentApps.value = emptyList()
+            shizukuConnectionState.value = VolumeServiceConnectionState.CONNECTED
+            return
+        }
         currentApps.value = prepareAppIcons(apps)
         shizukuConnectionState.value = connectionState
     }
@@ -260,6 +298,24 @@ object OverlayManager {
         iconType.value = newIconType
     }
 
+    fun updateMediaRouteVolumeState(state: MediaRouteVolumeState) {
+        if (mediaRouteVolumeState.value == state) return
+        if (mediaRouteVolumeState.value.generation != state.generation) {
+            streamMuteToggleController.onVolumeChangedOutsideToggle(AudioManager.STREAM_MUSIC)
+        }
+        mediaRouteVolumeState.value = state
+        iconType.value = state.outputRoute.wireName
+        refreshSystemStreamVolumes()
+    }
+
+    fun setRemoteMediaVolumeCallback(callback: (Long, Int) -> Boolean) {
+        onRemoteMediaVolumeChangeCallback = callback
+    }
+
+    fun clearRemoteMediaVolumeCallback() {
+        onRemoteMediaVolumeChangeCallback = null
+    }
+
     /** Show or update the overlay using the latest package-level app entries. */
     fun show(
         context: Context,
@@ -269,6 +325,7 @@ object OverlayManager {
         connectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
         overlaySide: OverlaySide = OverlaySide.LEFT,
         overlayVerticalFraction: Float = 0.5f,
+        requestedPresentationMode: OverlayPresentationMode = OverlayPresentationMode.NORMAL,
         windowType: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
     ) {
         ensureManagerScope()
@@ -281,14 +338,26 @@ object OverlayManager {
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         }
 
+        if (overlayContainer != null && currentWindowType != windowType) {
+            removeOverlay()
+        }
+
+        val newAppearance = !overlayVisible.value
+        if (newAppearance) presentationMode = requestedPresentationMode
+
         // Update state
         updateAvailableOverlayWidth(context)
         refreshSystemStreamVolumes()
         streamMuteToggleController.onVolumeChangedOutsideToggle(selectedTarget.streamType)
         selectedVolumeTarget.value = selectedTarget
         iconType.value = newIconType
-        currentApps.value = prepareAppIcons(apps)
-        shizukuConnectionState.value = connectionState
+        if (presentationMode == OverlayPresentationMode.LOCK_SCREEN_SYSTEM_ONLY) {
+            currentApps.value = emptyList()
+            shizukuConnectionState.value = VolumeServiceConnectionState.CONNECTED
+        } else {
+            currentApps.value = prepareAppIcons(apps)
+            shizukuConnectionState.value = connectionState
+        }
         if (shizukuIcon.value == null) {
             shizukuIcon.value = runCatching {
                 context.packageManager
@@ -299,16 +368,13 @@ object OverlayManager {
         currentOverlaySide.value = overlaySide
         currentOverlayVerticalFraction.floatValue = overlayVerticalFraction.coerceIn(0f, 1f)
         
-        if (overlayContainer != null && currentWindowType != windowType) {
-            removeOverlay()
-        }
-
         if (overlayContainer == null) {
             createOverlay(context, windowType)
         } else {
             updateOverlayPosition(context)
         }
         overlayVisible.value = true
+        startVolumeObservation()
         onOverlayShownCallback?.invoke()
 
         // Reset auto-hide timer
@@ -452,6 +518,8 @@ object OverlayManager {
 
         val wasVisible = overlayVisible.value
         overlayVisible.value = false
+        volumeObservationJob?.cancel()
+        volumeObservationJob = null
         if (wasVisible) {
             onOverlayHiddenCallback?.invoke()
         }
@@ -483,23 +551,54 @@ object OverlayManager {
         composeView = null
         currentWindowType = null
         overlayVisible.value = false
+        volumeObservationJob?.cancel()
+        volumeObservationJob = null
         isOverlayExpanded = false
+        presentationMode = OverlayPresentationMode.NORMAL
         volumeLimitFeedback.value = null
         removeJob = null
     }
 
     private fun refreshSystemStreamVolumes() {
         val manager = audioManager ?: return
-        val state = dynamicStreamState.value
+        val updated = buildSystemStreamVolumes(
+            manager = manager,
+            state = dynamicStreamState.value,
+            routeState = mediaRouteVolumeState.value,
+            dotConfig = volumeDotScaleConfig.value
+        )
+        if (updated != volumeBars.value) volumeBars.value = updated
+    }
+
+    private fun buildSystemStreamVolumes(
+        manager: AudioManager,
+        state: DynamicStreamState,
+        routeState: MediaRouteVolumeState,
+        dotConfig: VolumeDotScaleConfig
+    ): List<VolumeBarModel> {
         val topology = state.topology
         val combinedRinger = topology.aliasesTogether(VolumeTarget.RING, VolumeTarget.NOTIFICATION)
-        volumeBars.value = state.visibleTargets().map { target ->
+        val deviceReferenceMax = VolumeTarget.entries.asSequence()
+            .filter { it.userAdjustable }
+            .mapNotNull { target -> runCatching { manager.getStreamMaxVolume(target.streamType) }.getOrNull() }
+            .maxOrNull()
+            ?.coerceAtLeast(1)
+            ?: 16
+        val resolvedDotCount = dotConfig.resolvedDotCount(deviceReferenceMax)
+        return state.visibleTargets().map { target ->
             val aliases = VolumeTarget.entries
                 .filter { topology.canonicalTarget(it) == target }
                 .mapTo(linkedSetOf()) { it.streamType }
-            val current = runCatching { manager.getStreamVolume(target.streamType) }.getOrDefault(0)
-            val min = runCatching { manager.getStreamMinVolume(target.streamType) }.getOrDefault(0)
-            val max = runCatching { manager.getStreamMaxVolume(target.streamType) }.getOrDefault(min)
+            val remoteMedia = routeState.takeIf {
+                target == VolumeTarget.MEDIA && it.isRemote && it.maxVolume > 0
+            }
+            val current = remoteMedia?.currentVolume
+                ?: runCatching { manager.getStreamVolume(target.streamType) }.getOrDefault(0)
+            val min = if (remoteMedia != null) 0 else {
+                runCatching { manager.getStreamMinVolume(target.streamType) }.getOrDefault(0)
+            }
+            val max = remoteMedia?.maxVolume
+                ?: runCatching { manager.getStreamMaxVolume(target.streamType) }.getOrDefault(min)
             val ringerControl = VolumeTarget.NOTIFICATION.streamType in aliases ||
                 VolumeTarget.RING.streamType in aliases
             VolumeBarModel(
@@ -510,12 +609,32 @@ object OverlayManager {
                 minVolume = min,
                 maxVolume = max,
                 active = target in state.activeTargets,
-                enabled = target.userAdjustable && target !in state.disabledTargets,
+                enabled = target.userAdjustable && target !in state.disabledTargets &&
+                    (remoteMedia == null || remoteMedia.variableVolume),
+                referenceMaxVolume = remoteMedia?.maxVolume ?: deviceReferenceMax,
+                dotCount = resolvedDotCount,
                 combinedRinger = combinedRinger && ringerControl,
                 notificationAlertMode = if (ringerControl) {
                     NotificationAlertMode.resolve(manager.ringerMode, current, min)
                 } else null
             )
+        }
+    }
+
+    private fun startVolumeObservation() {
+        if (volumeObservationJob?.isActive == true) return
+        volumeObservationJob = managerScope.launch {
+            while (isActive && overlayVisible.value) {
+                val manager = audioManager ?: break
+                val state = dynamicStreamState.value
+                val routeState = mediaRouteVolumeState.value
+                val dotConfig = volumeDotScaleConfig.value
+                val updated = withContext(Dispatchers.Default) {
+                    buildSystemStreamVolumes(manager, state, routeState, dotConfig)
+                }
+                if (updated != volumeBars.value) volumeBars.value = updated
+                delay(100L)
+            }
         }
     }
 
@@ -528,13 +647,24 @@ object OverlayManager {
         changedThroughMuteToggle: Boolean = false
     ) {
         val manager = audioManager ?: return
+        if (!changedThroughMuteToggle) {
+            streamMuteToggleController.onVolumeChangedOutsideToggle(streamType)
+        }
+        val remoteMedia = mediaRouteVolumeState.value.takeIf {
+            streamType == AudioManager.STREAM_MUSIC && it.isControllableRemote
+        }
+        if (remoteMedia != null) {
+            val clamped = newVolume.coerceIn(0, remoteMedia.maxVolume)
+            if (onRemoteMediaVolumeChangeCallback?.invoke(remoteMedia.generation, clamped) == true) {
+                mediaRouteVolumeState.value = remoteMedia.copy(currentVolume = clamped)
+                refreshSystemStreamVolume(streamType)
+            }
+            return
+        }
         val clampedVolume = newVolume.coerceIn(
             manager.getStreamMinVolume(streamType),
             manager.getStreamMaxVolume(streamType)
         )
-        if (!changedThroughMuteToggle) {
-            streamMuteToggleController.onVolumeChangedOutsideToggle(streamType)
-        }
         val target = VolumeTarget.findByStreamType(streamType) ?: return
         onSystemStreamVolumeChangeCallback?.invoke(target, clampedVolume)
             ?: runCatching { manager.setStreamVolume(streamType, clampedVolume, 0) }
@@ -550,7 +680,9 @@ object OverlayManager {
 
         val bar = bars[index]
         val canonicalStream = bar.target.streamType
-        val current = runCatching { manager.getStreamVolume(canonicalStream) }
+        val current = mediaRouteVolumeState.value.takeIf {
+            canonicalStream == AudioManager.STREAM_MUSIC && it.isControllableRemote
+        }?.currentVolume ?: runCatching { manager.getStreamVolume(canonicalStream) }
             .getOrDefault(bar.currentVolume)
         val ringerControl = VolumeTarget.NOTIFICATION.streamType in bar.aliases ||
             VolumeTarget.RING.streamType in bar.aliases
@@ -573,6 +705,8 @@ object OverlayManager {
         hideJob = null
         removeJob?.cancel()
         removeJob = null
+        volumeObservationJob?.cancel()
+        volumeObservationJob = null
         val wasVisible = overlayVisible.value
         overlayVisible.value = false
         if (wasVisible) onOverlayHiddenCallback?.invoke()
@@ -597,11 +731,14 @@ object OverlayManager {
             return
         }
         val manager = audioManager ?: return
+        val remoteMedia = mediaRouteVolumeState.value.takeIf {
+            streamType == AudioManager.STREAM_MUSIC && it.isControllableRemote
+        }
         val nextVolume = streamMuteToggleController.nextVolume(
             streamType = streamType,
-            currentVolume = manager.getStreamVolume(streamType),
-            minVolume = manager.getStreamMinVolume(streamType),
-            maxVolume = manager.getStreamMaxVolume(streamType)
+            currentVolume = remoteMedia?.currentVolume ?: manager.getStreamVolume(streamType),
+            minVolume = if (remoteMedia != null) 0 else manager.getStreamMinVolume(streamType),
+            maxVolume = remoteMedia?.maxVolume ?: manager.getStreamMaxVolume(streamType)
         )
         setStreamVolume(streamType, nextVolume, changedThroughMuteToggle = true)
     }
@@ -640,6 +777,7 @@ object OverlayManager {
     fun cleanup() {
         hideJob?.cancel()
         removeJob?.cancel()
+        volumeObservationJob?.cancel()
         if (overlayVisible.value) {
             onOverlayHiddenCallback?.invoke()
         }

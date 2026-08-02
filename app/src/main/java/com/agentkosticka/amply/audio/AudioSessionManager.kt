@@ -10,6 +10,9 @@ import android.util.LruCache
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
+import com.agentkosticka.amply.data.AppIdentity
+import com.agentkosticka.amply.data.AppVolumeApplyResult
+import com.agentkosticka.amply.data.AppVolumeControlState
 import com.agentkosticka.amply.data.OverlayAppEntry
 import com.agentkosticka.amply.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.ShizukuVolumeManager
@@ -66,6 +69,9 @@ class AudioSessionManager(
     val activePlaybackUsages: StateFlow<Set<Int>> = _activePlaybackUsages.asStateFlow()
     private val _activeSystemStreams = MutableStateFlow(ActiveSystemStreams())
     val activeSystemStreams: StateFlow<ActiveSystemStreams> = _activeSystemStreams.asStateFlow()
+    private val _appVolumeControlStates = MutableStateFlow<Map<AppIdentity, AppVolumeControlState>>(emptyMap())
+    val appVolumeControlStates: StateFlow<Map<AppIdentity, AppVolumeControlState>> =
+        _appVolumeControlStates.asStateFlow()
 
     private var refreshJob: Job? = null
     private var safetyRefreshJob: Job? = null
@@ -91,7 +97,8 @@ class AudioSessionManager(
     private val volumePersistJobs = ConcurrentHashMap<String, Job>()
     private val pendingVolumeUpdates = ConcurrentHashMap<String, VolumeUpdate>()
     @Volatile
-    private var appSettingsCache: Map<String, AppSettings> = emptyMap()
+    private var appSettingsCache: Map<AppIdentity, AppSettings> = emptyMap()
+    private var playerIdsByIdentity: Map<AppIdentity, Set<Int>> = emptyMap()
     private var appSettingsJob: Job? = null
 
     data class AppMetadata(
@@ -167,6 +174,7 @@ class AudioSessionManager(
                 .collect { state ->
                     if (state == VolumeServiceConnectionState.CONNECTED) {
                         appliedPlayerGains.clear()
+                        _appVolumeControlStates.value = emptyMap()
                         requestRefresh()
                     } else {
                         _activeSystemStreams.value = ActiveSystemStreams()
@@ -475,7 +483,7 @@ class AudioSessionManager(
     fun getDefaultOverlaySessions(): List<AudioSession> =
         compactSessionsByPackage(
             _sessionState.value.sessions
-            .filter { appSettingsCache[it.packageName]?.hiddenInOverlay != true }
+            .filter { appSettingsCache[it.identity]?.hiddenInOverlay != true }
         )
 
     fun getExpandedOverlaySessions(): List<AudioSession> =
@@ -484,30 +492,35 @@ class AudioSessionManager(
     fun getOverlayApps(
         foregroundVisitSession: AudioSession?,
         shizukuConnected: Boolean = shizukuVolumeManager.isConnected.value,
-        settings: Map<String, AppSettings> = appSettingsCache
+        settings: Map<AppIdentity, AppSettings> = appSettingsCache
     ): List<OverlayAppEntry> {
-        val activeByPackage = compactSessionsByPackage(_sessionState.value.sessions)
-            .associateBy { it.packageName }
+        val activeByIdentity = compactSessionsByPackage(_sessionState.value.sessions)
+            .associateBy { it.identity }
         return selectOverlayPackages(
             activeSessions = _sessionState.value.sessions,
             appSettings = settings,
             foregroundVisitSession = foregroundVisitSession,
             shizukuConnected = shizukuConnected
-        ).mapNotNull { packageName ->
-            val active = activeByPackage[packageName]
-            val setting = settings[packageName]
-            val foreground = foregroundVisitSession?.takeIf { it.packageName == packageName }
+        ).mapNotNull { identity ->
+            val active = activeByIdentity[identity]
+            val setting = settings[identity]
+            val foreground = foregroundVisitSession?.takeIf { it.identity == identity }
             if (active == null && setting == null && foreground == null) return@mapNotNull null
 
             OverlayAppEntry(
-                packageName = packageName,
+                packageName = identity.packageName,
                 uid = active?.uid ?: foreground?.uid ?: setting!!.uid,
                 appName = active?.appName ?: foreground?.appName ?: setting!!.appName,
                 appIcon = active?.appIcon ?: foreground?.appIcon ?: runCatching {
-                    packageManager.getApplicationIcon(packageName)
+                    packageManager.getApplicationIcon(identity.packageName)
                 }.getOrNull(),
                 volume = setting?.defaultVolume ?: active?.volume ?: foreground!!.volume,
-                isPlaying = active != null
+                isPlaying = active != null,
+                controlState = if (active == null) {
+                    AppVolumeControlState.SAVED_ONLY
+                } else {
+                    _appVolumeControlStates.value[identity] ?: AppVolumeControlState.ACTIVE
+                }
             )
         }
     }
@@ -538,7 +551,11 @@ class AudioSessionManager(
      * @param volume Volume level (0.0 to 1.0)
      */
     fun setSessionVolume(sessionId: Int, packageName: String?, volume: Float) {
-        val key = packageName?.takeIf { it.isNotBlank() } ?: "session:$sessionId"
+        val key = _sessionState.value.sessions.firstOrNull { it.sessionId == sessionId }
+            ?.identity
+            ?.storageKey
+            ?: packageName?.takeIf { it.isNotBlank() }
+            ?: "session:$sessionId"
         synchronized(pendingVolumeLock) {
             pendingVolumeUpdates[key] = VolumeUpdate(
                 sessionId = sessionId,
@@ -550,7 +567,6 @@ class AudioSessionManager(
     }
 
     private suspend fun applySessionVolume(sessionId: Int, packageName: String?, volume: Float) {
-        // Find the specific session to get its UID
         val activeSessions = _sessionState.value.sessions
         val targetSession = activeSessions.find { it.sessionId == sessionId }
             ?: packageName?.let { requestedPackage ->
@@ -559,46 +575,39 @@ class AudioSessionManager(
 
         if (targetSession != null) {
             val uid = targetSession.uid
+            val identity = targetSession.identity
             val targetPackage = packageName?.takeIf { it.isNotBlank() } ?: targetSession.packageName
-            val packageSessions = activeSessions.filter { it.packageName == targetPackage }
+            val packageSessions = activeSessions.filter { it.identity == identity }
             val targetSessions = packageSessions.ifEmpty {
                 activeSessions.filter { it.uid == uid }
             }
+            val previousVolume = targetSession.volume
+            val gain = toLogarithmicGain(volume)
+            val successfulIds = linkedSetOf<Int>()
 
-            updateLocalSessionVolume(targetPackage, uid, volume)
-            schedulePersistSessionVolume(targetSession, volume)
-
-            // ==============================================
-            // PRIMARY: Use ShizukuVolumeManager UserService
-            // ==============================================
             if (shizukuVolumeManager.isConnected.value) {
-                val gain = toLogarithmicGain(volume)
-                val results = targetSessions.map { session ->
-                    val success = shizukuVolumeManager.setPlayerVolume(session.sessionId, gain)
-                    if (success) {
+                targetSessions.forEach { session ->
+                    if (shizukuVolumeManager.setPlayerVolume(session.sessionId, gain)) {
+                        successfulIds += session.sessionId
                         appliedPlayerGains[session.sessionId] = gain
                     }
-                    success
                 }
-                if (results.any { it }) {
-                    return
-                } else {
-                    Log.w(TAG, "ShizukuVolumeManager failed, trying fallbacks...")
+            }
+            targetSessions.filterNot { it.sessionId in successfulIds }.forEach { session ->
+                if (playerVolumeController.setPlayerVolumeByPiid(session.sessionId, gain)) {
+                    successfulIds += session.sessionId
                 }
             }
 
-            // ==============================================
-            // FALLBACK 1: Use PlayerVolumeController (local reflection)
-            // ==============================================
-            val gain = toLogarithmicGain(volume)
-            val localSuccessCount = targetSessions.count { session ->
-                playerVolumeController.setPlayerVolumeByPiid(session.sessionId, gain)
+            val result = AppVolumeApplyResult(identity, targetSessions.size, successfulIds.size)
+            _appVolumeControlStates.value = _appVolumeControlStates.value + (identity to result.state)
+            if (successfulIds.isNotEmpty()) {
+                updateLocalSessionVolume(targetPackage, uid, volume)
+                schedulePersistSessionVolume(targetSession, volume)
+            } else {
+                updateLocalSessionVolume(targetPackage, uid, previousVolume)
+                Log.w(TAG, "No active player accepted per-app volume for $identity")
             }
-            if (localSuccessCount > 0) {
-                return
-            }
-
-            Log.w(TAG, "Volume update deferred while the privileged service reconnects")
         } else {
             Log.w(TAG, "Session $sessionId not active; persisting package-only volume for $packageName")
             if (!packageName.isNullOrBlank()) {
@@ -617,13 +626,13 @@ class AudioSessionManager(
             setSessionVolume(active.sessionId, packageName, volume)
         } else {
             managerScope.launch {
-                preferencesManager.setAppDefaultVolume(packageName, volume)
+                preferencesManager.setAppDefaultVolume(packageName, volume, active?.uid ?: -1)
             }
         }
     }
 
     fun setAppVolume(app: OverlayAppEntry, volume: Float) {
-        val active = _sessionState.value.sessions.firstOrNull { it.packageName == app.packageName }
+        val active = _sessionState.value.sessions.firstOrNull { it.identity == app.identity }
         if (active != null) {
             setSessionVolume(active.sessionId, app.packageName, volume)
         } else {
@@ -646,7 +655,7 @@ class AudioSessionManager(
         uidVolumeCache[uid] = volume
 
         val updatedSessions = _sessionState.value.sessions.map {
-            if (it.packageName == packageName || it.uid == uid) {
+            if (it.uid == uid) {
                 it.copy(volume = volume)
             } else {
                 it
@@ -703,16 +712,19 @@ class AudioSessionManager(
     }
 
     private fun getPersistedVolume(packageName: String, uid: Int): Float {
-        val persisted = appSettingsCache[packageName]?.defaultVolume ?: uidVolumeCache[uid] ?: 1.0f
+        val persisted = appSettingsCache[AppIdentity.fromUid(packageName, uid)]?.defaultVolume
+            ?: uidVolumeCache[uid]
+            ?: 1.0f
         uidVolumeCache[uid] = persisted
         return persisted
     }
 
     private fun recordSeenAppIfNeeded(packageName: String, appName: String, uid: Int, volume: Float) {
         val now = System.currentTimeMillis()
-        val lastWrite = seenAppWriteTimes[packageName] ?: 0L
+        val identityKey = AppIdentity.fromUid(packageName, uid).storageKey
+        val lastWrite = seenAppWriteTimes[identityKey] ?: 0L
         if (now - lastWrite < SEEN_APP_WRITE_INTERVAL_MS) return
-        seenAppWriteTimes[packageName] = now
+        seenAppWriteTimes[identityKey] = now
 
         managerScope.launch {
             preferencesManager.recordSeenApp(
@@ -726,11 +738,12 @@ class AudioSessionManager(
     }
 
     private fun schedulePersistSessionVolume(session: AudioSession, volume: Float) {
-        volumePersistJobs.remove(session.packageName)?.cancel()
-        volumePersistJobs[session.packageName] = managerScope.launch {
+        val identityKey = session.identity.storageKey
+        volumePersistJobs.remove(identityKey)?.cancel()
+        volumePersistJobs[identityKey] = managerScope.launch {
             delay(VOLUME_PERSIST_DEBOUNCE_MS)
             persistSessionVolume(session, volume)
-            volumePersistJobs.remove(session.packageName)
+            volumePersistJobs.remove(identityKey)
         }
     }
 
@@ -772,6 +785,15 @@ class AudioSessionManager(
         globalVolume: Int,
         maxVolume: Int
     ) {
+        val nextPlayerIds = sessions.groupBy { it.identity }
+            .mapValues { (_, values) -> values.mapTo(linkedSetOf()) { it.sessionId } }
+        val changedIdentities = (nextPlayerIds.keys + playerIdsByIdentity.keys).filterTo(linkedSetOf()) {
+            nextPlayerIds[it] != playerIdsByIdentity[it]
+        }
+        if (changedIdentities.isNotEmpty()) {
+            _appVolumeControlStates.value = _appVolumeControlStates.value - changedIdentities
+            playerIdsByIdentity = nextPlayerIds
+        }
         val current = _sessionState.value
         val sessionsChanged = current.sessions.size != sessions.size ||
             current.sessions.zip(sessions).any { (old, new) ->
@@ -794,10 +816,10 @@ class AudioSessionManager(
     }
 
     private fun compactSessionsByPackage(sessions: List<AudioSession>): List<AudioSession> {
-        val compacted = LinkedHashMap<String, AudioSession>()
+        val compacted = LinkedHashMap<AppIdentity, AudioSession>()
         sessions.forEach { session ->
-            val existing = compacted[session.packageName]
-            compacted[session.packageName] = existing?.copy(
+            val existing = compacted[session.identity]
+            compacted[session.identity] = existing?.copy(
                 volume = getPersistedVolume(existing.packageName, existing.uid),
                 lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, session.lastSeenTimestamp)
             )

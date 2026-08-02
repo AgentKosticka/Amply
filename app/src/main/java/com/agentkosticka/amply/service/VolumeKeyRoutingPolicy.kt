@@ -10,7 +10,8 @@ internal data class VolumeKeyRoutingState(
     val passThroughPackages: Set<String>,
     val pausedUntilEpochMs: Long,
     val cameraBypassActive: Boolean,
-    val nowEpochMs: Long
+    val nowEpochMs: Long,
+    val keyguardLocked: Boolean = false
 )
 
 internal object VolumeKeyRoutingPolicy {
@@ -21,6 +22,7 @@ internal object VolumeKeyRoutingPolicy {
         if (state.cameraBypassActive || state.pausedUntilEpochMs > state.nowEpochMs) {
             return VolumeKeyRoute.PASS_THROUGH
         }
+        if (state.keyguardLocked) return VolumeKeyRoute.INTERCEPT
         return if (state.foregroundPackage != null && state.foregroundPackage in state.passThroughPackages) {
             VolumeKeyRoute.PASS_THROUGH
         } else {

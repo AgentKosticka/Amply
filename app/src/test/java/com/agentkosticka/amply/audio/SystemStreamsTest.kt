@@ -1,6 +1,8 @@
 package com.agentkosticka.amply.audio
 
 import android.media.AudioAttributes
+import com.agentkosticka.amply.data.VolumeDotScaleConfig
+import com.agentkosticka.amply.data.VolumeDotScaleMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -108,12 +110,34 @@ class SystemStreamsTest {
 
     @Test
     fun fixedDotScaleMapsLevelsDirectlyAndClampsUnavailableEnds() {
-        assertEquals(0, FixedVolumeDotScale.levelForFraction(0f, min = 0, max = 16))
-        assertEquals(1, FixedVolumeDotScale.levelForFraction(0f, min = 1, max = 16))
-        assertEquals(15, FixedVolumeDotScale.levelForFraction(1f, min = 1, max = 15))
-        assertEquals(8, FixedVolumeDotScale.levelForFraction(0.5f, min = 1, max = 15))
-        assertFalse(FixedVolumeDotScale.isLevelAvailable(16, min = 1, max = 15))
-        assertTrue(FixedVolumeDotScale.isLevelAvailable(15, min = 1, max = 15))
+        assertEquals(0, VolumeDotScale.levelForFraction(0f, min = 0, max = 16, referenceMax = 16))
+        assertEquals(1, VolumeDotScale.levelForFraction(0f, min = 1, max = 16, referenceMax = 16))
+        assertEquals(15, VolumeDotScale.levelForFraction(1f, min = 1, max = 15, referenceMax = 16))
+        assertEquals(8, VolumeDotScale.levelForFraction(0.5f, min = 1, max = 15, referenceMax = 16))
+        assertFalse(VolumeDotScale.isLevelAvailable(16, min = 1, max = 15, referenceMax = 16, dotCount = 16))
+        assertTrue(VolumeDotScale.isLevelAvailable(15, min = 1, max = 15, referenceMax = 16, dotCount = 16))
+    }
+
+    @Test fun adaptiveDotScalePreservesNativeRangeAndProjectsBlockedEndpoints() {
+        assertEquals(15, VolumeDotScale.displayLevel(current = 30, referenceMax = 30, dotCount = 15))
+        assertEquals(30, VolumeDotScale.levelForFraction(1f, min = 1, max = 30, referenceMax = 30))
+        assertEquals(15, VolumeDotScale.levelForFraction(0.5f, min = 1, max = 30, referenceMax = 30))
+        assertEquals(1, VolumeDotScale.projectedLevel(1, referenceMax = 30, dotCount = 30))
+        assertFalse(
+            VolumeDotScale.isLevelAvailable(30, min = 1, max = 25, referenceMax = 30, dotCount = 30)
+        )
+    }
+
+    @Test fun autoDotsCapAtThirtyAndCustomDotsClampToSupportedRange() {
+        assertEquals(30, VolumeDotScaleConfig().resolvedDotCount(100))
+        assertEquals(
+            60,
+            VolumeDotScaleConfig(VolumeDotScaleMode.CUSTOM, customDotCount = 99).resolvedDotCount(16)
+        )
+        assertEquals(
+            4,
+            VolumeDotScaleConfig(VolumeDotScaleMode.CUSTOM, customDotCount = 1).resolvedDotCount(16)
+        )
     }
 
     @Test

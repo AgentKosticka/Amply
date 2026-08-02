@@ -270,28 +270,50 @@ data class VolumeBarModel(
     val maxVolume: Int,
     val active: Boolean,
     val enabled: Boolean,
+    val referenceMaxVolume: Int = maxVolume.coerceAtLeast(1),
+    val dotCount: Int = 16,
     val combinedRinger: Boolean = false,
     val notificationAlertMode: NotificationAlertMode? = null
 )
 
 /**
- * Amply's fixed Nothing-style volume scale. Level zero is represented by an
- * empty rail; the sixteen visible dots correspond directly to levels 1..16.
+ * Maps native stream indices onto the shared Nothing-style dot rail. Native
+ * values are never quantized by this model; only their visual representation is.
  */
-object FixedVolumeDotScale {
-    const val MAX_LEVEL = 16
+object VolumeDotScale {
+    fun displayLevel(current: Int, referenceMax: Int, dotCount: Int): Int =
+        ((current.coerceAtLeast(0).toFloat() / referenceMax.coerceAtLeast(1)) * dotCount)
+            .roundToInt()
+            .coerceIn(0, dotCount)
 
-    fun displayLevel(current: Int): Int = current.coerceIn(0, MAX_LEVEL)
-
-    fun levelForFraction(fraction: Float, min: Int, max: Int): Int {
-        val requested = (fraction.coerceIn(0f, 1f) * MAX_LEVEL).roundToInt()
-        val lower = min.coerceIn(0, MAX_LEVEL)
-        val upper = max.coerceIn(lower, MAX_LEVEL)
+    fun levelForFraction(
+        fraction: Float,
+        min: Int,
+        max: Int,
+        referenceMax: Int
+    ): Int {
+        val requested = (fraction.coerceIn(0f, 1f) * referenceMax.coerceAtLeast(1)).roundToInt()
+        val lower = min.coerceAtLeast(0)
+        val upper = max.coerceAtLeast(lower)
         return requested.coerceIn(lower, upper)
     }
 
-    fun isLevelAvailable(level: Int, min: Int, max: Int): Boolean =
-        level in 1..MAX_LEVEL && level in min..max
+    fun projectedLevel(nativeLevel: Int, referenceMax: Int, dotCount: Int): Int =
+        ((nativeLevel.coerceAtLeast(0).toFloat() / referenceMax.coerceAtLeast(1)) * dotCount)
+            .roundToInt()
+            .coerceIn(0, dotCount)
+
+    fun isLevelAvailable(
+        visualLevel: Int,
+        min: Int,
+        max: Int,
+        referenceMax: Int,
+        dotCount: Int
+    ): Boolean {
+        val projectedMin = projectedLevel(min, referenceMax, dotCount).coerceAtLeast(1)
+        val projectedMax = projectedLevel(max, referenceMax, dotCount)
+        return visualLevel in projectedMin..projectedMax
+    }
 }
 
 data class VolumeLimitFeedback(
@@ -301,10 +323,17 @@ data class VolumeLimitFeedback(
 )
 
 object VolumeLimitFeedbackPolicy {
-    fun rejectedDotLevel(isUp: Boolean, min: Int, max: Int): Int =
+    fun rejectedDotLevel(
+        isUp: Boolean,
+        min: Int,
+        max: Int,
+        referenceMax: Int = 16,
+        dotCount: Int = 16
+    ): Int =
         if (isUp) {
-            (max + 1).coerceIn(1, FixedVolumeDotScale.MAX_LEVEL)
+            (VolumeDotScale.projectedLevel(max, referenceMax, dotCount) + 1)
+                .coerceIn(1, dotCount)
         } else {
-            min.coerceIn(1, FixedVolumeDotScale.MAX_LEVEL)
+            VolumeDotScale.projectedLevel(min, referenceMax, dotCount).coerceIn(1, dotCount)
         }
 }

@@ -27,7 +27,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun SetupWizardScreen(
     viewModel: SetupViewModel,
-    onSetupComplete: () -> Unit
+    onSetupComplete: () -> Unit,
+    onRequestNotifications: () -> Unit = {}
 ) {
     val pagerState = rememberPagerState(pageCount = { 5 })
     val currentPage by viewModel.currentPage.collectAsState()
@@ -48,6 +49,7 @@ fun SetupWizardScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .background(NothingColors.Black)
     ) {
         HorizontalPager(
@@ -78,6 +80,7 @@ fun SetupWizardScreen(
                 )
                 4 -> SuccessSlide(
                     onFinish = {
+                        onRequestNotifications()
                         viewModel.completeSetup()
                         onSetupComplete()
                     }
@@ -387,7 +390,7 @@ fun SuccessSlide(onFinish: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Amply (1) is now ready to\nhijack your volume controls.",
+            text = "Amply (1) is now ready to\nhijack your volume controls.\n\nAndroid may next ask to show Amply's ongoing service status. This is optional.",
             style = MaterialTheme.typography.bodyLarge,
             color = NothingColors.GreyMedium,
             textAlign = TextAlign.Center

@@ -97,11 +97,15 @@ Android sends accessibility key callbacks before the foreground app, so Amply ca
 
 For intercepted keys, Amply automatically targets an active call, alarm, or recent notification before falling back to media volume. Incoming-call volume keys are passed to Android to silence the ringtone without showing Amply. Interacting with a stream while the pill is expanded makes it the active collapsed stream until the overlay hides; expanded stream order remains unchanged.
 
+Variable-volume Cast routes use the remote route's own volume and controls. Fixed or unsupported Cast routes are passed back to Android. On the lock screen Amply keeps its system-stream pill available but never renders per-app names or controls.
+
+The dot rail follows the device's native stream scale up to 30 dots by default, while preserving real stream minima and caps. The Pill tab can override the visual density without changing the native volume range.
+
 For one-off situations, expand Amply's pill and press the circular power button above it. Amply then passes volume keys through globally for the configured period (five minutes by default). The duration can be changed in settings, and **Restore now** re-enables Amply immediately.
 
 The pause duration can also be set to **Turn back on only manually**. This state persists until **Restore now** is selected, including after a reboot.
 
-The expanded overlay normally contains currently playing apps, pinned known-audio apps, and the foreground app after it produces audio during its current foreground visit. That foreground row remains available after playback stops, but leaving and returning to the app starts a new visit that must produce audio again. Hidden apps remain excluded in every case. If Shizuku disconnects, these controls are replaced with a compact disconnected indicator until the privileged service recovers.
+The expanded overlay normally contains currently playing apps, pinned known-audio apps, and the foreground app after it produces audio during its current foreground visit. That foreground row remains available after playback stops, but leaving and returning to the app starts a new visit that must produce audio again. Hidden apps remain excluded in every case. If Shizuku disconnects, these controls are replaced with a compact disconnected indicator until the privileged service recovers. Settings are profile-aware and can be exported, imported, reset, or cleaned from the Access tab.
 
 ---
 
@@ -155,7 +159,7 @@ AudioHQ requires root access and uses native AudioFlinger patches for volume con
 
 - Android Studio Hedgehog or newer
 - JDK 17 or higher
-- Android SDK 34
+- Android SDK 36 or newer
 
 ### Build Steps
 
@@ -169,7 +173,12 @@ cd amply-1
 
 # Build release APK
 ./gradlew assembleRelease
+
+# Compile the release-like overlay animation benchmark
+./gradlew :app:assembleBenchmark :benchmark:assembleBenchmark
 ```
+
+Run `:benchmark:connectedBenchmarkAndroidTest` on a physical device to measure rapid expand/collapse frame timing for empty, active-app, disconnected, and optional-stream states.
 
 APK output locations:
 - Debug: `app/build/outputs/apk/debug/app-debug.apk`

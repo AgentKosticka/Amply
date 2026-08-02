@@ -96,7 +96,8 @@ object NotificationModePolicy {
 class RingerExperimentExecutor(
     context: Context,
     private val shizukuVolumeManager: ShizukuVolumeManager,
-    private val shizukuRepository: ShizukuRepository
+    private val shizukuRepository: ShizukuRepository,
+    private val onMethodSelected: (RingerExperimentMethod) -> Unit = {}
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -122,7 +123,14 @@ class RingerExperimentExecutor(
 
     init { refresh() }
 
-    fun select(method: RingerExperimentMethod) { _selectedMethod.value = method }
+    fun select(method: RingerExperimentMethod) {
+        _selectedMethod.value = method
+        onMethodSelected(method)
+    }
+
+    fun restoreSelected(method: RingerExperimentMethod) {
+        _selectedMethod.value = method
+    }
 
     fun onPlaybackUsagesChanged(usages: Set<Int>) {
         activePlaybackUsages = usages

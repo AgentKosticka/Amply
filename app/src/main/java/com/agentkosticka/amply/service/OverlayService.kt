@@ -3,6 +3,7 @@ package com.agentkosticka.amply.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.KeyguardManager
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -163,6 +164,9 @@ class OverlayService : Service() {
                     }
                 },
                 serviceScope.launch {
+                    preferences.volumeDotScaleConfig.collect(OverlayManager::updateVolumeDotScaleConfig)
+                },
+                serviceScope.launch {
                     runtime.selectedVolumeTarget.collect { target ->
                         OverlayManager.updateSelectedVolumeTarget(target)
                     }
@@ -175,8 +179,9 @@ class OverlayService : Service() {
                         runtime.sessionState,
                         preferences.appSettings,
                         runtime.connectionState,
-                        runtime.foregroundVisitState
-                    ) { _, settings, connectionState, foregroundVisit ->
+                        runtime.foregroundVisitState,
+                        sessionManager.appVolumeControlStates
+                    ) { _, settings, connectionState, foregroundVisit, _ ->
                         connectionState to sessionManager.getOverlayApps(
                             foregroundVisitSession = foregroundVisit.lastAudioSession
                                 ?.takeIf { foregroundVisit.heardAudio },
@@ -229,7 +234,8 @@ class OverlayService : Service() {
             OverlayManager.dismissImmediatelyForScreenOff()
             return
         }
-        runtime.onForegroundPackageChanged(foregroundPackage)
+        val locked = getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        if (!locked) runtime.onForegroundPackageChanged(foregroundPackage)
 
         val sessionManager = runtime.audioSessionManager
         if (!OverlayManager.isShowing()) {
@@ -237,7 +243,7 @@ class OverlayService : Service() {
         }
         val connectionState = runtime.connectionState.value
         val foregroundVisit = runtime.foregroundVisitState.value
-        val apps = sessionManager.getOverlayApps(
+        val apps = if (locked) emptyList() else sessionManager.getOverlayApps(
             foregroundVisitSession = foregroundVisit.lastAudioSession
                 ?.takeIf { foregroundVisit.heardAudio },
             shizukuConnected = connectionState == com.agentkosticka.amply.shizuku.VolumeServiceConnectionState.CONNECTED
@@ -256,6 +262,11 @@ class OverlayService : Service() {
             connectionState = connectionState,
             overlaySide = overlaySide,
             overlayVerticalFraction = overlayVerticalFraction,
+            requestedPresentationMode = if (locked) {
+                OverlayPresentationMode.LOCK_SCREEN_SYSTEM_ONLY
+            } else {
+                OverlayPresentationMode.NORMAL
+            },
             windowType = windowType
         )
     }

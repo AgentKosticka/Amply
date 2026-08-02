@@ -18,7 +18,9 @@ data class SystemVolumeContext(
 
 sealed interface VolumeKeyStreamAction {
     data class Adjust(val target: VolumeTarget) : VolumeKeyStreamAction
+    data class AdjustRemoteMedia(val routeGeneration: Long) : VolumeKeyStreamAction
     data object SilenceIncomingRinger : VolumeKeyStreamAction
+    data object PassThrough : VolumeKeyStreamAction
 }
 
 internal object VolumeTargetPolicy {

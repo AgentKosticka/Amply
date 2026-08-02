@@ -8,6 +8,7 @@ import android.util.Log
 import com.agentkosticka.amply.audio.AudioSessionManager
 import com.agentkosticka.amply.audio.ForegroundVisitTracker
 import com.agentkosticka.amply.audio.RingerExperimentExecutor
+import com.agentkosticka.amply.audio.RingerExperimentMethod
 import com.agentkosticka.amply.audio.SystemStreamSessionController
 import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.audio.VolumeTargetSessionController
@@ -40,7 +41,12 @@ class AmplyRuntime(context: Context) {
     val shizukuRepository = ShizukuRepository(appContext)
     val shizukuVolumeManager = ShizukuVolumeManager(appContext.packageName)
     val ringerExperimentExecutor = RingerExperimentExecutor(
-        appContext, shizukuVolumeManager, shizukuRepository
+        appContext,
+        shizukuVolumeManager,
+        shizukuRepository,
+        onMethodSelected = { method ->
+            runtimeScope.launch { preferencesManager.setRingerMethod(method.name) }
+        }
     )
     val audioSessionManager = AudioSessionManager(
         context = appContext,
@@ -67,6 +73,17 @@ class AmplyRuntime(context: Context) {
 
     init {
         Log.i(TAG, "Creating process-owned Amply runtime")
+        runtimeScope.launch(Dispatchers.IO) {
+            runCatching { preferencesManager.pruneStaleApps(automatic = true) }
+                .onFailure { Log.w(TAG, "Automatic stale-app cleanup failed", it) }
+        }
+        runtimeScope.launch {
+            preferencesManager.ringerMethod.collect { stored ->
+                val method = runCatching { RingerExperimentMethod.valueOf(stored) }
+                    .getOrDefault(RingerExperimentMethod.SHIZUKU_INTERNAL_MODE)
+                ringerExperimentExecutor.restoreSelected(method)
+            }
+        }
         runtimeScope.launch {
             sessionState.collect { state ->
                 foregroundVisitTracker.onSessionsChanged(state.sessions)

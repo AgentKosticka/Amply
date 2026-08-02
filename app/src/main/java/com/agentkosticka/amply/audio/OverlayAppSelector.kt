@@ -1,23 +1,24 @@
 package com.agentkosticka.amply.audio
 
 import com.agentkosticka.amply.data.AppSettings
+import com.agentkosticka.amply.data.AppIdentity
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.OverlayAppMode
 
 internal fun selectOverlayPackages(
     activeSessions: List<AudioSession>,
-    appSettings: Map<String, AppSettings>,
+    appSettings: Map<AppIdentity, AppSettings>,
     foregroundVisitSession: AudioSession?,
     shizukuConnected: Boolean
-): List<String> {
+): List<AppIdentity> {
     if (!shizukuConnected) return emptyList()
 
-    val activePackages = activeSessions.mapTo(linkedSetOf()) { it.packageName }
+    val activeIdentities = activeSessions.mapTo(linkedSetOf()) { it.identity }
     val knownSettings = appSettings.values.filter { it.lastSeenTimestamp > 0L }
-    val result = linkedSetOf<String>()
+    val result = linkedSetOf<AppIdentity>()
 
     foregroundVisitSession
-        ?.packageName
+        ?.identity
         ?.takeIf { appSettings[it]?.overlayMode != OverlayAppMode.HIDDEN }
         ?.let(result::add)
 
@@ -25,9 +26,9 @@ internal fun selectOverlayPackages(
         .asSequence()
         .filter { it.overlayMode == OverlayAppMode.PINNED }
         .sortedBy { it.appName.lowercase() }
-        .mapTo(result) { it.packageName }
+        .mapTo(result) { it.identity }
 
-    activePackages
+    activeIdentities
         .filterTo(result) { appSettings[it]?.overlayMode != OverlayAppMode.HIDDEN }
 
     return result.toList()

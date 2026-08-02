@@ -1,12 +1,17 @@
 package com.agentkosticka.amply
 
+import android.Manifest
 import android.content.Intent
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationManager
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -47,12 +52,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var runtime: AmplyRuntime
     private val _appPermissionState = MutableStateFlow(AppPermissionState())
     private val appPermissionState = _appPermissionState.asStateFlow()
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { refreshPermissionState() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install splash screen BEFORE super.onCreate()
         installSplashScreen()
         
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
         runtime = (application as AmplyApplication).runtime
 
@@ -92,7 +101,8 @@ class MainActivity : ComponentActivity() {
                 viewModel = viewModel,
                 onSetupComplete = {
                     // Setup completed, will automatically switch to main screen
-                }
+                },
+                onRequestNotifications = { requestNotificationPermission() }
             )
         }
     }
@@ -105,7 +115,8 @@ class MainActivity : ComponentActivity() {
             appPermissionState = permissionState,
             onOverlayPermissionClick = { requestOverlayPermission() },
             onAccessibilityClick = { openAccessibilitySettings() },
-            onNotificationPolicyClick = { openNotificationPolicySettings() }
+            onNotificationPolicyClick = { openNotificationPolicySettings() },
+            onNotificationsClick = { requestNotificationPermission() }
         )
     }
 
@@ -125,7 +136,9 @@ class MainActivity : ComponentActivity() {
             overlayGranted = Settings.canDrawOverlays(this),
             volumeKeysGranted = volumeKeysGranted,
             notificationPolicyGranted = getSystemService(NotificationManager::class.java)
-                .isNotificationPolicyAccessGranted
+                .isNotificationPolicyAccessGranted,
+            notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         )
     }
 
@@ -206,6 +219,14 @@ class MainActivity : ComponentActivity() {
     private fun openNotificationPolicySettings() {
         runCatching {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        }
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 

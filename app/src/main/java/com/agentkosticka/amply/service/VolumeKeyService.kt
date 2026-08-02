@@ -3,6 +3,7 @@ package com.agentkosticka.amply.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.hardware.camera2.CameraManager
+import android.app.KeyguardManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -18,8 +19,9 @@ import com.agentkosticka.amply.audio.MediaOutputRoute
 import com.agentkosticka.amply.audio.MediaOutputRoutePolicy
 import com.agentkosticka.amply.audio.MediaRouteDeviceKind
 import com.agentkosticka.amply.audio.MediaRouteSnapshot
+import com.agentkosticka.amply.audio.MediaRouteVolumeState
+import com.agentkosticka.amply.audio.MediaVolumeActionPolicy
 import com.agentkosticka.amply.audio.VolumeKeyStreamAction
-import com.agentkosticka.amply.audio.VolumeLimitFeedbackPolicy
 import com.agentkosticka.amply.audio.VolumeTarget
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
@@ -79,6 +81,7 @@ class VolumeKeyService : AccessibilityService() {
     private var audioManager: AudioManager? = null
     private var mediaRouter: MediaRouter? = null
     private var cameraManager: CameraManager? = null
+    private var keyguardManager: KeyguardManager? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // Hold-to-repeat job
@@ -88,6 +91,10 @@ class VolumeKeyService : AccessibilityService() {
 
     // Current media output presentation for the large icon above the media bar.
     private var currentIconType = MediaOutputRoute.LOCAL.wireName
+    private var mediaRouteGeneration = 0L
+    private var currentMediaRouteInfo: MediaRouter.RouteInfo? = null
+    private var currentMediaRouteSignature: String? = null
+    private var currentMediaRouteVolumeState = MediaRouteVolumeState()
     private val mediaAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .build()
@@ -102,6 +109,7 @@ class VolumeKeyService : AccessibilityService() {
     private var passThroughPackages: Set<String> = emptySet()
     private var pausedUntilEpochMs: Long = 0L
     private var routingPreferencesJob: Job? = null
+    private lateinit var foregroundAppResolver: ForegroundAppResolver
 
     // Audio device callback for dynamic icon updates
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -111,7 +119,7 @@ class VolumeKeyService : AccessibilityService() {
             serviceScope.launch {
                 delay(300)
                 updateIconType()
-                showOverlay((application as AmplyApplication).runtime.selectedVolumeTarget.value)
+                if (OverlayManager.isShowing()) OverlayManager.refreshStreamVolumes()
             }
         }
 
@@ -143,6 +151,8 @@ class VolumeKeyService : AccessibilityService() {
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         mediaRouter = getSystemService(MEDIA_ROUTER_SERVICE) as MediaRouter
         cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
+        keyguardManager = getSystemService(KeyguardManager::class.java)
+        foregroundAppResolver = ForegroundAppResolver.fromPackageManager(packageManager, packageName)
 
         // Register audio device callback
         audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
@@ -155,6 +165,7 @@ class VolumeKeyService : AccessibilityService() {
 
         // Initial icon type detection
         updateIconType()
+        OverlayManager.setRemoteMediaVolumeCallback(::setRemoteRouteVolume)
 
         val preferences = (application as AmplyApplication).runtime.preferencesManager
         routingPreferencesJob = serviceScope.launch {
@@ -175,14 +186,19 @@ class VolumeKeyService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Phase 3.5: Track foreground app for Smart Focus
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val packageName = event.packageName?.toString()
-            if (!packageName.isNullOrBlank() && 
-                !packageName.startsWith("com.android.systemui") &&
-                !packageName.startsWith("com.nothing.systemui")) {
-                if (foregroundPackage != packageName) {
-                    foregroundPackage = packageName
+            val resolvedPackage = if (::foregroundAppResolver.isInitialized) {
+                foregroundAppResolver.resolve(
+                    ForegroundWindowCandidate(
+                        packageName = event.packageName?.toString(),
+                        className = event.className?.toString()
+                    )
+                )
+            } else null
+            if (resolvedPackage != null) {
+                if (foregroundPackage != resolvedPackage) {
+                    foregroundPackage = resolvedPackage
                     val runtime = (application as AmplyApplication).runtime
-                    runtime.onForegroundPackageChanged(packageName)
+                    runtime.onForegroundPackageChanged(resolvedPackage)
                     runtime.shizukuRepository.checkPermissionStateThrottled()
                 }
             }
@@ -219,6 +235,21 @@ class VolumeKeyService : AccessibilityService() {
                             handleVolumeKeyUp()
                             false
                         }
+                        VolumeKeyStreamAction.PassThrough -> {
+                            handleVolumeKeyUp()
+                            false
+                        }
+                        is VolumeKeyStreamAction.AdjustRemoteMedia -> {
+                            if (event.repeatCount == 0) {
+                                val applied = handleRemoteMediaKeyDown(isUp, action.routeGeneration)
+                                if (!applied) {
+                                    streamActionRouter.replace(event.keyCode, VolumeKeyStreamAction.PassThrough)
+                                }
+                                applied
+                            } else {
+                                true
+                            }
+                        }
                         is VolumeKeyStreamAction.Adjust -> {
                             if (event.repeatCount == 0) {
                                 val appliedTarget = handleVolumeKeyDown(isUp, action.target)
@@ -237,7 +268,8 @@ class VolumeKeyService : AccessibilityService() {
                 val streamAction = streamActionRouter.onUp(event.keyCode)
                 handleVolumeKeyUp()
                 route == VolumeKeyRoute.INTERCEPT &&
-                    streamAction != VolumeKeyStreamAction.SilenceIncomingRinger
+                    streamAction != VolumeKeyStreamAction.SilenceIncomingRinger &&
+                    streamAction != VolumeKeyStreamAction.PassThrough
             }
             else -> false
         }
@@ -263,6 +295,10 @@ class VolumeKeyService : AccessibilityService() {
         override fun onRouteChanged(router: MediaRouter, info: MediaRouter.RouteInfo) {
             updateIconType()
         }
+
+        override fun onRouteVolumeChanged(router: MediaRouter, info: MediaRouter.RouteInfo) {
+            updateIconType()
+        }
     }
 
     private fun currentRoute(): VolumeKeyRoute = VolumeKeyRoutingPolicy.route(
@@ -272,6 +308,7 @@ class VolumeKeyService : AccessibilityService() {
             passThroughPackages = passThroughPackages,
             pausedUntilEpochMs = pausedUntilEpochMs,
             cameraBypassActive = shouldBypassForCamera(),
+            keyguardLocked = keyguardManager?.isKeyguardLocked == true,
             nowEpochMs = System.currentTimeMillis()
         )
     )
@@ -337,7 +374,48 @@ class VolumeKeyService : AccessibilityService() {
         val manager = audioManager ?: return VolumeKeyStreamAction.Adjust(VolumeTarget.MEDIA)
         val runtime = (application as AmplyApplication).runtime
         runtime.onAudioModeObserved(manager.mode)
-        return runtime.volumeTargetSessionController.resolveForInitialKeyDown(manager.mode)
+        val automatic = runtime.volumeTargetSessionController.resolveForInitialKeyDown(manager.mode)
+        return MediaVolumeActionPolicy.resolve(automatic, currentMediaRouteVolumeState)
+    }
+
+    private fun handleRemoteMediaKeyDown(isUp: Boolean, generation: Long): Boolean {
+        repeatJob?.cancel()
+        if (!adjustRemoteMedia(isUp, generation)) return false
+        showOverlay(VolumeTarget.MEDIA)
+        repeatJob = serviceScope.launch {
+            delay(400L)
+            while (isActive && adjustRemoteMedia(isUp, generation)) {
+                delay(150L)
+            }
+        }
+        return true
+    }
+
+    private fun adjustRemoteMedia(isUp: Boolean, generation: Long): Boolean {
+        val state = currentMediaRouteVolumeState
+        val route = currentMediaRouteInfo
+        if (state.generation != generation || !state.isControllableRemote || route == null) return false
+        return runCatching {
+            route.requestUpdateVolume(if (isUp) 1 else -1)
+            val predicted = (state.currentVolume + if (isUp) 1 else -1)
+                .coerceIn(0, state.maxVolume)
+            currentMediaRouteVolumeState = state.copy(currentVolume = predicted)
+            OverlayManager.updateMediaRouteVolumeState(currentMediaRouteVolumeState)
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun setRemoteRouteVolume(generation: Long, volume: Int): Boolean {
+        val state = currentMediaRouteVolumeState
+        val route = currentMediaRouteInfo
+        if (state.generation != generation || !state.isControllableRemote || route == null) return false
+        return runCatching {
+            val clamped = volume.coerceIn(0, state.maxVolume)
+            route.requestSetVolume(clamped)
+            currentMediaRouteVolumeState = state.copy(currentVolume = clamped)
+            OverlayManager.updateMediaRouteVolumeState(currentMediaRouteVolumeState)
+            true
+        }.getOrDefault(false)
     }
 
     private fun changeVolumeWithFallback(isUp: Boolean, initialTarget: VolumeTarget): VolumeTarget {
@@ -348,7 +426,9 @@ class VolumeKeyService : AccessibilityService() {
             runtime.disableSystemStream(target)
             target = when (val fallback = resolveStreamAction()) {
                 is VolumeKeyStreamAction.Adjust -> fallback.target
-                VolumeKeyStreamAction.SilenceIncomingRinger -> return target
+                is VolumeKeyStreamAction.AdjustRemoteMedia,
+                VolumeKeyStreamAction.SilenceIncomingRinger,
+                VolumeKeyStreamAction.PassThrough -> return target
             }
         }
         return target
@@ -373,11 +453,7 @@ class VolumeKeyService : AccessibilityService() {
             showOverlay(target)
             OverlayManager.signalVolumeLimit(
                 target = target,
-                dotLevel = VolumeLimitFeedbackPolicy.rejectedDotLevel(
-                    isUp = isUp,
-                    min = minVolume,
-                    max = maxVolume
-                )
+                isUp = isUp
             )
             return true
         }
@@ -431,6 +507,23 @@ class VolumeKeyService : AccessibilityService() {
                     MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE
             )
         )
+        val routeSignature = selectedRoute?.toString()
+        if (routeSignature != currentMediaRouteSignature || route != currentMediaRouteVolumeState.outputRoute) {
+            mediaRouteGeneration += 1L
+        }
+        currentMediaRouteInfo = selectedRoute
+        currentMediaRouteSignature = routeSignature
+        val isVariable = route == MediaOutputRoute.CAST &&
+            selectedRoute?.playbackType == MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE &&
+            selectedRoute.volumeHandling == MediaRouter.RouteInfo.PLAYBACK_VOLUME_VARIABLE
+        currentMediaRouteVolumeState = MediaRouteVolumeState(
+            outputRoute = route,
+            generation = mediaRouteGeneration,
+            currentVolume = selectedRoute?.volume ?: 0,
+            maxVolume = selectedRoute?.volumeMax ?: 0,
+            variableVolume = isVariable
+        )
+        OverlayManager.updateMediaRouteVolumeState(currentMediaRouteVolumeState)
         if (currentIconType != route.wireName) {
             currentIconType = route.wireName
             OverlayManager.updateMediaIconType(route.wireName)
@@ -461,6 +554,7 @@ class VolumeKeyService : AccessibilityService() {
         // Unregister audio device callback
         audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback)
         mediaRouter?.removeCallback(mediaRouteCallback)
+        OverlayManager.clearRemoteMediaVolumeCallback()
         cameraManager?.unregisterAvailabilityCallback(cameraAvailabilityCallback)
         stopService(Intent(this, OverlayService::class.java))
         Log.d(TAG, "VolumeKeyService destroyed")

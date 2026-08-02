@@ -7,6 +7,33 @@ enum class MediaOutputRoute(val wireName: String) {
     CAST("CAST")
 }
 
+data class MediaRouteVolumeState(
+    val outputRoute: MediaOutputRoute = MediaOutputRoute.LOCAL,
+    val generation: Long = 0L,
+    val currentVolume: Int = 0,
+    val maxVolume: Int = 0,
+    val variableVolume: Boolean = false
+) {
+    val isRemote: Boolean get() = outputRoute == MediaOutputRoute.CAST
+    val isControllableRemote: Boolean get() = isRemote && variableVolume && maxVolume > 0
+}
+
+internal object MediaVolumeActionPolicy {
+    fun resolve(
+        automatic: VolumeKeyStreamAction,
+        route: MediaRouteVolumeState
+    ): VolumeKeyStreamAction {
+        if (automatic !is VolumeKeyStreamAction.Adjust || automatic.target != VolumeTarget.MEDIA ||
+            !route.isRemote
+        ) return automatic
+        return if (route.isControllableRemote) {
+            VolumeKeyStreamAction.AdjustRemoteMedia(route.generation)
+        } else {
+            VolumeKeyStreamAction.PassThrough
+        }
+    }
+}
+
 internal enum class MediaRouteDeviceKind {
     LOCAL,
     BLUETOOTH,

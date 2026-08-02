@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Amply"
 include(":app")
+include(":benchmark")

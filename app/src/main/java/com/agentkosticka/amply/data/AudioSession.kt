@@ -17,7 +17,30 @@ data class AudioSession(
     val streamType: Int,
     val volume: Float,
     val lastSeenTimestamp: Long
-)
+) {
+    val identity: AppIdentity get() = AppIdentity.fromUid(packageName, uid)
+}
+
+enum class AppVolumeControlState {
+    ACTIVE,
+    PARTIAL,
+    UNAVAILABLE,
+    SAVED_ONLY
+}
+
+data class AppVolumeApplyResult(
+    val identity: AppIdentity,
+    val attemptedPlayers: Int,
+    val successfulPlayers: Int
+) {
+    val state: AppVolumeControlState
+        get() = when {
+            attemptedPlayers == 0 -> AppVolumeControlState.SAVED_ONLY
+            successfulPlayers == 0 -> AppVolumeControlState.UNAVAILABLE
+            successfulPlayers < attemptedPlayers -> AppVolumeControlState.PARTIAL
+            else -> AppVolumeControlState.ACTIVE
+        }
+}
 
 /** Package-level row displayed in Amply's expanded overlay. */
 data class OverlayAppEntry(
@@ -27,8 +50,15 @@ data class OverlayAppEntry(
     val appIcon: Drawable?,
     val appIconBitmap: Bitmap? = null,
     val volume: Float,
-    val isPlaying: Boolean
-)
+    val isPlaying: Boolean,
+    val controlState: AppVolumeControlState = if (isPlaying) {
+        AppVolumeControlState.ACTIVE
+    } else {
+        AppVolumeControlState.SAVED_ONLY
+    }
+) {
+    val identity: AppIdentity get() = AppIdentity.fromUid(packageName, uid)
+}
 
 /**
  * Represents the current state of all audio sessions

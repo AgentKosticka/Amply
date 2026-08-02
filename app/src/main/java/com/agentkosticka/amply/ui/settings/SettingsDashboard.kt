@@ -3,6 +3,11 @@ package com.agentkosticka.amply.ui.settings
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.os.Process
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,6 +33,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -73,13 +80,19 @@ import com.agentkosticka.amply.R
 import com.agentkosticka.amply.data.AudioSession
 import com.agentkosticka.amply.data.AudioSessionState
 import com.agentkosticka.amply.data.AppSettings
+import com.agentkosticka.amply.data.AppIdentity
 import com.agentkosticka.amply.data.AppPermissionState
+import com.agentkosticka.amply.data.AppSettingsStoreHealth
+import com.agentkosticka.amply.data.SettingsImportPreview
 import com.agentkosticka.amply.data.AmplyPauseDuration
 import com.agentkosticka.amply.data.OverlayAppMode
 import com.agentkosticka.amply.data.OverlaySide
+import com.agentkosticka.amply.data.VolumeDotScaleConfig
+import com.agentkosticka.amply.data.VolumeDotScaleMode
 import com.agentkosticka.amply.audio.NotificationAlertMode
 import com.agentkosticka.amply.audio.RingerExperimentMethod
 import com.agentkosticka.amply.audio.RingerMethodTestResult
+import com.agentkosticka.amply.audio.VolumeTarget
 import com.agentkosticka.amply.shizuku.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -116,14 +129,20 @@ fun SettingsDashboard(
     appPermissionState: AppPermissionState,
     onOverlayPermissionClick: () -> Unit,
     onAccessibilityClick: () -> Unit,
-    onNotificationPolicyClick: () -> Unit
+    onNotificationPolicyClick: () -> Unit,
+    onNotificationsClick: () -> Unit
 ) {
     val context = LocalContext.current
     val preferences = runtime.preferencesManager
     val shizukuRepository = runtime.shizukuRepository
     val overlaySide by preferences.overlaySide.collectAsState(initial = OverlaySide.LEFT)
     val verticalFraction by preferences.overlayVerticalFraction.collectAsState(initial = 0.5f)
+    val dotScaleConfig by preferences.volumeDotScaleConfig.collectAsState(initial = VolumeDotScaleConfig())
     val appSettings by preferences.appSettings.collectAsState(initial = emptyMap())
+    val appSettingsStoreHealth by preferences.appSettingsStoreHealth.collectAsState(
+        initial = AppSettingsStoreHealth.HEALTHY
+    )
+    val passThroughPackages by preferences.volumeKeyPassThroughPackages.collectAsState(initial = emptySet())
     val pauseDuration by preferences.amplyPauseDuration.collectAsState(initial = AmplyPauseDuration.FIVE_MINUTES)
     val pausedUntil by preferences.amplyPausedUntilEpochMs.collectAsState(initial = 0L)
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
@@ -156,27 +175,67 @@ fun SettingsDashboard(
     var standDownSearch by rememberSaveable { mutableStateOf("") }
     var installedApps by remember { mutableStateOf<List<InstalledAppEntry>>(emptyList()) }
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var staleAppCount by remember { mutableStateOf(0) }
+    var pendingImportRaw by remember { mutableStateOf<String?>(null) }
+    var pendingImportPreview by remember { mutableStateOf<SettingsImportPreview?>(null) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
+    var showCleanupConfirmation by remember { mutableStateOf(false) }
 
-    val activeSessionsByPackage = sessionState.sessions.associateBy { it.packageName }
-    val activePackages = activeSessionsByPackage.keys
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                val raw = withContext(Dispatchers.IO) { preferences.exportSettings() }
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(raw) }
+                        ?: error("Could not open destination")
+                }
+            }.onSuccess {
+                Toast.makeText(context, "Settings exported", Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(context, "Export failed: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        ?: error("Could not open settings file")
+                }
+            }.onSuccess { raw ->
+                pendingImportRaw = raw
+                pendingImportPreview = preferences.previewImport(raw)
+            }.onFailure {
+                Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val activeSessionsByIdentity = sessionState.sessions.associateBy { it.identity }
+    val activeIdentities = activeSessionsByIdentity.keys
     val knownApps = mergeAppSettingsWithActiveSessions(appSettings, sessionState.sessions)
-        .filter { it.lastSeenTimestamp > 0L || it.packageName in activePackages }
+        .filter { it.lastSeenTimestamp > 0L || it.identity in activeIdentities }
         .filter {
             val query = appSearch.trim().lowercase()
             query.isEmpty() || query in it.appName.lowercase() || query in it.packageName.lowercase()
         }
-        .filter { appListMode == AppListMode.EXPANDED || it.packageName in activePackages }
+        .filter { appListMode == AppListMode.EXPANDED || it.identity in activeIdentities }
         .sortedWith(
             compareByDescending<AppSettings> { it.overlayMode == OverlayAppMode.PINNED }
-                .thenByDescending { it.packageName in activePackages }
+                .thenByDescending { it.identity in activeIdentities }
                 .thenBy { it.appName.lowercase() }
         )
-    val standDownApps = remember(installedApps, appSettings, standDownSearch) {
+    val standDownApps = remember(installedApps, passThroughPackages, standDownSearch) {
         val query = standDownSearch.trim().lowercase()
         installedApps
             .filter { query.isEmpty() || query in it.appName.lowercase() || query in it.packageName.lowercase() }
             .sortedWith(
-                compareByDescending<InstalledAppEntry> { appSettings[it.packageName]?.passVolumeKeysToApp == true }
+                compareByDescending<InstalledAppEntry> { it.packageName in passThroughPackages }
                     .thenBy { it.appName.lowercase() }
             )
     }
@@ -201,6 +260,9 @@ fun SettingsDashboard(
             currentTime = System.currentTimeMillis()
         }
     }
+    LaunchedEffect(appSettings) {
+        staleAppCount = withContext(Dispatchers.IO) { preferences.findStaleApps().size }
+    }
     DisposableEffect(Unit) {
         onDispose {
             inactiveVolumeSaveJobs.values.forEach(Job::cancel)
@@ -210,6 +272,7 @@ fun SettingsDashboard(
 
     Scaffold(
         containerColor = NothingColors.Black,
+        contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
             NavigationBar(containerColor = Color(0xFF151515)) {
                 SettingsTab.entries.forEach { tab ->
@@ -284,22 +347,24 @@ fun SettingsDashboard(
                             }
                         }
                     } else {
-                        items(knownApps, key = { "app-${it.packageName}" }) { app ->
+                        items(knownApps, key = { "app-${it.identity.storageKey}" }) { app ->
                             AppSettingsRow(
                                 app = app,
+                                onReset = { scope.launch { preferences.resetApp(app.identity) } },
                                 onOverlayModeChange = { mode ->
-                                    scope.launch { preferences.setAppOverlayMode(app.packageName, mode) }
+                                    scope.launch { preferences.setAppOverlayMode(app.packageName, mode, app.uid) }
                                 },
                                 onVolumeChange = { volume ->
-                                    val active = activeSessionsByPackage[app.packageName]
+                                    val active = activeSessionsByIdentity[app.identity]
                                     if (active != null) {
                                         runtime.audioSessionManager.setAppVolume(app.packageName, volume)
                                     } else {
-                                        inactiveVolumeSaveJobs.remove(app.packageName)?.cancel()
-                                        inactiveVolumeSaveJobs[app.packageName] = scope.launch {
+                                        val saveKey = app.identity.storageKey
+                                        inactiveVolumeSaveJobs.remove(saveKey)?.cancel()
+                                        inactiveVolumeSaveJobs[saveKey] = scope.launch {
                                             delay(300L)
-                                            preferences.setAppDefaultVolume(app.packageName, volume)
-                                            inactiveVolumeSaveJobs.remove(app.packageName)
+                                            preferences.setAppDefaultVolume(app.packageName, volume, app.uid)
+                                            inactiveVolumeSaveJobs.remove(saveKey)
                                         }
                                     }
                                 }
@@ -326,6 +391,14 @@ fun SettingsDashboard(
                                     preferences.setOverlayVerticalFraction(fraction)
                                 }
                             }
+                            Spacer(Modifier.height(20.dp))
+                            VolumeDotScalePanel(
+                                config = dotScaleConfig,
+                                deviceReferenceMax = remember(context) { deviceVolumeReference(context) },
+                                onChange = { config ->
+                                    scope.launch { preferences.setVolumeDotScale(config) }
+                                }
+                            )
                         }
                     }
                 }
@@ -361,7 +434,7 @@ fun SettingsDashboard(
                         items(standDownApps, key = { "stand-down-${it.packageName}" }) { app ->
                             StandDownAppRow(
                                 app,
-                                appSettings[app.packageName]?.passVolumeKeysToApp == true
+                                app.packageName in passThroughPackages
                             ) { enabled ->
                                 scope.launch {
                                     preferences.setPassVolumeKeysToApp(app.packageName, app.appName, app.uid, enabled)
@@ -433,6 +506,14 @@ fun SettingsDashboard(
                             appPermissionState.notificationPolicyGranted,
                             onNotificationPolicyClick
                         )
+                        Spacer(Modifier.height(10.dp))
+                        PermissionButton(
+                            "4",
+                            "NOTIFICATIONS",
+                            "Show Amply's foreground-service status",
+                            appPermissionState.notificationsGranted,
+                            onNotificationsClick
+                        )
                     }
                     item {
                         RingerExperimentPanel(
@@ -448,9 +529,143 @@ fun SettingsDashboard(
                             }
                         )
                     }
+                    item {
+                        SectionTitle("DATA & RECOVERY")
+                        Spacer(Modifier.height(10.dp))
+                        SettingsPanel {
+                            if (appSettingsStoreHealth != AppSettingsStoreHealth.HEALTHY) {
+                                Text(
+                                    if (appSettingsStoreHealth == AppSettingsStoreHealth.RECOVERED_FROM_BACKUP) {
+                                        "SETTINGS RECOVERED FROM BACKUP"
+                                    } else {
+                                        "APP SETTINGS NEED RECOVERY"
+                                    },
+                                    color = if (appSettingsStoreHealth == AppSettingsStoreHealth.CORRUPT) {
+                                        NothingColors.Red
+                                    } else NothingColors.GreyMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            MaintenanceButton("EXPORT SETTINGS") {
+                                exportLauncher.launch("amply-settings.json")
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            MaintenanceButton("IMPORT SETTINGS") {
+                                importLauncher.launch(arrayOf("application/json", "text/plain"))
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            MaintenanceButton("CLEAN STALE APPS · $staleAppCount") {
+                                if (staleAppCount > 0) showCleanupConfirmation = true
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            MaintenanceButton("RESET AMPLY", destructive = true) {
+                                showResetConfirmation = true
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    pendingImportPreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingImportRaw = null
+                pendingImportPreview = null
+            },
+            title = { Text(if (preview.valid) "IMPORT SETTINGS" else "INVALID SETTINGS FILE") },
+            text = {
+                Text(
+                    if (preview.valid) {
+                        "${preview.appCount} app records, ${preview.customizedAppCount} customized. Merge keeps other local app records; Replace removes them."
+                    } else preview.error.orEmpty()
+                )
+            },
+            confirmButton = {
+                if (preview.valid) TextButton(onClick = {
+                    val raw = pendingImportRaw ?: return@TextButton
+                    scope.launch {
+                        runCatching { preferences.importSettings(raw, replace = false) }
+                            .onSuccess { Toast.makeText(context, "Settings merged", Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                    }
+                    pendingImportRaw = null
+                    pendingImportPreview = null
+                }) { Text("MERGE", color = NothingColors.White) }
+            },
+            dismissButton = {
+                Row {
+                    if (preview.valid) TextButton(onClick = {
+                        val raw = pendingImportRaw ?: return@TextButton
+                        scope.launch {
+                            runCatching { preferences.importSettings(raw, replace = true) }
+                                .onSuccess { Toast.makeText(context, "Settings replaced", Toast.LENGTH_SHORT).show() }
+                                .onFailure { Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                        }
+                        pendingImportRaw = null
+                        pendingImportPreview = null
+                    }) { Text("REPLACE", color = NothingColors.Red) }
+                    TextButton(onClick = {
+                        pendingImportRaw = null
+                        pendingImportPreview = null
+                    }) { Text("CANCEL", color = NothingColors.GreyMedium) }
+                }
+            },
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = NothingColors.White,
+            textContentColor = NothingColors.GreyMedium
+        )
+    }
+
+    if (showCleanupConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showCleanupConfirmation = false },
+            title = { Text("REMOVE STALE APP DATA?") },
+            text = { Text("This removes $staleAppCount uninstalled app records, including customized records shown in this count.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        staleAppCount = withContext(Dispatchers.IO) {
+                            preferences.pruneStaleApps(automatic = false)
+                            preferences.findStaleApps().size
+                        }
+                    }
+                    showCleanupConfirmation = false
+                }) { Text("REMOVE", color = NothingColors.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCleanupConfirmation = false }) {
+                    Text("CANCEL", color = NothingColors.GreyMedium)
+                }
+            },
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = NothingColors.White,
+            textContentColor = NothingColors.GreyMedium
+        )
+    }
+
+    if (showResetConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmation = false },
+            title = { Text("RESET AMPLY?") },
+            text = { Text("Layout, volume behavior, app records, pins, stand-down choices, and pause settings return to defaults. Android permissions are not revoked.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { preferences.resetAllUserSettings() }
+                    showResetConfirmation = false
+                }) { Text("RESET", color = NothingColors.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirmation = false }) {
+                    Text("CANCEL", color = NothingColors.GreyMedium)
+                }
+            },
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = NothingColors.White,
+            textContentColor = NothingColors.GreyMedium
+        )
     }
 }
 
@@ -855,20 +1070,21 @@ private fun stablePackageOrder(
 }
 
 private fun mergeAppSettingsWithActiveSessions(
-    appSettings: Map<String, AppSettings>,
+    appSettings: Map<AppIdentity, AppSettings>,
     activeSessions: List<AudioSession>
 ): List<AppSettings> {
-    val merged = LinkedHashMap<String, AppSettings>()
+    val merged = LinkedHashMap<AppIdentity, AppSettings>()
     appSettings.values.forEach { setting ->
-        merged[setting.packageName] = setting
+        merged[setting.identity] = setting
     }
 
     activeSessions.forEach { session ->
-        val existing = merged[session.packageName]
-        merged[session.packageName] = AppSettings(
+        val existing = merged[session.identity]
+        merged[session.identity] = AppSettings(
             packageName = session.packageName,
             appName = session.appName,
             uid = session.uid,
+            userId = session.identity.userId,
             defaultVolume = existing?.defaultVolume ?: session.volume,
             overlayMode = existing?.overlayMode ?: OverlayAppMode.AUTO,
             passVolumeKeysToApp = existing?.passVolumeKeysToApp ?: false,
@@ -1029,6 +1245,25 @@ private fun SettingsPanel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
+private fun MaintenanceButton(
+    text: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().height(42.dp),
+        shape = RoundedCornerShape(13.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = DarkControlBackground,
+            contentColor = if (destructive) NothingColors.Red else NothingColors.White
+        )
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
 private fun PermissionButton(
     number: String,
     title: String,
@@ -1103,6 +1338,96 @@ private fun SideSelector(
             }
         }
     }
+}
+
+@Composable
+private fun VolumeDotScalePanel(
+    config: VolumeDotScaleConfig,
+    deviceReferenceMax: Int,
+    onChange: (VolumeDotScaleConfig) -> Unit
+) {
+    Text("VOLUME DOTS", color = NothingColors.White, style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(6.dp))
+    Text(
+        if (deviceReferenceMax <= 30) {
+            "Auto follows this device's 0–$deviceReferenceMax volume scale."
+        } else {
+            "This device has 0–$deviceReferenceMax steps; Auto maps them cleanly onto 30 dots."
+        },
+        color = NothingColors.GreyMedium,
+        style = MaterialTheme.typography.bodyMedium
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        VolumeDotModeButton(
+            text = "AUTO · ${deviceReferenceMax.coerceIn(1, 30)}",
+            active = config.mode == VolumeDotScaleMode.AUTO,
+            onClick = { onChange(config.copy(mode = VolumeDotScaleMode.AUTO)) },
+            modifier = Modifier.weight(1f)
+        )
+        VolumeDotModeButton(
+            text = "CUSTOM",
+            active = config.mode == VolumeDotScaleMode.CUSTOM,
+            onClick = { onChange(config.copy(mode = VolumeDotScaleMode.CUSTOM)) },
+            modifier = Modifier.weight(1f)
+        )
+    }
+    if (config.mode == VolumeDotScaleMode.CUSTOM) {
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            VolumeDotModeButton(
+                text = "−",
+                active = false,
+                onClick = { onChange(config.copy(customDotCount = (config.customDotCount - 1).coerceAtLeast(4))) }
+            )
+            Text(
+                "${config.customDotCount.coerceIn(4, 60)} DOTS",
+                color = NothingColors.White,
+                style = MaterialTheme.typography.labelLarge,
+                fontFamily = FontFamily.Monospace
+            )
+            VolumeDotModeButton(
+                text = "+",
+                active = false,
+                onClick = { onChange(config.copy(customDotCount = (config.customDotCount + 1).coerceAtMost(60))) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun VolumeDotModeButton(
+    text: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(40.dp),
+        shape = RoundedCornerShape(13.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (active) NothingColors.Red else DarkControlBackground,
+            contentColor = NothingColors.White
+        ),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+private fun deviceVolumeReference(context: Context): Int {
+    val manager = context.getSystemService(AudioManager::class.java)
+    return VolumeTarget.entries.asSequence()
+        .filter { it.userAdjustable }
+        .mapNotNull { target -> runCatching { manager.getStreamMaxVolume(target.streamType) }.getOrNull() }
+        .maxOrNull()
+        ?.coerceAtLeast(1)
+        ?: 16
 }
 
 @Composable
@@ -1193,11 +1518,12 @@ private fun PositionPreview(
 @Composable
 private fun AppSettingsRow(
     app: AppSettings,
+    onReset: () -> Unit,
     onOverlayModeChange: (OverlayAppMode) -> Unit,
     onVolumeChange: (Float) -> Unit
 ) {
     val context = LocalContext.current
-    var displayedVolume by remember(app.packageName) { mutableFloatStateOf(app.defaultVolume) }
+    var displayedVolume by remember(app.identity) { mutableFloatStateOf(app.defaultVolume) }
     LaunchedEffect(app.defaultVolume) {
         displayedVolume = app.defaultVolume
     }
@@ -1244,11 +1570,21 @@ private fun AppSettingsRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "$volumePercent%",
+                    text = if (app.userId == Process.myUid() / 100_000) {
+                        "$volumePercent%"
+                    } else {
+                        "$volumePercent% · PROFILE ${app.userId}"
+                    },
                     color = if (volumePercent > 80) NothingColors.Red else NothingColors.GreyMedium,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+
+            if (app.isCustomized) {
+                TextButton(onClick = onReset, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                    Text("RESET", color = NothingColors.GreyMedium, style = MaterialTheme.typography.labelSmall)
+                }
             }
 
         }
