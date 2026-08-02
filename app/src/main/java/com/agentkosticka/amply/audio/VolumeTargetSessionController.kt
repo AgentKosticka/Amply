@@ -7,8 +7,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+enum class CallPhase {
+    NONE,
+    INCOMING_RINGING,
+    OUTGOING_OR_ACTIVE,
+    UNKNOWN
+}
+
 data class SystemVolumeContext(
     val audioMode: Int = AudioManager.MODE_NORMAL,
+    val callPhase: CallPhase = CallPhase.UNKNOWN,
     val activeUsages: Set<Int> = emptySet(),
     val activeStreamTargets: Set<VolumeTarget> = emptySet(),
     val topology: StreamTopology = StreamTopology.UNKNOWN,
@@ -36,7 +44,8 @@ internal object VolumeTargetPolicy {
             return canonical.takeIf { it.userAdjustable && it !in context.disabledTargets }
         }
 
-        if (isActiveCallMode(context.audioMode) || context.activeUsages.any(::isCallUsage) ||
+        if (context.callPhase == CallPhase.OUTGOING_OR_ACTIVE ||
+            isActiveCallMode(context.audioMode) || context.activeUsages.any(::isCallUsage) ||
             active(VolumeTarget.BLUETOOTH_SCO) || active(VolumeTarget.CALL)
         ) {
             if (active(VolumeTarget.BLUETOOTH_SCO)) available(VolumeTarget.BLUETOOTH_SCO)?.let { return it }
@@ -66,7 +75,9 @@ internal object VolumeTargetPolicy {
         return available(VolumeTarget.MEDIA) ?: VolumeTarget.MEDIA
     }
 
-    fun isIncomingRinging(audioMode: Int): Boolean = audioMode == AudioManager.MODE_RINGTONE
+    fun isIncomingRinging(audioMode: Int, callPhase: CallPhase): Boolean =
+        callPhase == CallPhase.INCOMING_RINGING ||
+            (callPhase == CallPhase.UNKNOWN && audioMode == AudioManager.MODE_RINGTONE)
 
     fun isActiveCallMode(mode: Int): Boolean = when (mode) {
         AudioManager.MODE_IN_CALL,
@@ -147,9 +158,12 @@ class VolumeTargetSessionController(
     }
 
     @Synchronized
-    fun resolveForInitialKeyDown(audioMode: Int): VolumeKeyStreamAction {
-        context = context.copy(audioMode = audioMode)
-        if (VolumeTargetPolicy.isIncomingRinging(audioMode)) {
+    fun resolveForInitialKeyDown(
+        audioMode: Int,
+        callPhase: CallPhase = CallPhase.UNKNOWN
+    ): VolumeKeyStreamAction {
+        context = context.copy(audioMode = audioMode, callPhase = callPhase)
+        if (VolumeTargetPolicy.isIncomingRinging(audioMode, callPhase)) {
             return VolumeKeyStreamAction.SilenceIncomingRinger
         }
         val target = manualTarget ?: VolumeTargetPolicy.automaticTarget(context, clock())

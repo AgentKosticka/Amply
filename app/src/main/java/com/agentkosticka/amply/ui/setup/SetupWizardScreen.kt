@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 fun SetupWizardScreen(
     viewModel: SetupViewModel,
     onSetupComplete: () -> Unit,
-    onRequestNotifications: () -> Unit = {}
+    onRequestOptionalPermissions: () -> Unit = {}
 ) {
     val pagerState = rememberPagerState(pageCount = { 5 })
     val currentPage by viewModel.currentPage.collectAsState()
@@ -80,7 +80,7 @@ fun SetupWizardScreen(
                 )
                 4 -> SuccessSlide(
                     onFinish = {
-                        onRequestNotifications()
+                        onRequestOptionalPermissions()
                         viewModel.completeSetup()
                         onSetupComplete()
                     }
@@ -390,7 +390,7 @@ fun SuccessSlide(onFinish: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Amply (1) is now ready to\nhijack your volume controls.\n\nAndroid may next ask to show Amply's ongoing service status. This is optional.",
+            text = "Amply (1) is now ready to\nhijack your volume controls.\n\nAndroid may next ask for call state and notification access. Call state only distinguishes incoming from outgoing calls; Amply does not read call history or phone numbers.",
             style = MaterialTheme.typography.bodyLarge,
             color = NothingColors.GreyMedium,
             textAlign = TextAlign.Center

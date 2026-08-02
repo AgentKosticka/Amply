@@ -68,9 +68,51 @@ class VolumeTargetSessionControllerTest {
 
         assertEquals(
             VolumeKeyStreamAction.SilenceIncomingRinger,
-            controller.resolveForInitialKeyDown(AudioManager.MODE_RINGTONE)
+            controller.resolveForInitialKeyDown(
+                AudioManager.MODE_RINGTONE,
+                CallPhase.INCOMING_RINGING
+            )
         )
         assertEquals(VolumeTarget.ALARM, controller.selectedTarget.value)
+    }
+
+    @Test
+    fun outgoingDialingUsesCallStreamEvenWhenAudioModeLooksLikeRingtone() {
+        val controller = VolumeTargetSessionController { 1_000L }
+
+        assertEquals(
+            VolumeKeyStreamAction.Adjust(VolumeTarget.CALL),
+            controller.resolveForInitialKeyDown(
+                AudioManager.MODE_RINGTONE,
+                CallPhase.OUTGOING_OR_ACTIVE
+            )
+        )
+    }
+
+    @Test
+    fun grantedIdlePhoneStateDoesNotMisclassifyRingtonePreviewAsIncomingCall() {
+        val controller = VolumeTargetSessionController { 1_000L }
+
+        assertEquals(
+            VolumeKeyStreamAction.Adjust(VolumeTarget.MEDIA),
+            controller.resolveForInitialKeyDown(
+                AudioManager.MODE_RINGTONE,
+                CallPhase.NONE
+            )
+        )
+    }
+
+    @Test
+    fun unknownPhoneStatePreservesAudioModeIncomingFallback() {
+        val controller = VolumeTargetSessionController { 1_000L }
+
+        assertEquals(
+            VolumeKeyStreamAction.SilenceIncomingRinger,
+            controller.resolveForInitialKeyDown(
+                AudioManager.MODE_RINGTONE,
+                CallPhase.UNKNOWN
+            )
+        )
     }
 
     @Test

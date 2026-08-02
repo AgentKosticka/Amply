@@ -55,6 +55,16 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refreshPermissionState() }
+    private var requestNotificationsAfterPhoneState = false
+    private val phoneStatePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        refreshPermissionState()
+        if (requestNotificationsAfterPhoneState) {
+            requestNotificationsAfterPhoneState = false
+            requestNotificationPermission()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install splash screen BEFORE super.onCreate()
@@ -102,7 +112,7 @@ class MainActivity : ComponentActivity() {
                 onSetupComplete = {
                     // Setup completed, will automatically switch to main screen
                 },
-                onRequestNotifications = { requestNotificationPermission() }
+                onRequestOptionalPermissions = { requestSetupOptionalPermissions() }
             )
         }
     }
@@ -116,6 +126,7 @@ class MainActivity : ComponentActivity() {
             onOverlayPermissionClick = { requestOverlayPermission() },
             onAccessibilityClick = { openAccessibilitySettings() },
             onNotificationPolicyClick = { openNotificationPolicySettings() },
+            onPhoneStateClick = { requestPhoneStatePermission() },
             onNotificationsClick = { requestNotificationPermission() }
         )
     }
@@ -137,6 +148,8 @@ class MainActivity : ComponentActivity() {
             volumeKeysGranted = volumeKeysGranted,
             notificationPolicyGranted = getSystemService(NotificationManager::class.java)
                 .isNotificationPolicyAccessGranted,
+            phoneStateGranted = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
+                PackageManager.PERMISSION_GRANTED,
             notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         )
@@ -227,6 +240,25 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun requestPhoneStatePermission() {
+        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
+        }
+    }
+
+    private fun requestSetupOptionalPermissions() {
+        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotificationsAfterPhoneState = true
+            phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
+        } else {
+            requestNotificationPermission()
         }
     }
 

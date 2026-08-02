@@ -1,7 +1,9 @@
 package com.agentkosticka.amply.service
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.app.KeyguardManager
 import android.media.AudioAttributes
@@ -11,6 +13,7 @@ import android.media.AudioManager
 import android.media.MediaRouter
 import android.os.Build
 import android.os.SystemClock
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -21,6 +24,7 @@ import com.agentkosticka.amply.audio.MediaRouteDeviceKind
 import com.agentkosticka.amply.audio.MediaRouteSnapshot
 import com.agentkosticka.amply.audio.MediaRouteVolumeState
 import com.agentkosticka.amply.audio.MediaVolumeActionPolicy
+import com.agentkosticka.amply.audio.CallPhase
 import com.agentkosticka.amply.audio.VolumeKeyStreamAction
 import com.agentkosticka.amply.audio.VolumeTarget
 import kotlinx.coroutines.*
@@ -374,8 +378,28 @@ class VolumeKeyService : AccessibilityService() {
         val manager = audioManager ?: return VolumeKeyStreamAction.Adjust(VolumeTarget.MEDIA)
         val runtime = (application as AmplyApplication).runtime
         runtime.onAudioModeObserved(manager.mode)
-        val automatic = runtime.volumeTargetSessionController.resolveForInitialKeyDown(manager.mode)
+        val automatic = runtime.volumeTargetSessionController.resolveForInitialKeyDown(
+            audioMode = manager.mode,
+            callPhase = currentCallPhase()
+        )
         return MediaVolumeActionPolicy.resolve(automatic, currentMediaRouteVolumeState)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentCallPhase(): CallPhase {
+        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return CallPhase.UNKNOWN
+        }
+        return when (runCatching {
+            getSystemService(TelephonyManager::class.java).callState
+        }.getOrNull()) {
+            TelephonyManager.CALL_STATE_RINGING -> CallPhase.INCOMING_RINGING
+            TelephonyManager.CALL_STATE_OFFHOOK -> CallPhase.OUTGOING_OR_ACTIVE
+            TelephonyManager.CALL_STATE_IDLE -> CallPhase.NONE
+            else -> CallPhase.UNKNOWN
+        }
     }
 
     private fun handleRemoteMediaKeyDown(isUp: Boolean, generation: Long): Boolean {

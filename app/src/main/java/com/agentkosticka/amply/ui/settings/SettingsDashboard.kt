@@ -130,6 +130,7 @@ fun SettingsDashboard(
     onOverlayPermissionClick: () -> Unit,
     onAccessibilityClick: () -> Unit,
     onNotificationPolicyClick: () -> Unit,
+    onPhoneStateClick: () -> Unit,
     onNotificationsClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -509,6 +510,14 @@ fun SettingsDashboard(
                         Spacer(Modifier.height(10.dp))
                         PermissionButton(
                             "4",
+                            "CALL ROUTING",
+                            "Distinguish incoming and outgoing calls",
+                            appPermissionState.phoneStateGranted,
+                            onPhoneStateClick
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        PermissionButton(
+                            "5",
                             "NOTIFICATIONS",
                             "Show Amply's foreground-service status",
                             appPermissionState.notificationsGranted,
