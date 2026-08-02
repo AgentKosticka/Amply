@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -64,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -351,6 +353,7 @@ fun SettingsDashboard(
                         items(knownApps, key = { "app-${it.identity.storageKey}" }) { app ->
                             AppSettingsRow(
                                 app = app,
+                                isActive = app.identity in activeIdentities,
                                 onReset = { scope.launch { preferences.resetApp(app.identity) } },
                                 onOverlayModeChange = { mode ->
                                     scope.launch { preferences.setAppOverlayMode(app.packageName, mode, app.uid) }
@@ -371,6 +374,18 @@ fun SettingsDashboard(
                                 }
                             )
                         }
+                    }
+                    item {
+                        SectionTitle("APP DATA & RECOVERY")
+                        Spacer(Modifier.height(10.dp))
+                        DataRecoveryPanel(
+                            health = appSettingsStoreHealth,
+                            staleAppCount = staleAppCount,
+                            onExport = { exportLauncher.launch("amply-settings.json") },
+                            onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+                            onCleanup = { if (staleAppCount > 0) showCleanupConfirmation = true },
+                            onReset = { showResetConfirmation = true }
+                        )
                     }
                 }
 
@@ -502,14 +517,6 @@ fun SettingsDashboard(
                         Spacer(Modifier.height(10.dp))
                         PermissionButton(
                             "3",
-                            "NOTIFICATION MODES",
-                            "Allow silent-mode changes",
-                            appPermissionState.notificationPolicyGranted,
-                            onNotificationPolicyClick
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        PermissionButton(
-                            "4",
                             "CALL ROUTING",
                             "Distinguish incoming and outgoing calls",
                             appPermissionState.phoneStateGranted,
@@ -517,7 +524,7 @@ fun SettingsDashboard(
                         )
                         Spacer(Modifier.height(10.dp))
                         PermissionButton(
-                            "5",
+                            "4",
                             "NOTIFICATIONS",
                             "Show Amply's foreground-service status",
                             appPermissionState.notificationsGranted,
@@ -532,46 +539,13 @@ fun SettingsDashboard(
                             runningMethod = runningExperiment,
                             busy = experimentBusy,
                             shizukuConnected = connectionState == VolumeServiceConnectionState.CONNECTED,
+                            notificationPolicyGranted = appPermissionState.notificationPolicyGranted,
+                            onNotificationPolicyClick = onNotificationPolicyClick,
                             onSelect = runtime.ringerExperimentExecutor::select,
                             onTest = { method ->
                                 scope.launch { runtime.ringerExperimentExecutor.testAllTransitions(method) }
                             }
                         )
-                    }
-                    item {
-                        SectionTitle("DATA & RECOVERY")
-                        Spacer(Modifier.height(10.dp))
-                        SettingsPanel {
-                            if (appSettingsStoreHealth != AppSettingsStoreHealth.HEALTHY) {
-                                Text(
-                                    if (appSettingsStoreHealth == AppSettingsStoreHealth.RECOVERED_FROM_BACKUP) {
-                                        "SETTINGS RECOVERED FROM BACKUP"
-                                    } else {
-                                        "APP SETTINGS NEED RECOVERY"
-                                    },
-                                    color = if (appSettingsStoreHealth == AppSettingsStoreHealth.CORRUPT) {
-                                        NothingColors.Red
-                                    } else NothingColors.GreyMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(Modifier.height(8.dp))
-                            }
-                            MaintenanceButton("EXPORT SETTINGS") {
-                                exportLauncher.launch("amply-settings.json")
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            MaintenanceButton("IMPORT SETTINGS") {
-                                importLauncher.launch(arrayOf("application/json", "text/plain"))
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            MaintenanceButton("CLEAN STALE APPS · $staleAppCount") {
-                                if (staleAppCount > 0) showCleanupConfirmation = true
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            MaintenanceButton("RESET AMPLY", destructive = true) {
-                                showResetConfirmation = true
-                            }
-                        }
                     }
                 }
             }
@@ -686,6 +660,8 @@ private fun RingerExperimentPanel(
     runningMethod: RingerExperimentMethod?,
     busy: Boolean,
     shizukuConnected: Boolean,
+    notificationPolicyGranted: Boolean,
+    onNotificationPolicyClick: () -> Unit,
     onSelect: (RingerExperimentMethod) -> Unit,
     onTest: (RingerExperimentMethod) -> Unit
 ) {
@@ -714,6 +690,10 @@ private fun RingerExperimentPanel(
         }
 
         if (expanded) {
+            CompatibilityPermissionRow(
+                granted = notificationPolicyGranted,
+                onClick = onNotificationPolicyClick
+            )
             SettingsPanel {
                 Row(
                     verticalAlignment = Alignment.Top,
@@ -835,6 +815,61 @@ private fun RingerExperimentPanel(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompatibilityPermissionRow(
+    granted: Boolean,
+    onClick: () -> Unit
+) {
+    SettingsPanel {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .background(
+                        if (granted) NothingColors.GreyMedium else NothingColors.Red,
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = null,
+                    tint = NothingColors.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "NOTIFICATION MODES",
+                    color = NothingColors.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Only needed by alternate methods; E7 does not require it",
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (granted) {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = "Granted",
+                    tint = NothingColors.GreyMedium,
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
     }
@@ -1254,6 +1289,56 @@ private fun SettingsPanel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
+private fun DataRecoveryPanel(
+    health: AppSettingsStoreHealth,
+    staleAppCount: Int,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    onCleanup: () -> Unit,
+    onReset: () -> Unit
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    SettingsPanel {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("SETTINGS STORAGE", color = NothingColors.White, fontWeight = FontWeight.Bold)
+                Text(
+                    text = when (health) {
+                        AppSettingsStoreHealth.HEALTHY -> "Export, import, clean up, or reset"
+                        AppSettingsStoreHealth.RECOVERED_FROM_BACKUP -> "Recovered from a previous-good backup"
+                        AppSettingsStoreHealth.CORRUPT -> "App settings need recovery"
+                    },
+                    color = if (health == AppSettingsStoreHealth.CORRUPT) NothingColors.Red else NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = if (expanded) "Hide data tools" else "Show data tools",
+                tint = NothingColors.GreyMedium,
+                modifier = Modifier.rotate(if (expanded) 180f else 0f)
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(14.dp))
+            MaintenanceButton("EXPORT SETTINGS", onClick = onExport)
+            Spacer(Modifier.height(8.dp))
+            MaintenanceButton("IMPORT SETTINGS", onClick = onImport)
+            Spacer(Modifier.height(8.dp))
+            MaintenanceButton("CLEAN STALE APPS · $staleAppCount", onClick = onCleanup)
+            Spacer(Modifier.height(8.dp))
+            MaintenanceButton("RESET AMPLY", destructive = true, onClick = onReset)
+        }
+    }
+}
+
+@Composable
 private fun MaintenanceButton(
     text: String,
     destructive: Boolean = false,
@@ -1527,6 +1612,7 @@ private fun PositionPreview(
 @Composable
 private fun AppSettingsRow(
     app: AppSettings,
+    isActive: Boolean,
     onReset: () -> Unit,
     onOverlayModeChange: (OverlayAppMode) -> Unit,
     onVolumeChange: (Float) -> Unit
@@ -1545,23 +1631,28 @@ private fun AppSettingsRow(
     }
     val volumePercent = (displayedVolume * 100).roundToInt()
 
-    SettingsPanel {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1C1C1C), RoundedCornerShape(27.dp))
+            .padding(horizontal = 16.dp, vertical = 15.dp)
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .background(Color(0xFF303030), RoundedCornerShape(10.dp)),
+                    .size(40.dp)
+                    .background(Color(0xFF303030), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 icon?.let {
                     Image(
                         bitmap = it.toBitmap(72, 72).asImageBitmap(),
                         contentDescription = app.appName,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(32.dp)
                     )
                 } ?: Icon(
                     imageVector = Icons.Default.MusicNote,
@@ -1571,24 +1662,41 @@ private fun AppSettingsRow(
             }
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = app.appName,
-                    color = NothingColors.White,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = if (app.userId == Process.myUid() / 100_000) {
-                        "$volumePercent%"
-                    } else {
-                        "$volumePercent% · PROFILE ${app.userId}"
-                    },
-                    color = if (volumePercent > 80) NothingColors.Red else NothingColors.GreyMedium,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = app.appName,
+                        color = NothingColors.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isActive) {
+                        Spacer(Modifier.width(7.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .background(NothingColors.Red, CircleShape)
+                        )
+                    }
+                }
+                if (app.userId != Process.myUid() / 100_000) {
+                    Text(
+                        text = "PROFILE ${app.userId}",
+                        color = NothingColors.GreyMedium,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
+
+            Text(
+                text = "$volumePercent%",
+                color = if (volumePercent > 75) NothingColors.Red else NothingColors.White,
+                style = MaterialTheme.typography.labelLarge,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            )
 
             if (app.isCustomized) {
                 TextButton(onClick = onReset, contentPadding = PaddingValues(horizontal = 6.dp)) {
@@ -1598,22 +1706,22 @@ private fun AppSettingsRow(
 
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
-        OverlayModeSelector(
-            selected = app.overlayMode,
-            onSelected = onOverlayModeChange
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        DotVolumeSlider(
+        AppVolumeRail(
             volume = displayedVolume,
             onVolumeChange = { volume ->
                 displayedVolume = volume
                 onVolumeChange(volume)
             },
             modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        OverlayModeSelector(
+            selected = app.overlayMode,
+            onSelected = onOverlayModeChange
         )
     }
 }
@@ -1664,40 +1772,69 @@ private fun VisibilityButton(
 }
 
 @Composable
-private fun DotVolumeSlider(
+private fun AppVolumeRail(
     volume: Float,
     onVolumeChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dotCount = 18
     Canvas(
         modifier = modifier
-            .height(24.dp)
+            .height(20.dp)
             .pointerInput(Unit) {
-                detectDragGestures { change, _ ->
+                detectHorizontalDragGestures { change, _ ->
                     change.consume()
-                    onVolumeChange((change.position.x / size.width.toFloat()).coerceIn(0f, 1f))
+                    val inset = 5.dp.toPx()
+                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                    onVolumeChange(((change.position.x - inset) / usableWidth).coerceIn(0f, 1f))
                 }
             }
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    onVolumeChange((offset.x / size.width.toFloat()).coerceIn(0f, 1f))
+                    val inset = 5.dp.toPx()
+                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                    onVolumeChange(((offset.x - inset) / usableWidth).coerceIn(0f, 1f))
                 }
             }
     ) {
-        val spacing = size.width / (dotCount - 1)
-        val filledDots = (volume * dotCount).roundToInt()
-        for (i in 0 until dotCount) {
-            val dotPercentage = i.toFloat() / (dotCount - 1)
-            drawCircle(
-                color = when {
-                    i < filledDots && dotPercentage > 0.75f -> NothingColors.Red
-                    i < filledDots -> NothingColors.White
-                    else -> Color(0xFF444444)
-                },
-                radius = 3.dp.toPx(),
-                center = Offset(i * spacing, size.height / 2f)
+        val level = volume.coerceIn(0f, 1f)
+        val thumbRadius = 5.dp.toPx()
+        val trackWidth = 4.dp.toPx()
+        val startX = thumbRadius
+        val endX = size.width - thumbRadius
+        val usableWidth = (endX - startX).coerceAtLeast(1f)
+        val valueX = startX + usableWidth * level
+        val warningX = startX + usableWidth * 0.75f
+        val centerY = size.height / 2f
+
+        drawLine(
+            color = Color(0xFF3A3A3A),
+            start = Offset(startX, centerY),
+            end = Offset(endX, centerY),
+            strokeWidth = trackWidth,
+            cap = StrokeCap.Round
+        )
+        if (valueX > startX) {
+            drawLine(
+                color = NothingColors.White,
+                start = Offset(startX, centerY),
+                end = Offset(valueX.coerceAtMost(warningX), centerY),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round
             )
         }
+        if (level > 0.75f) {
+            drawLine(
+                color = NothingColors.Red,
+                start = Offset(warningX, centerY),
+                end = Offset(valueX, centerY),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round
+            )
+        }
+        drawCircle(
+            color = if (level > 0.75f) NothingColors.Red else NothingColors.White,
+            radius = thumbRadius,
+            center = Offset(valueX, centerY)
+        )
     }
 }
