@@ -4,11 +4,13 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Bitmap
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.util.LruCache
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.runtime.Recomposer
@@ -494,6 +496,11 @@ object OverlayManager {
         try {
             windowManager?.addView(container, params)
             currentWindowType = windowType
+            // On API 29 the final system/cutout insets are only reliable after the
+            // overlay is attached. Re-apply once to avoid an oversized first frame.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                container.post { updateOverlayPosition(context) }
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             // Cleanup on failure
@@ -842,10 +849,19 @@ object OverlayManager {
 
     private fun updateAvailableOverlayWidth(context: Context) {
         val density = context.resources.displayMetrics.density
-        val horizontalMargins = 32f * density
-        availableOverlayWidthDp.floatValue =
-            ((context.resources.displayMetrics.widthPixels - horizontalMargins) / density)
-                .coerceAtLeast(216f)
+        val metrics = context.resources.displayMetrics
+        val isLandscape = metrics.widthPixels > metrics.heightPixels
+        val availableWidthPx = if (isLandscape) {
+            OverlayWindowGeometry.landscapeWidthPx(
+                displayWidthPx = currentWindowWidthPx(context),
+                edgeMarginPx = (16f * density).toInt(),
+                occlusions = landscapeHorizontalOcclusionInsets(context),
+                minimumWidthPx = (216f * density).toInt()
+            )
+        } else {
+            metrics.widthPixels - (32f * density).toInt()
+        }
+        availableOverlayWidthDp.floatValue = (availableWidthPx / density).coerceAtLeast(216f)
     }
 
     private fun windowWidthForCurrentOrientation(context: Context): Int {
@@ -853,9 +869,66 @@ object OverlayManager {
         val margin = (16 * metrics.density).toInt()
         val isLandscape = metrics.widthPixels > metrics.heightPixels
         return if (isLandscape) {
-            (metrics.widthPixels - margin * 2).coerceAtLeast((216 * metrics.density).toInt())
+            OverlayWindowGeometry.landscapeWidthPx(
+                displayWidthPx = currentWindowWidthPx(context),
+                edgeMarginPx = margin,
+                occlusions = landscapeHorizontalOcclusionInsets(context),
+                minimumWidthPx = (216 * metrics.density).toInt()
+            )
         } else {
             WindowManager.LayoutParams.WRAP_CONTENT
         }
     }
+
+    /**
+     * WindowManager lays landscape overlays inside a frame that may already exclude
+     * a side-mounted status bar, camera cutout, or navigation bar. The resource display
+     * width still includes those pixels, so both sides must be removed before requesting
+     * the wide overlay window. On the Nothing Phone this is commonly a left-only inset
+     * in rotation 90, even when the pill itself is on the right.
+     */
+    private fun landscapeHorizontalOcclusionInsets(context: Context): HorizontalOcclusionInsets {
+        val metrics = context.resources.displayMetrics
+        if (metrics.widthPixels <= metrics.heightPixels) return HorizontalOcclusionInsets()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val manager = windowManager
+                ?: context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val windowInsets = manager.currentWindowMetrics.windowInsets
+            val systemBars = windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
+            val cutout = windowInsets.displayCutout
+            val waterfall = cutout?.waterfallInsets
+            return HorizontalOcclusionInsets(
+                left = maxOf(
+                    systemBars.left,
+                    cutout?.safeInsetLeft ?: 0,
+                    waterfall?.left ?: 0
+                ),
+                right = maxOf(
+                    systemBars.right,
+                    cutout?.safeInsetRight ?: 0,
+                    waterfall?.right ?: 0
+                )
+            )
+        }
+
+        val windowInsets = overlayContainer?.rootWindowInsets ?: return HorizontalOcclusionInsets()
+        @Suppress("DEPRECATION")
+        val stableLeft = windowInsets.stableInsetLeft
+        @Suppress("DEPRECATION")
+        val stableRight = windowInsets.stableInsetRight
+        return HorizontalOcclusionInsets(
+            left = maxOf(stableLeft, windowInsets.displayCutout?.safeInsetLeft ?: 0),
+            right = maxOf(stableRight, windowInsets.displayCutout?.safeInsetRight ?: 0)
+        )
+    }
+
+    private fun currentWindowWidthPx(context: Context): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val manager = windowManager
+                ?: context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            manager.currentWindowMetrics.bounds.width()
+        } else {
+            context.resources.displayMetrics.widthPixels
+        }
 }
