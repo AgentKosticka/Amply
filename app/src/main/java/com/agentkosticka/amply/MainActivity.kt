@@ -13,37 +13,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.agentkosticka.amply.ui.settings.SettingsDashboard
-import com.agentkosticka.amply.data.AppPermissionState
+import com.agentkosticka.amply.settings.ui.SettingsDashboard
+import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.service.VolumeKeyService
-import com.agentkosticka.amply.ui.setup.SetupViewModel
-import com.agentkosticka.amply.ui.setup.SetupWizardScreen
+import com.agentkosticka.amply.setup.SetupViewModel
+import com.agentkosticka.amply.setup.SetupWizardScreen
 import com.agentkosticka.amply.ui.theme.AmplyTheme
-import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -153,65 +134,6 @@ class MainActivity : ComponentActivity() {
             notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         )
-    }
-
-    @Composable
-    fun SetupStep(
-        number: String,
-        title: String,
-        description: String,
-        onClick: () -> Unit
-    ) {
-        Button(
-            onClick = onClick,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(110.dp),
-            shape = RoundedCornerShape(24.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = NothingColors.GreyContainer,
-                contentColor = NothingColors.White
-            )
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Start,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Red number badge
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(NothingColors.Red, RoundedCornerShape(20.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = number,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = NothingColors.White
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                Column(
-                    horizontalAlignment = Alignment.Start,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = NothingColors.White
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NothingColors.GreyMedium
-                    )
-                }
-            }
-        }
     }
 
     private fun requestOverlayPermission() {

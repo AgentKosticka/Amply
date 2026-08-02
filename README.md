@@ -41,7 +41,7 @@ Amply (1) intercepts hardware volume button presses and displays a custom overla
 | Requirement | Details |
 |-------------|---------|
 | **Minimum Android Version** | Android 10 (API 29) |
-| **Target Android Version** | Android 14 (API 34) |
+| **Target Android Version** | Android 16 (API 36) |
 | **Shizuku** | Required, version 11 or higher |
 | **Permissions** | Overlay permission, Accessibility Service |
 
@@ -105,7 +105,7 @@ For one-off situations, expand Amply's pill and press the circular power button 
 
 The pause duration can also be set to **Turn back on only manually**. This state persists until **Restore now** is selected, including after a reboot.
 
-The expanded overlay normally contains currently playing apps, pinned known-audio apps, and the foreground app after it produces audio during its current foreground visit. That foreground row remains available after playback stops, but leaving and returning to the app starts a new visit that must produce audio again. Hidden apps remain excluded in every case. If Shizuku disconnects, these controls are replaced with a compact disconnected indicator until the privileged service recovers. Settings are profile-aware and can be exported, imported, reset, or cleaned from the Access tab.
+The expanded overlay normally contains currently playing apps, pinned known-audio apps, and the foreground app after it produces audio during its current foreground visit. That foreground row remains available after playback stops, but leaving and returning to the app starts a new visit that must produce audio again. Hidden apps remain excluded in every case. If Shizuku disconnects, these controls are replaced with a compact disconnected indicator until the privileged service recovers. Settings are profile-aware and can be exported, imported, reset, or cleaned from the Apps tab.
 
 ---
 
@@ -188,28 +188,31 @@ APK output locations:
 
 ## Project Structure
 
-```
-app/src/main/java/com/amply/one/
-├── MainActivity.kt           # Main activity and setup UI
-├── AmplyApplication.kt       # Application class
+```text
+app/src/main/java/com/agentkosticka/amply/
 ├── audio/
-│   ├── AudioSessionManager.kt    # Core session management and volume control
-│   ├── AudioSessionDetector.kt   # Dumpsys-based fallback detection
-│   └── PlayerVolumeController.kt # Local reflection fallback
-├── service/
-│   ├── OverlayManager.kt         # Overlay window management
-│   ├── OverlayService.kt         # Foreground service for overlay
-│   └── VolumeKeyService.kt       # Accessibility service for key detection
+│   ├── routing/        # Android streams, target selection, Cast, and topology
+│   ├── ringer/         # Loud/vibrate/mute behavior and compatibility checks
+│   └── session/        # Playback detection and per-app player volume
+├── overlay/
+│   ├── service/        # Foreground overlay-service implementation
+│   ├── ui/             # Pill, stream controls, and per-app panel
+│   └── window/         # Window lifecycle, geometry, and presentation policy
+├── permissions/        # App permission state
+├── settings/
+│   ├── data/           # DataStore repository, JSON codec, and recovery
+│   ├── model/          # Persisted settings models
+│   └── ui/             # Tab pages and reusable settings controls
+├── setup/              # First-run wizard
 ├── shizuku/
-│   ├── ShizukuRepository.kt      # Shizuku permission and shell commands
-│   ├── ShizukuVolumeManager.kt   # UserService client
-│   ├── VolumeUserService.kt      # Privileged UserService (runs in Shizuku)
-│   └── IVolumeService.kt         # AIDL interface
-└── ui/
-    ├── overlay/VolumeOverlay.kt  # Overlay UI composables
-    ├── setup/                    # Setup wizard screens
-    └── theme/                    # Nothing OS color theme
+│   ├── client/         # Permission and UserService connection coordination
+│   ├── protocol/       # Stable Binder contract
+│   └── server/         # Privileged UserService implementation
+├── volumekeys/         # Accessibility routing and foreground resolution
+└── ui/theme/           # Shared Nothing-style theme
 ```
+
+`service.OverlayService`, `service.VolumeKeyService`, and `shizuku.VolumeUserService` intentionally retain their original component names so Android and Shizuku keep existing service identity across upgrades. The `benchmark` module drives the benchmark-only host in `app/src/benchmark`; neither is included in normal debug or release behavior.
 
 ---
 

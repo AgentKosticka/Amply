@@ -1,0 +1,378 @@
+package com.agentkosticka.amply.overlay.ui
+
+import android.graphics.Bitmap
+import android.os.Process
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.agentkosticka.amply.audio.session.OverlayAppEntry
+import com.agentkosticka.amply.audio.session.AppVolumeControlState
+import com.agentkosticka.amply.ui.theme.NothingColors
+
+private val CollapsedPillWidth = 54.dp
+private val ExpandControlHeight = 48.dp
+private val OverlayCornerRadius = 27.dp
+
+/**
+ * Reads animated width state during measurement instead of composition. This confines
+ * per-frame work to layout and keeps the expensive stream/app subtrees skippable.
+ */
+
+@Composable
+internal fun AmplyPanel(
+    panelWidth: Dp,
+    maxHeight: Dp,
+    apps: List<OverlayAppEntry>,
+    onAppVolumeChange: (OverlayAppEntry, Float) -> Unit,
+    onClose: () -> Unit,
+    onTouchStart: () -> Unit = {},
+    onTouchEnd: () -> Unit = {}
+) {
+    val haptic = LocalHapticFeedback.current
+    val panelShape = RoundedCornerShape(OverlayCornerRadius)
+
+    Column(
+        modifier = Modifier
+            .width(panelWidth)
+            .heightIn(min = 100.dp, max = maxHeight)
+            .graphicsLayer {
+                shape = panelShape
+                clip = true
+            }
+            .background(
+                color = Color(0xFF1C1C1C),
+                shape = panelShape
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    // Wait for first touch down
+                    awaitFirstDown(requireUnconsumed = false)
+                    onTouchStart()
+                    
+                    // Wait for all pointers to be up
+                    do {
+                        val event = awaitPointerEvent()
+                    } while (event.changes.any { it.pressed })
+                    
+                    onTouchEnd()
+                }
+            },
+        horizontalAlignment = Alignment.Start
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .fillMaxWidth()
+        ) {
+            itemsIndexed(
+                items = apps,
+                key = { _, app -> app.identity.storageKey },
+                contentType = { _, _ -> "app-volume" }
+            ) { index, app ->
+                Column {
+                    if (index > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp)
+                                .height(1.dp)
+                                .background(Color(0xFF2D2D2D))
+                        )
+                    }
+                    AppVolumeRow(
+                        app = app,
+                        onVolumeChange = { newVolume ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAppVolumeChange(app, newVolume)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
+    val panelShape = RoundedCornerShape(OverlayCornerRadius)
+    val shizukuImage = remember(shizukuIcon) { shizukuIcon?.asImageBitmap() }
+    Row(
+        modifier = Modifier
+            .width(panelWidth)
+            .heightIn(min = 82.dp)
+            .graphicsLayer {
+                shape = panelShape
+                clip = true
+            }
+            .background(Color(0xFF1C1C1C), panelShape)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(modifier = Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+            if (shizukuImage != null) {
+                Image(
+                    bitmap = shizukuImage,
+                    contentDescription = null,
+                    modifier = Modifier.size(30.dp)
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = NothingColors.GreyMedium,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+            Canvas(modifier = Modifier.matchParentSize()) {
+                drawLine(
+                    color = NothingColors.Red,
+                    start = Offset(size.width * 0.12f, size.height * 0.88f),
+                    end = Offset(size.width * 0.88f, size.height * 0.12f),
+                    strokeWidth = 3.dp.toPx()
+                )
+            }
+        }
+        Text(
+            text = "Shizuku disconnected",
+            color = NothingColors.GreyMedium,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/**
+ * Individual app volume row
+ * Updates the backend immediately on every drag or tap.
+ */
+@Composable
+private fun AppVolumeRow(
+    app: OverlayAppEntry,
+    onVolumeChange: (Float) -> Unit
+) {
+    var localVolume by remember(app.identity) { mutableFloatStateOf(app.volume) }
+    val appIconImage = remember(app.appIconBitmap) { app.appIconBitmap?.asImageBitmap() }
+    LaunchedEffect(app.volume) {
+        localVolume = app.volume
+    }
+    val volumePercent = (localVolume * 100).toInt()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF343434)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        appIconImage?.let { icon ->
+                            Image(
+                                bitmap = icon,
+                                contentDescription = app.appName,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                            )
+                        } ?: Icon(
+                            imageVector = Icons.Default.MusicNote,
+                            contentDescription = app.appName,
+                            tint = NothingColors.GreyMedium,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                    if (app.isPlaying) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(10.dp)
+                                .background(Color(0xFF1C1C1C), CircleShape)
+                                .padding(2.dp)
+                                .background(NothingColors.Red, CircleShape)
+                        )
+                    }
+                }
+
+                Text(
+                    text = app.appName,
+                    color = NothingColors.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (app.identity.userId != Process.myUid() / 100_000) {
+                    Text(
+                        text = "W",
+                        color = NothingColors.GreyMedium,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (app.controlState == AppVolumeControlState.PARTIAL ||
+                    app.controlState == AppVolumeControlState.UNAVAILABLE
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = if (app.controlState == AppVolumeControlState.PARTIAL) {
+                            "Some players could not be controlled"
+                        } else {
+                            "Volume unavailable for this playback"
+                        },
+                        tint = if (app.controlState == AppVolumeControlState.UNAVAILABLE) {
+                            NothingColors.Red
+                        } else NothingColors.GreyMedium,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+                Text(
+                    text = "$volumePercent%",
+                    color = if (volumePercent > 75) NothingColors.Red else NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        HorizontalVolumeRail(
+            volume = localVolume,
+            enabled = app.controlState != AppVolumeControlState.UNAVAILABLE,
+            onVolumeChange = { newVolume ->
+                localVolume = newVolume
+                onVolumeChange(newVolume)
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/**
+ * Rounded continuous volume rail for per-app volume.
+ */
+@Composable
+private fun HorizontalVolumeRail(
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    Canvas(
+        modifier = modifier
+            .height(20.dp)
+            .then(if (enabled) Modifier.pointerInput(Unit) {
+                detectHorizontalDragGestures { change, _ ->
+                    change.consume()
+                    val inset = 5.dp.toPx()
+                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                    val newVolume = ((change.position.x - inset) / usableWidth).coerceIn(0f, 1f)
+                    onVolumeChange(newVolume)
+                }
+            } else Modifier)
+            .then(if (enabled) Modifier.pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    val inset = 5.dp.toPx()
+                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                    val newVolume = ((offset.x - inset) / usableWidth).coerceIn(0f, 1f)
+                    onVolumeChange(newVolume)
+                }
+            } else Modifier)
+    ) {
+        val thumbRadius = 5.dp.toPx()
+        val trackWidth = 4.dp.toPx()
+        val endX = size.width - thumbRadius
+        val usableWidth = (endX - thumbRadius).coerceAtLeast(1f)
+        val valueX = thumbRadius + usableWidth * volume.coerceIn(0f, 1f)
+        val warningX = thumbRadius + usableWidth * 0.75f
+        val centerY = size.height / 2f
+
+        drawLine(
+            color = if (enabled) Color(0xFF444444) else Color(0xFF303030),
+            start = Offset(thumbRadius, centerY),
+            end = Offset(endX, centerY),
+            strokeWidth = trackWidth,
+            cap = StrokeCap.Round
+        )
+        if (valueX > thumbRadius) {
+            drawLine(
+                color = if (enabled) NothingColors.White else NothingColors.GreyDim,
+                start = Offset(thumbRadius, centerY),
+                end = Offset(valueX.coerceAtMost(warningX), centerY),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round
+            )
+        }
+        if (valueX > warningX) {
+            drawLine(
+                color = if (enabled) NothingColors.Red else NothingColors.GreyDim,
+                start = Offset(warningX, centerY),
+                end = Offset(valueX, centerY),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round
+            )
+        }
+        drawCircle(
+            color = if (!enabled) NothingColors.GreyDim else if (volume > 0.75f) NothingColors.Red else NothingColors.White,
+            radius = thumbRadius,
+            center = Offset(valueX, centerY)
+        )
+    }
+}
+
+/**
+ * Vertical dot slider for main volume pill
+ */

@@ -12,5 +12,4 @@ object NothingColors {
     val GreyContainer = Color(0xFF1A1A1A)
     val GreyDim = Color(0xFF404040)
     val GreyMedium = Color(0xFF808080)
-    val GreyContainerAlpha = Color(0xCC1A1A1A) // With opacity
 }

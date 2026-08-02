@@ -3,7 +3,7 @@
     <application>
         <profileable android:shell="true" />
         <activity
-            android:name=".benchmark.BenchmarkOverlayActivity"
+            android:name=".benchmarkhost.OverlayBenchmarkHostActivity"
             android:exported="true"
             android:theme="@style/Theme.Amply" />
     </application>

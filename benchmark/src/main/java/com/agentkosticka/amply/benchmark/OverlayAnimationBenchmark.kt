@@ -32,7 +32,7 @@ class OverlayAnimationBenchmark {
                 val intent = Intent().apply {
                     component = ComponentName(
                         "com.agentkosticka.amply",
-                        "com.agentkosticka.amply.benchmark.BenchmarkOverlayActivity"
+                        "com.agentkosticka.amply.benchmarkhost.OverlayBenchmarkHostActivity"
                     )
                     putExtra("scenario", scenario)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

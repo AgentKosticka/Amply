@@ -5,19 +5,19 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.Build
 import android.util.Log
-import com.agentkosticka.amply.audio.AudioSessionManager
-import com.agentkosticka.amply.audio.ForegroundVisitTracker
-import com.agentkosticka.amply.audio.RingerExperimentExecutor
-import com.agentkosticka.amply.audio.RingerExperimentMethod
-import com.agentkosticka.amply.audio.SystemStreamSessionController
-import com.agentkosticka.amply.audio.VolumeTarget
-import com.agentkosticka.amply.audio.VolumeTargetSessionController
-import com.agentkosticka.amply.audio.VolumeTargetPolicy
-import com.agentkosticka.amply.data.PreferencesManager
-import com.agentkosticka.amply.shizuku.ShizukuRepository
-import com.agentkosticka.amply.shizuku.ShizukuVolumeManager
-import com.agentkosticka.amply.shizuku.VolumeServiceConnectionCoordinator
-import com.agentkosticka.amply.shizuku.VolumeServiceConnectionState
+import com.agentkosticka.amply.audio.session.AudioSessionManager
+import com.agentkosticka.amply.audio.session.ForegroundVisitTracker
+import com.agentkosticka.amply.audio.ringer.RingerExperimentExecutor
+import com.agentkosticka.amply.audio.ringer.RingerExperimentMethod
+import com.agentkosticka.amply.audio.routing.SystemStreamSessionController
+import com.agentkosticka.amply.audio.routing.VolumeTarget
+import com.agentkosticka.amply.audio.routing.VolumeTargetSessionController
+import com.agentkosticka.amply.audio.routing.VolumeTargetPolicy
+import com.agentkosticka.amply.settings.data.PreferencesManager
+import com.agentkosticka.amply.shizuku.client.ShizukuRepository
+import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
+import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
+import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,6 +25,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 class AmplyRuntime(context: Context) {
     companion object {
@@ -68,7 +69,6 @@ class AmplyRuntime(context: Context) {
     )
 
     val sessionState = audioSessionManager.sessionState
-    val permissionState = shizukuRepository.permissionState
     val connectionState: StateFlow<VolumeServiceConnectionState> = shizukuVolumeManager.connectionState
 
     init {
@@ -98,7 +98,7 @@ class AmplyRuntime(context: Context) {
                 )
                 notificationExpiryJob?.cancel()
                 notificationExpiryJob = runtimeScope.launch {
-                    delay(VolumeTargetPolicy.NOTIFICATION_GRACE_MS + 1L)
+                    delay((VolumeTargetPolicy.NOTIFICATION_GRACE_MS + 1L).milliseconds)
                     volumeTargetSessionController.onTimeAdvanced()
                 }
             }
