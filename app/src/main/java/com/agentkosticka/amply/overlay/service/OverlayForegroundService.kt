@@ -265,7 +265,8 @@ open class OverlayForegroundService : Service() {
             OverlayManager.setVolumeTargetCallbacks(
                 onSelected = runtime.volumeTargetSessionController::onUserSelected,
                 onShown = runtime::onOverlayShown,
-                onHidden = runtime::onOverlayHidden
+                onHidden = runtime::onOverlayHidden,
+                onTutorialPreviewFinished = runtime::onTutorialOverlayPreviewFinished
             )
             OverlayManager.setSystemStreamVolumeCallback(runtime::setSystemStreamVolume)
             OverlayManager.setPauseAmplyCallback {

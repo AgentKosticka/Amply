@@ -5,6 +5,7 @@ import android.content.Intent
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationManager
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -14,9 +15,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.agentkosticka.amply.settings.ui.SettingsDashboard
 import com.agentkosticka.amply.permissions.AppPermissionState
@@ -25,6 +30,10 @@ import com.agentkosticka.amply.setup.SetupViewModel
 import com.agentkosticka.amply.setup.SetupWizardScreen
 import com.agentkosticka.amply.setup.SetupReadiness
 import com.agentkosticka.amply.ui.theme.AmplyTheme
+import com.agentkosticka.amply.runtime.RuntimeErrorCode
+import com.agentkosticka.amply.tutorial.TutorialOverlayDemo
+import com.agentkosticka.amply.tutorial.TutorialStage
+import com.agentkosticka.amply.tutorial.TutorialWaitingScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -72,36 +81,68 @@ class MainActivity : ComponentActivity() {
         val permissionState by appPermissionState.collectAsState()
         val shizukuPermission by runtime.shizukuRepository.permissionState.collectAsState()
         val connectionState by runtime.connectionState.collectAsState()
+        val tutorialStage by runtime.tutorialCoordinator.stage.collectAsState()
+        val runtimeHealth by runtime.runtimeHealth.collectAsState()
         val readiness = SetupReadiness(
             accessibilityEnabled = permissionState.volumeKeysGranted,
             shizukuPermission = shizukuPermission,
             volumeServiceConnection = connectionState
         )
 
-        if (readiness.canShowDashboard(introductionSeen)) {
-            // Show main app screen
-            MainAppScreen()
-        } else {
-            // Show setup wizard
-            val viewModel = remember {
-                SetupViewModel(
-                    shizukuRepository = runtime.shizukuRepository,
-                    preferencesManager = runtime.preferencesManager,
-                    context = this
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (readiness.canShowDashboard(introductionSeen)) {
+                MainAppScreen()
+            } else {
+                val viewModel = remember {
+                    SetupViewModel(
+                        shizukuRepository = runtime.shizukuRepository,
+                        preferencesManager = runtime.preferencesManager,
+                        context = this@MainActivity
+                    )
+                }
+
+                SetupWizardScreen(
+                    viewModel = viewModel,
+                    introductionSeen = introductionSeen,
+                    appPermissionState = permissionState,
+                    connectionState = connectionState,
+                    tutorialStage = tutorialStage,
+                    overlayAttachFailed = runtimeHealth.recoverableError?.code ==
+                        RuntimeErrorCode.OVERLAY_ATTACH_FAILED,
+                    showRestrictedSettingsHelp = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
+                    onAccessibilityClick = { openAccessibilitySettings() },
+                    onRestrictedSettingsClick = { openAppDetailsSettings() },
+                    onPhoneStateClick = { requestPhoneStatePermission() },
+                    onNotificationsClick = { requestNotificationPermission() },
+                    onRetryConnection = { runtime.retryVolumeServiceConnection() },
+                    onArmTutorial = runtime.tutorialCoordinator::arm,
+                    onTryItVisibilityChanged = runtime.tutorialCoordinator::setTryItScreenVisible,
+                    onSkipTutorial = runtime.tutorialCoordinator::skip,
+                    onSetupComplete = {}
                 )
             }
 
-            SetupWizardScreen(
-                viewModel = viewModel,
-                introductionSeen = introductionSeen,
-                appPermissionState = permissionState,
-                connectionState = connectionState,
-                onAccessibilityClick = { openAccessibilitySettings() },
-                onRetryConnection = { runtime.retryVolumeServiceConnection() },
-                onSetupComplete = {
-                    // Setup completed, will automatically switch to main screen
+            if (
+                introductionSeen && readiness.requiredServicesReady &&
+                tutorialStage == TutorialStage.WAITING_FOR_VOLUME_KEY
+            ) {
+                DisposableEffect(tutorialStage) {
+                    runtime.tutorialCoordinator.setTryItScreenVisible(true)
+                    onDispose { runtime.tutorialCoordinator.setTryItScreenVisible(false) }
                 }
-            )
+                TutorialWaitingScreen(
+                    overlayAttachFailed = runtimeHealth.recoverableError?.code ==
+                        RuntimeErrorCode.OVERLAY_ATTACH_FAILED,
+                    onSkip = runtime.tutorialCoordinator::skip
+                )
+            }
+
+            if (tutorialStage.isOverlayDemo && readiness.requiredServicesReady) {
+                TutorialOverlayDemo(
+                    stage = tutorialStage,
+                    coordinator = runtime.tutorialCoordinator
+                )
+            }
         }
     }
 
@@ -156,6 +197,15 @@ class MainActivity : ComponentActivity() {
         runCatching {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
         }
+    }
+
+    private fun openAppDetailsSettings() {
+        val detailsIntent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", packageName, null)
+        )
+        runCatching { startActivity(detailsIntent) }
+            .recoverCatching { startActivity(Intent(Settings.ACTION_APPLICATION_SETTINGS)) }
     }
 
     private fun requestNotificationPermission() {

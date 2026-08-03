@@ -77,6 +77,8 @@ fun VolumeOverlay(
     showShizukuDisconnectedWarning: Boolean = true,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
+    initiallyExpanded: Boolean = false,
+    expanded: Boolean? = null,
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
     onStreamSelected: (VolumeTarget) -> Unit = {},
     onAppVolumeChange: (AppVolumeTarget, Float) -> Unit = { _, _ -> },
@@ -88,7 +90,12 @@ fun VolumeOverlay(
     onPauseAmply: () -> Unit = {},
     onDismissRequest: () -> Unit = {}
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
+    var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
+    val isExpanded = expanded ?: internalExpanded
+    fun updateExpanded(value: Boolean) {
+        internalExpanded = value
+        onExpandedChange(value)
+    }
     val hasPanelContent = apps.isNotEmpty() ||
         (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
     val expandToStart = overlaySide == OverlaySide.RIGHT
@@ -127,8 +134,7 @@ fun VolumeOverlay(
     LaunchedEffect(visible) {
         pillTransitionState.targetState = visible
         if (!visible) {
-            isExpanded = false
-            onExpandedChange(false)
+            updateExpanded(false)
         }
     }
 
@@ -203,8 +209,7 @@ fun VolumeOverlay(
                 onMuteToggle = onMuteToggle,
                 onExpandToggle = {
                     val nextExpanded = !isExpanded
-                    isExpanded = nextExpanded
-                    onExpandedChange(nextExpanded)
+                    updateExpanded(nextExpanded)
                 },
                 onInteraction = onInteraction
             )
@@ -221,8 +226,7 @@ fun VolumeOverlay(
                     onAppVolumeChange(app, volume)
                 },
                 onClose = {
-                    isExpanded = false
-                    onExpandedChange(false)
+                    updateExpanded(false)
                     onInteraction()
                 },
                 onTouchStart = onTouchStart,

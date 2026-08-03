@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import org.json.JSONArray
+import com.agentkosticka.amply.tutorial.TutorialStage
 
 
 class PreferencesManager(private val context: Context) {
@@ -27,6 +28,7 @@ class PreferencesManager(private val context: Context) {
     companion object {
         private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "amply_preferences")
         private val SETUP_COMPLETED = booleanPreferencesKey("setup_completed")
+        private val TUTORIAL_STAGE = stringPreferencesKey("tutorial_stage")
         private val LEGACY_GAME_MODE_ENABLED = booleanPreferencesKey("game_mode_enabled")
         private val OVERLAY_SIDE = stringPreferencesKey("overlay_side")
         private val OVERLAY_VERTICAL_FRACTION = floatPreferencesKey("overlay_vertical_fraction")
@@ -64,6 +66,23 @@ class PreferencesManager(private val context: Context) {
         editSettings { preferences ->
             preferences[SETUP_COMPLETED] = completed
         }
+
+    internal val tutorialStage: Flow<TutorialStage> = context.dataStore.data.map { preferences ->
+        TutorialStage.fromStored(
+            value = preferences[TUTORIAL_STAGE],
+            introductionSeen = preferences[SETUP_COMPLETED] ?: false
+        )
+    }
+
+    internal suspend fun setTutorialStage(stage: TutorialStage): SettingsOperationResult =
+        editSettings { preferences -> preferences[TUTORIAL_STAGE] = stage.name }
+
+    internal suspend fun completeSetupAndSetTutorialStage(
+        stage: TutorialStage
+    ): SettingsOperationResult = editSettings { preferences ->
+        preferences[SETUP_COMPLETED] = true
+        preferences[TUTORIAL_STAGE] = stage.name
+    }
 
     val overlaySide: Flow<OverlaySide> = context.dataStore.data
         .map { preferences ->

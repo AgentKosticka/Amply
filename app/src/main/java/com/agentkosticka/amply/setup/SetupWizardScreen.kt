@@ -23,10 +23,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,20 +48,35 @@ import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
+import com.agentkosticka.amply.tutorial.TutorialStage
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 
 private const val WELCOME_STEP = 0
 private const val ACCESSIBILITY_STEP = 1
 private const val SHIZUKU_STEP = 2
-private const val SETUP_STEP_COUNT = 3
+private const val CALLS_STEP = 3
+private const val NOTIFICATIONS_STEP = 4
+private const val TRY_IT_STEP = 5
+private const val SETUP_STEP_COUNT = 6
 
 @Composable
-fun SetupWizardScreen(
+internal fun SetupWizardScreen(
     viewModel: SetupViewModel,
     introductionSeen: Boolean,
     appPermissionState: AppPermissionState,
     connectionState: VolumeServiceConnectionState,
+    tutorialStage: TutorialStage,
+    overlayAttachFailed: Boolean,
+    showRestrictedSettingsHelp: Boolean,
     onAccessibilityClick: () -> Unit,
+    onRestrictedSettingsClick: () -> Unit,
+    onPhoneStateClick: () -> Unit,
+    onNotificationsClick: () -> Unit,
     onRetryConnection: () -> Unit,
+    onArmTutorial: () -> Unit,
+    onTryItVisibilityChanged: (Boolean) -> Unit,
+    onSkipTutorial: () -> Unit,
     onSetupComplete: () -> Unit
 ) {
     val shizukuState by viewModel.permissionState.collectAsState()
@@ -65,7 +84,44 @@ fun SetupWizardScreen(
     val shizukuReady = shizukuState == ShizukuPermissionState.GRANTED &&
         connectionState == VolumeServiceConnectionState.CONNECTED
     var step by rememberSaveable {
-        mutableIntStateOf(if (introductionSeen) ACCESSIBILITY_STEP else WELCOME_STEP)
+        mutableIntStateOf(
+            if (
+                tutorialStage != TutorialStage.NOT_STARTED &&
+                !appPermissionState.volumeKeysGranted
+            ) {
+                ACCESSIBILITY_STEP
+            } else if (introductionSeen) {
+                ACCESSIBILITY_STEP
+            } else if (tutorialStage == TutorialStage.WAITING_FOR_VOLUME_KEY || tutorialStage.isOverlayDemo) {
+                TRY_IT_STEP
+            } else {
+                WELCOME_STEP
+            }
+        )
+    }
+
+    LaunchedEffect(step, tutorialStage) {
+        if (step == TRY_IT_STEP && tutorialStage == TutorialStage.NOT_STARTED) {
+            onArmTutorial()
+        }
+    }
+    LaunchedEffect(tutorialStage, appPermissionState.volumeKeysGranted, introductionSeen) {
+        if (
+            !introductionSeen && appPermissionState.volumeKeysGranted &&
+            (tutorialStage == TutorialStage.WAITING_FOR_VOLUME_KEY || tutorialStage.isOverlayDemo)
+        ) {
+            step = TRY_IT_STEP
+        } else if (
+            tutorialStage != TutorialStage.NOT_STARTED &&
+            !appPermissionState.volumeKeysGranted
+        ) {
+            step = ACCESSIBILITY_STEP
+        }
+    }
+    DisposableEffect(step) {
+        val visible = step == TRY_IT_STEP
+        onTryItVisibilityChanged(visible)
+        onDispose { if (visible) onTryItVisibilityChanged(false) }
     }
 
     Column(
@@ -87,9 +143,11 @@ fun SetupWizardScreen(
             when (step) {
                 WELCOME_STEP -> WelcomeStep()
                 ACCESSIBILITY_STEP -> AccessibilityStep(
-                    enabled = appPermissionState.volumeKeysGranted
+                    enabled = appPermissionState.volumeKeysGranted,
+                    showRestrictedSettingsHelp = showRestrictedSettingsHelp,
+                    onRestrictedSettingsClick = onRestrictedSettingsClick
                 )
-                else -> ShizukuStep(
+                SHIZUKU_STEP -> ShizukuStep(
                     state = shizukuState,
                     connected = shizukuReady,
                     onAction = {
@@ -102,6 +160,21 @@ fun SetupWizardScreen(
                     },
                     onRefresh = viewModel::checkShizukuState
                 )
+                CALLS_STEP -> OptionalPermissionStep(
+                    granted = appPermissionState.phoneStateGranted,
+                    title = stringResource(R.string.setup_calls_welcome_title),
+                    readyTitle = stringResource(R.string.setup_calls_ready_title),
+                    description = stringResource(R.string.setup_calls_consumer_description),
+                    privacy = stringResource(R.string.setup_calls_privacy)
+                )
+                NOTIFICATIONS_STEP -> OptionalPermissionStep(
+                    granted = appPermissionState.notificationsGranted,
+                    title = stringResource(R.string.setup_notifications_welcome_title),
+                    readyTitle = stringResource(R.string.setup_notifications_ready_title),
+                    description = stringResource(R.string.setup_notifications_consumer_description),
+                    privacy = stringResource(R.string.setup_notifications_privacy)
+                )
+                TRY_IT_STEP -> TryItStep(overlayAttachFailed = overlayAttachFailed)
             }
 
             externalError?.let { message ->
@@ -113,6 +186,10 @@ fun SetupWizardScreen(
             }
         }
 
+        val optionalPermissionMissing =
+            (step == CALLS_STEP && !appPermissionState.phoneStateGranted) ||
+                (step == NOTIFICATIONS_STEP && !appPermissionState.notificationsGranted)
+
         Button(
             onClick = {
                 when (step) {
@@ -121,13 +198,24 @@ fun SetupWizardScreen(
                         if (appPermissionState.volumeKeysGranted) step = SHIZUKU_STEP
                         else onAccessibilityClick()
                     }
-                    else -> {
-                        viewModel.completeSetup(appPermissionState.volumeKeysGranted)
-                        onSetupComplete()
+                    SHIZUKU_STEP -> step = CALLS_STEP
+                    CALLS_STEP -> {
+                        if (appPermissionState.phoneStateGranted) step = NOTIFICATIONS_STEP
+                        else onPhoneStateClick()
                     }
+                    NOTIFICATIONS_STEP -> {
+                        if (!appPermissionState.notificationsGranted) {
+                            onNotificationsClick()
+                            return@Button
+                        }
+                        step = TRY_IT_STEP
+                        onArmTutorial()
+                    }
+                    TRY_IT_STEP -> Unit
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
+            enabled = step != TRY_IT_STEP,
             shape = RoundedCornerShape(30.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = NothingColors.Red,
@@ -142,14 +230,105 @@ fun SetupWizardScreen(
                     } else {
                         stringResource(R.string.setup_enable_amply)
                     }
-                    else -> if (shizukuReady) {
-                        stringResource(R.string.setup_enter_amply)
+                    SHIZUKU_STEP -> if (shizukuReady) {
+                        stringResource(R.string.setup_next)
                     } else {
                         stringResource(R.string.setup_continue_without_shizuku)
                     }
+                    CALLS_STEP -> if (appPermissionState.phoneStateGranted) {
+                        stringResource(R.string.setup_next)
+                    } else {
+                        stringResource(R.string.setup_allow_calls)
+                    }
+                    NOTIFICATIONS_STEP -> if (appPermissionState.notificationsGranted) {
+                        stringResource(R.string.setup_next)
+                    } else {
+                        stringResource(R.string.setup_allow_notifications)
+                    }
+                    else -> stringResource(R.string.setup_waiting_for_volume_button)
                 },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
+            )
+        }
+        if (optionalPermissionMissing) {
+            TextButton(
+                onClick = {
+                    if (step == CALLS_STEP) {
+                        step = NOTIFICATIONS_STEP
+                    } else {
+                        step = TRY_IT_STEP
+                        onArmTutorial()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = stringResource(R.string.setup_not_now),
+                    color = NothingColors.GreyMedium
+                )
+            }
+        }
+        if (step == TRY_IT_STEP) {
+            TextButton(
+                onClick = {
+                    onTryItVisibilityChanged(false)
+                    onSkipTutorial()
+                    onSetupComplete()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = stringResource(R.string.tutorial_skip),
+                    color = NothingColors.GreyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TryItStep(overlayAttachFailed: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(88.dp)
+            .background(NothingColors.Red, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = null,
+            tint = NothingColors.White,
+            modifier = Modifier.size(44.dp)
+        )
+    }
+    Spacer(Modifier.height(24.dp))
+    Text(
+        text = stringResource(R.string.tutorial_try_it_title),
+        style = MaterialTheme.typography.headlineMedium,
+        color = NothingColors.White,
+        textAlign = TextAlign.Center,
+        fontWeight = FontWeight.Bold
+    )
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = stringResource(R.string.tutorial_try_it_description),
+        style = MaterialTheme.typography.bodyLarge,
+        color = NothingColors.GreyMedium,
+        textAlign = TextAlign.Center
+    )
+    if (overlayAttachFailed) {
+        Spacer(Modifier.height(20.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color(0xFF271717)),
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = stringResource(R.string.tutorial_overlay_retry),
+                modifier = Modifier.padding(18.dp),
+                color = NothingColors.White,
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -208,7 +387,11 @@ private fun WelcomeStep() {
 }
 
 @Composable
-private fun AccessibilityStep(enabled: Boolean) {
+private fun AccessibilityStep(
+    enabled: Boolean,
+    showRestrictedSettingsHelp: Boolean,
+    onRestrictedSettingsClick: () -> Unit
+) {
     StatusDot(complete = enabled)
     Spacer(Modifier.height(22.dp))
     Text(
@@ -237,6 +420,66 @@ private fun AccessibilityStep(enabled: Boolean) {
     ) {
         Text(
             text = stringResource(R.string.setup_accessibility_privacy),
+            modifier = Modifier.padding(18.dp),
+            color = NothingColors.White,
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+    if (!enabled && showRestrictedSettingsHelp) {
+        Spacer(Modifier.height(20.dp))
+        Text(
+            text = stringResource(R.string.setup_restricted_settings_title),
+            color = NothingColors.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.setup_restricted_settings_description),
+            color = NothingColors.GreyMedium,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(onClick = onRestrictedSettingsClick) {
+            Text(stringResource(R.string.setup_open_app_info))
+        }
+    }
+}
+
+@Composable
+private fun OptionalPermissionStep(
+    granted: Boolean,
+    title: String,
+    readyTitle: String,
+    description: String,
+    privacy: String
+) {
+    StatusDot(complete = granted)
+    Spacer(Modifier.height(22.dp))
+    Text(
+        text = if (granted) readyTitle else title,
+        style = MaterialTheme.typography.headlineMedium,
+        color = NothingColors.White,
+        textAlign = TextAlign.Center,
+        fontWeight = FontWeight.Bold
+    )
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = description,
+        style = MaterialTheme.typography.bodyLarge,
+        color = NothingColors.GreyMedium,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(20.dp))
+    Card(
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color(0xFF171717)),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = privacy,
             modifier = Modifier.padding(18.dp),
             color = NothingColors.White,
             style = MaterialTheme.typography.bodyMedium

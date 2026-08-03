@@ -90,6 +90,7 @@ object OverlayManager {
     // Auto-hide timer
     private var managerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var hideJob: Job? = null
+    private var tutorialPreviewJob: Job? = null
     private var removeJob: Job? = null
     private var volumeObservationJob: Job? = null
 
@@ -114,8 +115,9 @@ object OverlayManager {
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
     private var onVolumeTargetSelectedCallback: ((VolumeTarget) -> Unit)? = null
-    private var onOverlayShownCallback: (() -> Unit)? = null
+    private var onOverlayShownCallback: (() -> Boolean)? = null
     private var onOverlayHiddenCallback: (() -> Unit)? = null
+    private var onTutorialPreviewFinishedCallback: (() -> Unit)? = null
     private var onPauseAmplyCallback: (() -> Unit)? = null
     private var onNotificationModeToggleCallback: (() -> Unit)? = null
     private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
@@ -141,18 +143,21 @@ object OverlayManager {
 
     fun setVolumeTargetCallbacks(
         onSelected: (VolumeTarget) -> Unit,
-        onShown: () -> Unit,
-        onHidden: () -> Unit
+        onShown: () -> Boolean,
+        onHidden: () -> Unit,
+        onTutorialPreviewFinished: () -> Unit
     ) {
         onVolumeTargetSelectedCallback = onSelected
         onOverlayShownCallback = onShown
         onOverlayHiddenCallback = onHidden
+        onTutorialPreviewFinishedCallback = onTutorialPreviewFinished
     }
 
     fun clearVolumeTargetCallbacks() {
         onVolumeTargetSelectedCallback = null
         onOverlayShownCallback = null
         onOverlayHiddenCallback = null
+        onTutorialPreviewFinishedCallback = null
     }
 
     fun updateSelectedVolumeTarget(target: VolumeTarget) {
@@ -347,10 +352,22 @@ object OverlayManager {
         }
         overlayVisible.value = true
         startVolumeObservation()
-        onOverlayShownCallback?.invoke()
+        val handOffToTutorial = onOverlayShownCallback?.invoke() == true
 
-        // Reset auto-hide timer
-        scheduleHide(currentAutoHideDelayMs())
+        if (handOffToTutorial) {
+            hideJob?.cancel()
+            hideJob = null
+            tutorialPreviewJob?.cancel()
+            tutorialPreviewJob = managerScope.launch {
+                delay(1_100L.milliseconds)
+                tutorialPreviewJob = null
+                hide()
+                delay(EXIT_ANIMATION_SETTLE_MS.milliseconds)
+                onTutorialPreviewFinishedCallback?.invoke()
+            }
+        } else {
+            scheduleHide(currentAutoHideDelayMs())
+        }
         return attachResult
     }
 

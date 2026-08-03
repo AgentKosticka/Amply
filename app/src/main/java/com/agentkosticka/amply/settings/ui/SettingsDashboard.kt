@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -59,6 +60,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,6 +83,8 @@ import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
 import com.agentkosticka.amply.ui.theme.NothingColors
+import com.agentkosticka.amply.tutorial.TutorialCoachmarkCard
+import com.agentkosticka.amply.tutorial.TutorialStage
 import com.agentkosticka.amply.util.readAtMost
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -95,7 +100,7 @@ internal enum class AppListMode {
     EXPANDED
 }
 
-private enum class SettingsTab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+internal enum class SettingsTab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     ACCESS("Access", Icons.Default.Security),
     APPS("Apps", Icons.Default.Apps),
     PILL("Pill", Icons.Default.Tune),
@@ -274,6 +279,7 @@ fun SettingsDashboard(
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     val runtimeHealth by runtime.runtimeHealth.collectAsState()
+    val tutorialStage by runtime.tutorialCoordinator.stage.collectAsState()
     val selectedExperiment by runtime.ringerExperimentExecutor.selectedMethod.collectAsState()
     val experimentResults by runtime.ringerExperimentExecutor.methodTestResults.collectAsState()
     val experimentProgress by runtime.ringerExperimentExecutor.methodTestProgress.collectAsState()
@@ -402,6 +408,23 @@ fun SettingsDashboard(
     LaunchedEffect(pagerState.settledPage) {
         val page = pagerState.settledPage.coerceIn(SettingsTab.entries.indices)
         selectedTabName = SettingsTab.entries[page].name
+        if (tutorialStage.isAppTour) {
+            val landedStage = SettingsTab.entries[page].tutorialStage
+            val currentIndex = TutorialStage.appStages.indexOf(tutorialStage)
+            val landedIndex = landedStage?.let(TutorialStage.appStages::indexOf) ?: -1
+            if (landedStage != null && landedIndex >= 0 && kotlin.math.abs(landedIndex - currentIndex) <= 1) {
+                if (landedStage != tutorialStage) runtime.tutorialCoordinator.goTo(landedStage)
+            } else {
+                pagerState.animateScrollToPage(tutorialStage.settingsTabIndex)
+            }
+        }
+    }
+    LaunchedEffect(tutorialStage) {
+        if (tutorialStage.isAppTour && pagerState.settledPage != tutorialStage.settingsTabIndex) {
+            pagerState.animateScrollToPage(tutorialStage.settingsTabIndex)
+        } else if (tutorialStage == TutorialStage.COMPLETED && pagerState.settledPage != 0) {
+            pagerState.animateScrollToPage(0)
+        }
     }
     LaunchedEffect(selectedTab) {
         if (selectedTab == SettingsTab.DIAGNOSTICS) {
@@ -434,12 +457,17 @@ fun SettingsDashboard(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = NothingColors.Black,
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
             SwipeAwareTabBar(pagerState = pagerState) { index ->
-                scope.launch { pagerState.animateScrollToPage(index) }
+                if (tutorialStage.isAppTour && index == tutorialStage.settingsTabIndex) {
+                    runtime.tutorialCoordinator.advanceAppTour()
+                } else {
+                    scope.launch { pagerState.animateScrollToPage(index) }
+                }
             }
         }
     ) { scaffoldPadding ->
@@ -794,10 +822,43 @@ fun SettingsDashboard(
                             onTest = { pendingRingerTest = it }
                         )
                     }
+                    item {
+                        SectionTitle("GUIDED TOUR")
+                        Spacer(Modifier.height(10.dp))
+                        SettingsPanel {
+                            Text(
+                                stringResource(com.agentkosticka.amply.R.string.tutorial_replay_title),
+                                color = NothingColors.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                stringResource(com.agentkosticka.amply.R.string.tutorial_replay_body),
+                                color = NothingColors.GreyMedium,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            TextButton(onClick = runtime.tutorialCoordinator::replay) {
+                                Text(
+                                    stringResource(com.agentkosticka.amply.R.string.tutorial_replay_action),
+                                    color = NothingColors.Red
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+    }
+
+        if (tutorialStage.isAppTour) {
+            AppTabTourOverlay(
+                stage = tutorialStage,
+                onBack = runtime.tutorialCoordinator::backAppTour,
+                onNext = runtime.tutorialCoordinator::advanceAppTour,
+                onSkip = runtime.tutorialCoordinator::skip
+            )
+        }
     }
 
     pendingRingerTest?.let { method ->
@@ -971,3 +1032,84 @@ fun SettingsDashboard(
         )
     }
 }
+
+private val TutorialStage.settingsTabIndex: Int
+    get() = when (this) {
+        TutorialStage.APP_ACCESS -> SettingsTab.entries.indexOf(SettingsTab.ACCESS)
+        TutorialStage.APP_APPS -> SettingsTab.entries.indexOf(SettingsTab.APPS)
+        TutorialStage.APP_PILL -> SettingsTab.entries.indexOf(SettingsTab.PILL)
+        TutorialStage.APP_STAND_DOWN -> SettingsTab.entries.indexOf(SettingsTab.STAND_DOWN)
+        else -> SettingsTab.entries.indexOf(SettingsTab.ACCESS)
+    }
+
+private val SettingsTab.tutorialStage: TutorialStage?
+    get() = when (this) {
+        SettingsTab.ACCESS -> TutorialStage.APP_ACCESS
+        SettingsTab.APPS -> TutorialStage.APP_APPS
+        SettingsTab.PILL -> TutorialStage.APP_PILL
+        SettingsTab.STAND_DOWN -> TutorialStage.APP_STAND_DOWN
+        SettingsTab.DIAGNOSTICS -> null
+    }
+
+@Composable
+private fun AppTabTourOverlay(
+    stage: TutorialStage,
+    onBack: () -> Unit,
+    onNext: () -> Unit,
+    onSkip: () -> Unit
+) {
+    val index = TutorialStage.appStages.indexOf(stage)
+    var horizontalDrag by remember(stage) { mutableFloatStateOf(0f) }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.28f))
+            .pointerInput(stage) {
+                detectHorizontalDragGestures(
+                    onDragStart = { horizontalDrag = 0f },
+                    onHorizontalDrag = { _, amount -> horizontalDrag += amount },
+                    onDragEnd = {
+                        when {
+                            horizontalDrag < -72f -> onNext()
+                            horizontalDrag > 72f && index > 0 -> onBack()
+                        }
+                        horizontalDrag = 0f
+                    },
+                    onDragCancel = { horizontalDrag = 0f }
+                )
+            },
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        TutorialCoachmarkCard(
+            step = index + 1,
+            total = TutorialStage.appStages.size,
+            title = stringResource(stage.appTourTitleRes),
+            body = stringResource(stage.appTourBodyRes),
+            canGoBack = index > 0,
+            onBack = onBack,
+            onNext = onNext,
+            onSkip = onSkip,
+            modifier = Modifier
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = 76.dp)
+        )
+    }
+}
+
+private val TutorialStage.appTourTitleRes: Int
+    get() = when (this) {
+        TutorialStage.APP_ACCESS -> com.agentkosticka.amply.R.string.tutorial_access_title
+        TutorialStage.APP_APPS -> com.agentkosticka.amply.R.string.tutorial_apps_title
+        TutorialStage.APP_PILL -> com.agentkosticka.amply.R.string.tutorial_pill_title
+        TutorialStage.APP_STAND_DOWN -> com.agentkosticka.amply.R.string.tutorial_stand_down_title
+        else -> com.agentkosticka.amply.R.string.tutorial_access_title
+    }
+
+private val TutorialStage.appTourBodyRes: Int
+    get() = when (this) {
+        TutorialStage.APP_ACCESS -> com.agentkosticka.amply.R.string.tutorial_access_body
+        TutorialStage.APP_APPS -> com.agentkosticka.amply.R.string.tutorial_apps_body
+        TutorialStage.APP_PILL -> com.agentkosticka.amply.R.string.tutorial_pill_body
+        TutorialStage.APP_STAND_DOWN -> com.agentkosticka.amply.R.string.tutorial_stand_down_body
+        else -> com.agentkosticka.amply.R.string.tutorial_access_body
+    }

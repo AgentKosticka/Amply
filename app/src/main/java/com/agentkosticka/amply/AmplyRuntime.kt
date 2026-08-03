@@ -21,6 +21,7 @@ import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
+import com.agentkosticka.amply.tutorial.TutorialCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,6 +50,7 @@ class AmplyRuntime(context: Context) {
     val runtimeHealth: StateFlow<RuntimeHealth> = _runtimeHealth.asStateFlow()
 
     val preferencesManager = PreferencesManager(appContext)
+    internal val tutorialCoordinator = TutorialCoordinator(preferencesManager, runtimeScope)
     val shizukuRepository = ShizukuRepository(appContext)
     val shizukuVolumeManager = ShizukuVolumeManager(appContext)
     val ringerExperimentExecutor = RingerExperimentExecutor(
@@ -225,9 +227,14 @@ class AmplyRuntime(context: Context) {
         )
     }
 
-    fun onOverlayShown() {
+    fun onOverlayShown(): Boolean {
         volumeTargetSessionController.onOverlayShown()
         systemStreamSessionController.onOverlayShown()
+        return tutorialCoordinator.onOverlayAttached()
+    }
+
+    fun onTutorialOverlayPreviewFinished() {
+        tutorialCoordinator.onOverlayPreviewFinished()
     }
 
     fun onOverlayHidden() {
