@@ -5,6 +5,7 @@ import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -14,9 +15,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.audio.routing.VolumeDotScale
 import com.agentkosticka.amply.ui.theme.NothingColors
+import kotlin.math.roundToInt
 
 private val CollapsedPillWidth = 54.dp
 private val ExpandControlHeight = 48.dp
@@ -29,16 +38,17 @@ private val ExpandControlHeight = 48.dp
 @Composable
 fun DraggableDotSlider(
     currentVolume: Int,
-    minVolume: Int = 0,
     maxVolume: Int,
+    onVolumeChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    minVolume: Int = 0,
     referenceMaxVolume: Int = maxVolume,
     dotCount: Int = 16,
-    onVolumeChange: (Int) -> Unit,
     enabled: Boolean = true,
     visuallyEnabled: Boolean = enabled,
     limitFeedbackLevel: Int? = null,
     limitFeedbackEventId: Long? = null,
-    modifier: Modifier = Modifier
+    accessibilityLabel: String = "Volume"
 ) {
     val rejectedDotShake = remember { Animatable(0f) }
 
@@ -62,6 +72,24 @@ fun DraggableDotSlider(
 
     Canvas(
         modifier = modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .semantics {
+                contentDescription = accessibilityLabel
+                stateDescription = "$currentVolume of $maxVolume"
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    current = currentVolume.toFloat(),
+                    range = minVolume.toFloat()..maxVolume.toFloat(),
+                    steps = (maxVolume - minVolume - 1).coerceAtLeast(0)
+                )
+                if (enabled) {
+                    setProgress { requested ->
+                        onVolumeChange(requested.roundToInt().coerceIn(minVolume, maxVolume))
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            }
             .then(
                 if (enabled) {
                     Modifier
@@ -106,7 +134,8 @@ fun DraggableDotSlider(
                 }
             )
     ) {
-        val spacing = if (dotCount <= 1) 0f else size.height / (dotCount - 1)
+        val safeDotCount = dotCount.coerceAtLeast(1)
+        val spacing = if (safeDotCount == 1) 0f else size.height / (safeDotCount - 1)
         val dotRadius = minOf(3.5.dp.toPx(), (spacing * 0.34f).coerceAtLeast(0.75.dp.toPx()))
         val filledDots = VolumeDotScale.displayLevel(currentVolume, referenceMaxVolume, dotCount)
         val projectedMin = VolumeDotScale.projectedLevel(
@@ -115,7 +144,7 @@ fun DraggableDotSlider(
             dotCount
         ).coerceAtLeast(1)
 
-        for (i in 0 until dotCount) {
+        for (i in 0 until safeDotCount) {
             val y = size.height - (i * spacing)
             val level = i + 1
             val shakeX = if (level == limitFeedbackLevel) {
@@ -124,7 +153,7 @@ fun DraggableDotSlider(
                 0f
             }
             val x = size.width / 2 + shakeX
-            val dotPercentage = i.toFloat() / (dotCount - 1)
+            val dotPercentage = if (safeDotCount == 1) 0f else i.toFloat() / (safeDotCount - 1)
             val available = VolumeDotScale.isLevelAvailable(
                 level,
                 minVolume,

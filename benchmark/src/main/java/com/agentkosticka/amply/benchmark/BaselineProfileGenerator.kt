@@ -35,10 +35,10 @@ class BaselineProfileGenerator {
         val device = androidx.test.uiautomator.UiDevice
             .getInstance(InstrumentationRegistry.getInstrumentation())
         repeat(12) {
-            device.wait(
+            checkNotNull(device.wait(
                 Until.findObject(By.desc(Pattern.compile("(Expand|Collapse) Amply"))),
                 2_000
-            )?.click()
+            )) { "Amply expand/collapse control was not rendered" }.click()
         }
     }
 }

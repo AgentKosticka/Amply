@@ -4,6 +4,7 @@ import android.media.AudioAttributes
 
 /** Legacy Android volume streams Amply can present or route volume keys to. */
 
+@Suppress("DEPRECATION")
 object LegacyStreamResolver {
     const val FLAG_AUDIBILITY_ENFORCED = 0x1
     const val FLAG_SCO = 0x4

@@ -30,6 +30,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -282,6 +289,7 @@ private fun AppVolumeRow(
 
         HorizontalVolumeRail(
             volume = localVolume,
+            accessibilityLabel = "${app.target.appName} volume",
             enabled = app.controlState != AppVolumeControlState.UNAVAILABLE,
             onVolumeChange = { newVolume ->
                 localVolume = newVolume
@@ -310,12 +318,28 @@ private fun HorizontalVolumeRail(
     volume: Float,
     onVolumeChange: (Float) -> Unit,
     onValueCommitted: (Float) -> Unit,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier
+    accessibilityLabel: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Canvas(
         modifier = modifier
-            .height(20.dp)
+            .heightIn(min = 48.dp)
+            .semantics {
+                contentDescription = accessibilityLabel
+                stateDescription = "${(volume.coerceIn(0f, 1f) * 100).toInt()} percent"
+                progressBarRangeInfo = ProgressBarRangeInfo(volume.coerceIn(0f, 1f), 0f..1f, 99)
+                if (enabled) {
+                    setProgress { requested ->
+                        val adjusted = requested.coerceIn(0f, 1f)
+                        onVolumeChange(adjusted)
+                        onValueCommitted(adjusted)
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            }
             .then(if (enabled) Modifier.pointerInput(Unit) {
                 var latestVolume = volume
                 detectHorizontalDragGestures(

@@ -1,0 +1,8 @@
+HSPLcom/agentkosticka/amply/AmplyApplication;
+HSPLcom/agentkosticka/amply/AmplyRuntime;
+HSPLcom/agentkosticka/amply/MainActivity;
+HSPLcom/agentkosticka/amply/volumekeys/VolumeKeyAccessibilityService;
+HSPLcom/agentkosticka/amply/overlay/service/OverlayForegroundService;
+HSPLcom/agentkosticka/amply/overlay/window/OverlayManager;
+HSPLcom/agentkosticka/amply/audio/session/AudioSessionManager;
+HSPLcom/agentkosticka/amply/shizuku/client/ShizukuVolumeManager;

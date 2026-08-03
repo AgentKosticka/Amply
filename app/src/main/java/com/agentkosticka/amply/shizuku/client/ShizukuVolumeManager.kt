@@ -1,11 +1,15 @@
 package com.agentkosticka.amply.shizuku.client
 
 import android.content.ComponentName
+import android.content.Context
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.os.IBinder
 import android.util.Log
 import com.agentkosticka.amply.audio.routing.StreamTopology
 import com.agentkosticka.amply.shizuku.protocol.IVolumeService
+import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_CAPABILITIES
+import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
 import com.agentkosticka.amply.shizuku.VolumeUserService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,11 +17,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 
 internal val STABLE_VOLUME_USER_SERVICE_CLASS_NAME: String = VolumeUserService::class.java.name
-internal const val VOLUME_USER_SERVICE_VERSION = 4
+internal const val VOLUME_USER_SERVICE_VERSION = 5
 
 /** Manages the single process-wide connection to the privileged volume service. */
 class ShizukuVolumeManager(
-    packageName: String
+    context: Context
 ) : VolumeServiceConnector {
 
     companion object {
@@ -41,14 +45,17 @@ class ShizukuVolumeManager(
         get() = _isConnected
 
     private val _isConnected = MutableStateFlow(false)
+    private val appContext = context.applicationContext
+    private val userServiceDebuggable =
+        appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
     private val userServiceArgs = Shizuku.UserServiceArgs(
-        ComponentName(packageName, STABLE_VOLUME_USER_SERVICE_CLASS_NAME)
+        ComponentName(appContext.packageName, STABLE_VOLUME_USER_SERVICE_CLASS_NAME)
     )
         .tag(USER_SERVICE_TAG)
         .daemon(false)
         .processNameSuffix("volume_service")
-        .debuggable(true)
+        .debuggable(userServiceDebuggable)
         .version(VOLUME_USER_SERVICE_VERSION)
 
     override fun onPermissionAvailable() {
@@ -107,9 +114,23 @@ class ShizukuVolumeManager(
                     return
                 }
 
-                val service = IVolumeService.asInterface(binder)
+                val service = IVolumeService.Stub.asInterface(binder)
                 if (service == null) {
                     handleDisconnect(generation, "failed to create service proxy")
+                    return
+                }
+
+                val compatible = runCatching {
+                    service.protocolVersion == VOLUME_PROTOCOL_VERSION &&
+                        service.capabilities and VOLUME_PROTOCOL_CAPABILITIES ==
+                        VOLUME_PROTOCOL_CAPABILITIES
+                }.getOrDefault(false)
+                if (!compatible) {
+                    handleDisconnect(
+                        generation,
+                        "incompatible protocol",
+                        VolumeServiceConnectionState.PROTOCOL_MISMATCH
+                    )
                     return
                 }
 
@@ -147,18 +168,25 @@ class ShizukuVolumeManager(
             }
         }
 
-    private fun handleDisconnect(generation: Int, cause: String) {
+    private fun handleDisconnect(
+        generation: Int,
+        cause: String,
+        nextState: VolumeServiceConnectionState = VolumeServiceConnectionState.DISCONNECTED
+    ) {
+        val connection: ServiceConnection?
         synchronized(lock) {
             if (!generations.isCurrent(generation)) {
                 Log.d(TAG, "Ignoring stale disconnect generation=$generation cause=$cause")
                 return
             }
             generations.invalidate()
+            connection = activeConnection
             clearServiceLocked()
             activeConnection = null
-            _connectionState.value = VolumeServiceConnectionState.DISCONNECTED
+            _connectionState.value = nextState
             _isConnected.value = false
         }
+        connection?.let(::unbindConnection)
         Log.w(TAG, "UserService disconnected generation=$generation cause=$cause")
     }
 
@@ -208,7 +236,12 @@ class ShizukuVolumeManager(
         val uid: Int,
         val pid: Int,
         val state: Int,
-        val streamType: Int
+        val streamType: Int,
+        val userId: Int = (uid / 100_000).coerceAtLeast(0),
+        val usage: Int = 0,
+        val contentType: Int = 0,
+        val muted: Boolean = false,
+        val volume: Float = 1f
     )
 
     /** Returns null for an unavailable/failed service and an empty list for valid idle audio. */
@@ -216,38 +249,20 @@ class ShizukuVolumeManager(
         val service = synchronized(lock) { volumeService } ?: return null
 
         return try {
-            val data = service.getActivePlaybacks()
-            if (data.isEmpty()) {
-                // A malformed payload is a query-level failure, not proof that the
-                // binder died. Rebinding the same healthy UserService creates a tight
-                // reconnect loop and cannot repair the payload.
-                Log.w(TAG, "Playback query returned an empty payload; keeping binder connected")
-                return null
-            }
-
-            val count = data[0]
-            if (count < 0 || data.size != 1 + count * 5) {
-                Log.w(
-                    TAG,
-                    "Malformed playback payload size=${data.size} count=$count; keeping binder connected"
+            service.activePlaybacks.orEmpty().mapNotNull { playback ->
+                if (!playback.isValid()) return@mapNotNull null
+                PrivilegedPlayback(
+                    piid = playback.playerInterfaceId,
+                    uid = playback.uid,
+                    pid = playback.pid,
+                    state = playback.playerState,
+                    streamType = playback.streamType,
+                    userId = playback.userId,
+                    usage = playback.usage,
+                    contentType = playback.contentType,
+                    muted = playback.muted,
+                    volume = playback.volume
                 )
-                return null
-            }
-
-            buildList(count) {
-                var index = 1
-                repeat(count) {
-                    add(
-                        PrivilegedPlayback(
-                            piid = data[index],
-                            uid = data[index + 1],
-                            pid = data[index + 2],
-                            state = data[index + 3],
-                            streamType = data[index + 4]
-                        )
-                    )
-                    index += 5
-                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Playback query failed", e)
@@ -257,10 +272,11 @@ class ShizukuVolumeManager(
     }
 
     fun setPlayerVolume(piid: Int, volume: Float): Boolean {
+        if (piid <= 0 || !volume.isFinite() || volume !in 0f..1f) return false
         val service = synchronized(lock) { volumeService } ?: return false
 
         return try {
-            service.setPlayerVolume(piid, volume)
+            service.setPlayerVolume(piid, volume).succeeded
         } catch (e: Exception) {
             Log.e(TAG, "Volume RPC failed piid=$piid", e)
             invalidateConnection("volume RPC failed: ${e.javaClass.simpleName}")
@@ -295,9 +311,10 @@ class ShizukuVolumeManager(
     }
 
     fun setSystemStreamVolume(streamType: Int, index: Int): Boolean {
+        if (streamType !in 0..11 || index < 0) return false
         val service = synchronized(lock) { volumeService } ?: return false
         return try {
-            service.setSystemStreamVolume(streamType, index) > 0
+            service.setSystemStreamVolume(streamType, index).succeeded
         } catch (e: Exception) {
             Log.e(TAG, "System stream update failed stream=$streamType", e)
             invalidateConnection("system-stream RPC failed: ${e.javaClass.simpleName}")

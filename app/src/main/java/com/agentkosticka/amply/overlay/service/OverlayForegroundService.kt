@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.KeyguardManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -12,12 +13,14 @@ import android.content.IntentFilter
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
-import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.agentkosticka.amply.AmplyApplication
 import com.agentkosticka.amply.AmplyRuntime
+import com.agentkosticka.amply.MainActivity
 import com.agentkosticka.amply.R
+import com.agentkosticka.amply.runtime.RuntimeErrorCode
+import com.agentkosticka.amply.runtime.RuntimeHealth
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.settings.model.AppIdentity
 import com.agentkosticka.amply.settings.model.AppSettings
@@ -26,6 +29,7 @@ import com.agentkosticka.amply.audio.session.AppVolumeControlState
 import com.agentkosticka.amply.audio.session.AudioSessionState
 import com.agentkosticka.amply.audio.session.ForegroundVisitState
 import com.agentkosticka.amply.overlay.window.OverlayManager
+import com.agentkosticka.amply.overlay.window.OverlayAttachResult
 import com.agentkosticka.amply.overlay.window.OverlayPresentationMode
 import com.agentkosticka.amply.overlay.ui.OverlayAppPresentation
 import com.agentkosticka.amply.service.OverlayService
@@ -34,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -60,12 +65,22 @@ open class OverlayForegroundService : Service() {
         private const val NOTIFICATION_ID = 1001
 
         const val ACTION_START_RUNTIME = "com.agentkosticka.amply.ACTION_START_RUNTIME"
-        const val ACTION_SHOW_OVERLAY = "com.agentkosticka.amply.ACTION_SHOW_OVERLAY"
-        const val EXTRA_VOLUME_TARGET = "extra_volume_target"
-        const val EXTRA_ICON_TYPE = "extra_icon_type"
-        const val EXTRA_FOCUSED_PACKAGE = "extra_focused_package"
+        const val ACTION_PAUSE = "com.agentkosticka.amply.ACTION_PAUSE"
+        const val ACTION_RESUME = "com.agentkosticka.amply.ACTION_RESUME"
+        const val ACTION_RETRY = "com.agentkosticka.amply.ACTION_RETRY"
+
+        private const val PENDING_SHOW_TTL_MS = 1_000L
+
+        private data class PendingShowRequest(
+            val host: WeakReference<Context>,
+            val target: VolumeTarget,
+            val iconType: String,
+            val foregroundPackage: String?,
+            val expiresAtElapsedMs: Long
+        )
 
         private var activeRuntimeRef: WeakReference<OverlayForegroundService>? = null
+        @Volatile private var pendingShowRequest: PendingShowRequest? = null
 
         fun startRuntime(context: Context) {
             val intent = Intent(context, OverlayService::class.java).apply {
@@ -82,13 +97,15 @@ open class OverlayForegroundService : Service() {
         ) {
             val runtime = activeRuntimeRef?.get()
             if (runtime == null) {
-                val intent = Intent(host, OverlayService::class.java).apply {
-                    action = ACTION_SHOW_OVERLAY
-                    putExtra(EXTRA_VOLUME_TARGET, target.name)
-                    putExtra(EXTRA_ICON_TYPE, iconType)
-                    putExtra(EXTRA_FOCUSED_PACKAGE, foregroundPackage)
-                }
-                ContextCompat.startForegroundService(host, intent)
+                pendingShowRequest = PendingShowRequest(
+                    host = WeakReference(host),
+                    target = target,
+                    iconType = iconType,
+                    foregroundPackage = foregroundPackage,
+                    expiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() +
+                        PENDING_SHOW_TTL_MS
+                )
+                startRuntime(host)
                 return
             }
 
@@ -96,8 +113,7 @@ open class OverlayForegroundService : Service() {
                 hostContext = host,
                 target = target,
                 iconType = iconType,
-                foregroundPackage = foregroundPackage,
-                windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                foregroundPackage = foregroundPackage
             )
         }
     }
@@ -109,6 +125,7 @@ open class OverlayForegroundService : Service() {
     private var overlaySide: OverlaySide = OverlaySide.LEFT
     private var overlayVerticalFraction: Float = 0.5f
     private var preferenceJobs: List<Job> = emptyList()
+    private var notificationJob: Job? = null
     private lateinit var appPresenter: OverlayAppPresenter
     private var latestPresentedApps: List<OverlayAppPresentation> = emptyList()
     private var screenOffReceiverRegistered = false
@@ -140,24 +157,15 @@ open class OverlayForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
+        runtime.setForegroundServiceRunning(true)
         initializeRuntime()
 
         when (intent?.action) {
-            ACTION_SHOW_OVERLAY -> {
-                val target = intent.getStringExtra(EXTRA_VOLUME_TARGET)
-                    ?.let { runCatching { VolumeTarget.valueOf(it) }.getOrNull() }
-                    ?: VolumeTarget.MEDIA
-                val iconType = intent.getStringExtra(EXTRA_ICON_TYPE) ?: "MUSIC"
-                val focusedPackage = intent.getStringExtra(EXTRA_FOCUSED_PACKAGE)
-                showOverlay(
-                    hostContext = this,
-                    target = target,
-                    iconType = iconType,
-                    foregroundPackage = focusedPackage,
-                    windowType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                )
-            }
+            ACTION_PAUSE -> serviceScope.launch { runtime.preferencesManager.pauseAmply() }
+            ACTION_RESUME -> serviceScope.launch { runtime.preferencesManager.restoreAmplyNow() }
+            ACTION_RETRY -> runtime.retryVolumeServiceConnection()
         }
+        drainPendingShowRequest()
 
         return START_STICKY
     }
@@ -242,6 +250,15 @@ open class OverlayForegroundService : Service() {
                 }
             )
 
+            notificationJob = serviceScope.launch {
+                runtime.runtimeHealth.collect { health ->
+                    getSystemService(NotificationManager::class.java).notify(
+                        NOTIFICATION_ID,
+                        createNotification(health)
+                    )
+                }
+            }
+
             OverlayManager.setAppVolumeCallback { app, volume ->
                 sessionManager.setAppVolume(app, volume)
             }
@@ -273,8 +290,7 @@ open class OverlayForegroundService : Service() {
         hostContext: Context,
         target: VolumeTarget,
         iconType: String,
-        foregroundPackage: String?,
-        windowType: Int
+        foregroundPackage: String?
     ) {
         initializeRuntime()
         val powerManager = getSystemService(PowerManager::class.java)
@@ -294,10 +310,10 @@ open class OverlayForegroundService : Service() {
 
         Log.d(
             "OverlayService",
-            "showOverlay: target=$target apps=${apps.size} connection=$connectionState windowType=$windowType"
+            "showOverlay: target=$target apps=${apps.size} connection=$connectionState"
         )
 
-        OverlayManager.show(
+        val result = OverlayManager.show(
             context = hostContext,
             selectedTarget = target,
             newIconType = iconType,
@@ -309,9 +325,33 @@ open class OverlayForegroundService : Service() {
                 OverlayPresentationMode.LOCK_SCREEN_SYSTEM_ONLY
             } else {
                 OverlayPresentationMode.NORMAL
-            },
-            windowType = windowType
+            }
         )
+        if (result == OverlayAttachResult.FAILED) {
+            runtime.reportRuntimeError(RuntimeErrorCode.OVERLAY_ATTACH_FAILED)
+        } else {
+            runtime.clearRuntimeError(RuntimeErrorCode.OVERLAY_ATTACH_FAILED)
+        }
+    }
+
+    private fun drainPendingShowRequest() {
+        val request = pendingShowRequest ?: return
+        pendingShowRequest = null
+        val host = request.host.get()
+        if (host == null || android.os.SystemClock.elapsedRealtime() > request.expiresAtElapsedMs) {
+            runtime.reportRuntimeError(RuntimeErrorCode.OVERLAY_HOST_UNAVAILABLE)
+            return
+        }
+        showOverlay(
+            hostContext = host,
+            target = request.target,
+            iconType = request.iconType,
+            foregroundPackage = request.foregroundPackage
+        )
+        serviceScope.launch {
+            delay(PENDING_SHOW_TTL_MS)
+            runtime.clearRuntimeError(RuntimeErrorCode.OVERLAY_HOST_UNAVAILABLE)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -328,15 +368,53 @@ open class OverlayForegroundService : Service() {
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun createNotification(health: RuntimeHealth = runtime.runtimeHealth.value): Notification {
+        val openApp = PendingIntent.getActivity(
+            this,
+            1,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val status = when {
+            health.recoverableError != null -> "Needs attention: ${health.recoverableError.code.name.lowercase().replace('_', ' ')}"
+            health.isPaused -> "Volume controls paused"
+            !health.accessibilityConnected -> "Enable the Amply Accessibility Service"
+            health.shizukuPermission != com.agentkosticka.amply.shizuku.client.ShizukuPermissionState.GRANTED ->
+                "Shizuku permission required"
+            health.volumeServiceConnection != com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState.CONNECTED ->
+                "Connecting to Shizuku"
+            else -> "Volume controls active"
+        }
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Amply (1)")
-            .setContentText("Volume controls active")
+            .setContentText(status)
             .setSmallIcon(R.drawable.ic_amply_logo_monochrome)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
-            .build()
+            .setContentIntent(openApp)
+
+        val pauseAction = if (health.isPaused) {
+            notificationAction(ACTION_RESUME, 2, "Resume")
+        } else {
+            notificationAction(ACTION_PAUSE, 3, "Pause")
+        }
+        builder.addAction(0, if (health.isPaused) "Resume" else "Pause", pauseAction)
+        if (health.volumeServiceConnection !=
+            com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState.CONNECTED ||
+            health.recoverableError != null
+        ) {
+            builder.addAction(0, "Retry", notificationAction(ACTION_RETRY, 4, "Retry"))
+        }
+        return builder.build()
     }
+
+    private fun notificationAction(action: String, requestCode: Int, label: String): PendingIntent =
+        PendingIntent.getService(
+            this,
+            requestCode,
+            Intent(this, OverlayService::class.java).setAction(action).putExtra("label", label),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     override fun onDestroy() {
         if (screenOffReceiverRegistered) {
@@ -347,6 +425,8 @@ open class OverlayForegroundService : Service() {
         if (activeRuntimeRef?.get() === this) {
             activeRuntimeRef = null
         }
+        runtime.setForegroundServiceRunning(false)
+        notificationJob?.cancel()
         preferenceJobs.forEach { it.cancel() }
         if (::appPresenter.isInitialized) appPresenter.clear()
         serviceScope.cancel()

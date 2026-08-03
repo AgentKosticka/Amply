@@ -4,17 +4,16 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
 import android.os.SystemClock
+import com.agentkosticka.amply.util.readAtMost
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import java.util.concurrent.TimeUnit
 
 /**
  * Repository for managing Shizuku integration.
@@ -145,56 +144,34 @@ class ShizukuRepository(private val context: Context) {
      * @param command The shell command to execute
      * @return The command output as a string, or null if failed
      */
-    suspend fun executeShellCommand(command: String): String? {
+    suspend fun injectVolumeKey(keyCode: Int): Boolean {
+        require(keyCode == 24 || keyCode == 25) { "Only volume keys are allowed" }
         if (_permissionState.value != ShizukuPermissionState.GRANTED) {
-            Log.d(TAG, "Shell command skipped: Shizuku not granted")
-            return null
+            return false
         }
 
         return withContext(Dispatchers.IO) {
-            try {
-                // Use reflection to access Shizuku.newProcess() which is private
-                val process = createShizukuProcess(arrayOf("sh", "-c", command))
-
-                if (process == null) {
-                    Log.e(TAG, "Failed to create Shizuku process")
-                    return@withContext null
-                }
-
-                // Read output with timeout
-                val output = withTimeoutOrNull(5000L.milliseconds) {
-                    val reader = BufferedReader(InputStreamReader(process.inputStream))
-                    val result = StringBuilder()
-
-                    reader.use { r ->
-                        var line: String?
-                        while (r.readLine().also { line = it } != null) {
-                            result.append(line).append("\n")
-                        }
+            val process = createShizukuProcess(arrayOf("input", "keyevent", keyCode.toString()))
+                ?: return@withContext false
+            val completed = runCatching {
+                coroutineScope {
+                    val stdout = async(Dispatchers.IO) { process.inputStream.readAtMost(64 * 1024) }
+                    val stderr = async(Dispatchers.IO) { process.errorStream.readAtMost(64 * 1024) }
+                    val exited = process.waitFor(5, TimeUnit.SECONDS)
+                    if (!exited) {
+                        process.destroy()
+                        if (!process.waitFor(250, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+                        stdout.cancel()
+                        stderr.cancel()
+                        return@coroutineScope false
                     }
-
-                    result.toString()
+                    stdout.await()
+                    stderr.await()
+                    process.exitValue() == 0
                 }
-
-                // Also read error stream for debugging
-                val errorReader = BufferedReader(InputStreamReader(process.errorStream))
-                val errorOutput = errorReader.use { it.readText() }
-                if (errorOutput.isNotBlank()) {
-                    Log.d(TAG, "Shell command stderr: $errorOutput")
-                }
-
-                // Wait for process completion
-                process.waitFor()
-
-                if (output == null) {
-                    Log.w(TAG, "Shell command timed out: $command")
-                }
-
-                output
-            } catch (e: Exception) {
-                Log.e(TAG, "Shell command failed: $command", e)
-                null
-            }
+            }.getOrDefault(false)
+            if (!completed && process.isAlive) process.destroyForcibly()
+            completed
         }
     }
 

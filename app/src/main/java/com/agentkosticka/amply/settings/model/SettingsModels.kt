@@ -68,8 +68,19 @@ data class SettingsImportPreview(
     val appCount: Int,
     val customizedAppCount: Int,
     val valid: Boolean,
+    val standDownCount: Int = 0,
+    val replacesGlobalSettings: Boolean = true,
     val error: String? = null
 )
+
+enum class ImportMode { MERGE, REPLACE }
+
+sealed interface SettingsOperationResult {
+    data object Success : SettingsOperationResult
+    data object StoreCorrupt : SettingsOperationResult
+    data class ValidationFailed(val reason: String) : SettingsOperationResult
+    data class IoFailed(val reason: String) : SettingsOperationResult
+}
 
 enum class OverlayAppMode {
     HIDDEN,
@@ -105,7 +116,6 @@ data class AppSettings(
     val userId: Int = AppIdentity.fromUid(packageName, uid).userId,
     val defaultVolume: Float = 1.0f,
     val overlayMode: OverlayAppMode = OverlayAppMode.AUTO,
-    val passVolumeKeysToApp: Boolean = false,
     val lastSeenTimestamp: Long = 0L
 ) {
     val identity: AppIdentity get() = AppIdentity(userId, packageName)
@@ -114,7 +124,6 @@ data class AppSettings(
 
     val isCustomized: Boolean
         get() = overlayMode != OverlayAppMode.AUTO ||
-            passVolumeKeysToApp ||
             kotlin.math.abs(defaultVolume - 1.0f) > 0.001f
 }
 

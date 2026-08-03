@@ -99,6 +99,12 @@ internal fun RingerExperimentPanel(
                             color = NothingColors.White,
                             style = MaterialTheme.typography.bodyMedium
                         )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "The selected method is used by the overlay’s ringer icon for this session.",
+                            color = NothingColors.GreyMedium,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
@@ -149,7 +155,7 @@ internal fun RingerExperimentPanel(
                             disabledContainerColor = DarkControlBackground.copy(alpha = 0.35f),
                             disabledContentColor = NothingColors.White.copy(alpha = 0.5f)
                         )
-                    ) { Text(if (selected == method) "ACTIVE" else "USE") }
+                    ) { Text(if (selected == method) "SELECTED" else "SELECT") }
                 }
                 if (explainedMethod == method.name) {
                     Spacer(Modifier.height(6.dp))

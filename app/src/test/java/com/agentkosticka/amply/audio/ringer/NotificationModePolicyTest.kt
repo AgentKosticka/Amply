@@ -31,4 +31,12 @@ class NotificationModePolicyTest {
         assertEquals(6, ALL_RINGER_MODE_TRANSITIONS.size)
         assertEquals(expected, ALL_RINGER_MODE_TRANSITIONS.toSet())
     }
+
+    @Test
+    fun `overlay uses the selected E7 controller`() {
+        assertEquals(
+            RingerExperimentMethod.SHIZUKU_INTERNAL_MODE,
+            overlayToggleMethod(RingerExperimentMethod.SHIZUKU_INTERNAL_MODE)
+        )
+    }
 }

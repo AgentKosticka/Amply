@@ -4,4 +4,44 @@
 
     <!-- Accessibility Service -->
     <string name="accessibility_service_description">Allows Amply (1) to detect volume buttons and foreground-window package changes so it can show the correct volume controls. It does not read window content or collect or transmit data.</string>
+    <string name="setup_title">AMPLY</string>
+    <string name="setup_step_progress">%1$d of %2$d</string>
+    <string name="setup_welcome_title">Your volume buttons, upgraded.</string>
+    <string name="setup_welcome_body">Amply gives you a cleaner volume panel and puts the controls you use most within easy reach.</string>
+    <string name="setup_get_started">Get started</string>
+    <string name="setup_next">Next</string>
+    <string name="setup_enable_amply">Enable Amply</string>
+    <string name="setup_accessibility_welcome_title">Let Amply use your volume buttons</string>
+    <string name="setup_accessibility_ready_title">You’re all set</string>
+    <string name="setup_accessibility_consumer_description">Android calls this Accessibility access. Amply uses it to notice volume-button presses and show your volume panel.</string>
+    <string name="setup_accessibility_privacy">Amply doesn’t read what’s on your screen, type for you, or collect your personal data.</string>
+    <string name="setup_shizuku_optional_welcome_title">Want the best experience?</string>
+    <string name="setup_shizuku_consumer_description">Shizuku unlocks Amply’s per-app volume controls. It’s optional, and you can add it later from the Access tab.</string>
+    <string name="setup_shizuku_without_warning">Without Shizuku, Amply still handles your regular Android volume. Per-app controls won’t be available.</string>
+    <string name="setup_shizuku_ready_simple">Shizuku is connected. Per-app volume controls are ready.</string>
+    <string name="setup_open_shizuku">Open Shizuku</string>
+    <string name="setup_connect_shizuku">Connect Shizuku</string>
+    <string name="setup_enter_amply">Enter Amply</string>
+    <string name="setup_continue_without_shizuku">Continue without Shizuku</string>
+    <string name="setup_explanation">Shizuku controls privileged audio sessions. The Amply Accessibility Service handles volume keys and hosts the volume pill. Complete both required steps below.</string>
+    <string name="setup_shizuku_title">Shizuku connection</string>
+    <string name="setup_shizuku_description">Install and start Shizuku, then grant Amply access to per-app audio sessions.</string>
+    <string name="setup_install_shizuku">Install Shizuku</string>
+    <string name="setup_start_shizuku">Start Shizuku</string>
+    <string name="setup_grant_shizuku">Grant access</string>
+    <string name="setup_retry_connection">Retry connection</string>
+    <string name="setup_accessibility_title">Volume-key service</string>
+    <string name="setup_accessibility_description">Enable Amply under Accessibility so it can receive volume keys and show its accessibility overlay.</string>
+    <string name="setup_open_settings">Open settings</string>
+    <string name="setup_optional_title">OPTIONAL ACCESS</string>
+    <string name="setup_notifications_title">Notifications</string>
+    <string name="setup_notifications_description">Recommended so Android can show Amply’s foreground-service status and recovery actions.</string>
+    <string name="setup_phone_title">Call state</string>
+    <string name="setup_phone_description">Improves incoming-call detection. Amply does not read phone numbers or call history; without it, call-like states pass through safely.</string>
+    <string name="setup_allow">Allow</string>
+    <string name="setup_optional_badge">Optional</string>
+    <string name="setup_refresh">Refresh</string>
+    <string name="setup_finish">Finish setup</string>
+    <string name="setup_complete_required">Complete required steps</string>
+    <string name="dismiss">Dismiss</string>
 </resources>

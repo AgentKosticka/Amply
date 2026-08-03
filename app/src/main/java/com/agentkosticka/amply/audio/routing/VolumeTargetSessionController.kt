@@ -31,6 +31,12 @@ sealed interface VolumeKeyStreamAction {
     data object PassThrough : VolumeKeyStreamAction
 }
 
+sealed interface VolumeAdjustmentResult {
+    data class Applied(val target: VolumeTarget) : VolumeAdjustmentResult
+    data object Unavailable : VolumeAdjustmentResult
+    data class Failed(val target: VolumeTarget?) : VolumeAdjustmentResult
+}
+
 internal object VolumeTargetPolicy {
     const val NOTIFICATION_GRACE_MS = 1_000L
 

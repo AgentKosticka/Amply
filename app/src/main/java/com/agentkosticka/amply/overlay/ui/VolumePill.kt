@@ -242,8 +242,8 @@ private fun StreamVolumeColumn(
     onMuteToggle: () -> Unit,
     iconType: String,
     limitFeedback: VolumeLimitFeedback?,
-    enabled: Boolean = true,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     val percentageBoundaryShake = remember { Animatable(0f) }
     val usesPercentageBoundaryFeedback = VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(
@@ -360,6 +360,7 @@ private fun StreamVolumeColumn(
             visuallyEnabled = stream.enabled,
             limitFeedbackLevel = limitFeedback?.dotLevel?.takeIf { usesDotBoundaryFeedback },
             limitFeedbackEventId = limitFeedback?.eventId?.takeIf { usesDotBoundaryFeedback },
+            accessibilityLabel = stream.label,
             modifier = Modifier
                 .height(130.dp)
                 .width(40.dp)

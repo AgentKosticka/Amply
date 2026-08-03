@@ -73,6 +73,7 @@ internal fun ShizukuWarningCard(
         ShizukuPermissionState.UNKNOWN -> "CHECKING SHIZUKU"
         ShizukuPermissionState.GRANTED -> when (connectionState) {
             VolumeServiceConnectionState.BINDING -> "RECONNECTING TO SHIZUKU"
+            VolumeServiceConnectionState.PROTOCOL_MISMATCH -> "SHIZUKU SERVICE NEEDS AN UPGRADE"
             else -> "SHIZUKU CONNECTION LOST"
         }
         else -> "SHIZUKU NOT CONNECTED"
@@ -84,7 +85,13 @@ internal fun ShizukuWarningCard(
         ShizukuPermissionState.SHOULD_SHOW_RATIONALE,
         ShizukuPermissionState.DENIED -> "Shizuku is running. Grant Amply access to restore per-app volume control."
         ShizukuPermissionState.UNKNOWN -> "Refresh the Shizuku connection state."
-        ShizukuPermissionState.GRANTED -> "Amply is restoring per-app volume control."
+        ShizukuPermissionState.GRANTED -> if (
+            connectionState == VolumeServiceConnectionState.PROTOCOL_MISMATCH
+        ) {
+            "Amply and its privileged service use different protocols. Update Amply, then retry."
+        } else {
+            "Amply is restoring per-app volume control."
+        }
     }
     val actionText = when (permissionState) {
         ShizukuPermissionState.SHIZUKU_NOT_INSTALLED -> "INSTALL"
@@ -187,6 +194,7 @@ internal fun DataRecoveryPanel(
     onExport: () -> Unit,
     onImport: () -> Unit,
     onCleanup: () -> Unit,
+    onRepair: () -> Unit,
     onReset: () -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -225,6 +233,10 @@ internal fun DataRecoveryPanel(
             Spacer(Modifier.height(8.dp))
             MaintenanceButton("CLEAN STALE APPS · $staleAppCount", onClick = onCleanup)
             Spacer(Modifier.height(8.dp))
+            if (health == AppSettingsStoreHealth.CORRUPT) {
+                MaintenanceButton("REPAIR APP SETTINGS", destructive = true, onClick = onRepair)
+                Spacer(Modifier.height(8.dp))
+            }
             MaintenanceButton("RESET AMPLY", destructive = true, onClick = onReset)
         }
     }

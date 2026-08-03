@@ -8,12 +8,15 @@ import android.util.Log
 import com.agentkosticka.amply.audio.session.AudioSessionManager
 import com.agentkosticka.amply.audio.session.ForegroundVisitTracker
 import com.agentkosticka.amply.audio.ringer.RingerExperimentExecutor
-import com.agentkosticka.amply.audio.ringer.RingerExperimentMethod
 import com.agentkosticka.amply.audio.routing.SystemStreamSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.routing.VolumeTargetSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTargetPolicy
 import com.agentkosticka.amply.settings.data.PreferencesManager
+import com.agentkosticka.amply.runtime.RuntimeError
+import com.agentkosticka.amply.runtime.RuntimeErrorCode
+import com.agentkosticka.amply.runtime.RuntimeHealth
+import com.agentkosticka.amply.runtime.RuntimeOperationState
 import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
@@ -24,6 +27,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -36,18 +43,18 @@ class AmplyRuntime(context: Context) {
     private val runtimeScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var notificationExpiryJob: Job? = null
+    private var pauseHealthExpiryJob: Job? = null
     private var lastObservedAudioMode: Int? = null
+    private val _runtimeHealth = MutableStateFlow(RuntimeHealth())
+    val runtimeHealth: StateFlow<RuntimeHealth> = _runtimeHealth.asStateFlow()
 
     val preferencesManager = PreferencesManager(appContext)
     val shizukuRepository = ShizukuRepository(appContext)
-    val shizukuVolumeManager = ShizukuVolumeManager(appContext.packageName)
+    val shizukuVolumeManager = ShizukuVolumeManager(appContext)
     val ringerExperimentExecutor = RingerExperimentExecutor(
         appContext,
         shizukuVolumeManager,
-        shizukuRepository,
-        onMethodSelected = { method ->
-            runtimeScope.launch { preferencesManager.setRingerMethod(method.name) }
-        }
+        shizukuRepository
     )
     val audioSessionManager = AudioSessionManager(
         context = appContext,
@@ -78,15 +85,48 @@ class AmplyRuntime(context: Context) {
                 .onFailure { Log.w(TAG, "Automatic stale-app cleanup failed", it) }
         }
         runtimeScope.launch {
-            preferencesManager.ringerMethod.collect { stored ->
-                val method = runCatching { RingerExperimentMethod.valueOf(stored) }
-                    .getOrDefault(RingerExperimentMethod.SHIZUKU_INTERNAL_MODE)
-                ringerExperimentExecutor.restoreSelected(method)
+            sessionState.collect { state ->
+                foregroundVisitTracker.onSessionsChanged(state.sessions)
             }
         }
         runtimeScope.launch {
-            sessionState.collect { state ->
-                foregroundVisitTracker.onSessionsChanged(state.sessions)
+            combine(
+                shizukuRepository.permissionState,
+                connectionState,
+                preferencesManager.amplyPausedUntilEpochMs
+            ) { permission, connection, pausedUntil ->
+                Triple(permission, connection, pausedUntil)
+            }.collect { (permission, connection, pausedUntil) ->
+                pauseHealthExpiryJob?.cancel()
+                val now = System.currentTimeMillis()
+                val effectivePausedUntil = if (pausedUntil > now) pausedUntil else 0L
+                _runtimeHealth.update {
+                    it.copy(
+                        shizukuPermission = permission,
+                        volumeServiceConnection = connection,
+                        pausedUntilEpochMs = effectivePausedUntil,
+                        recoverableError = when {
+                            connection == VolumeServiceConnectionState.PROTOCOL_MISMATCH ->
+                                RuntimeError(RuntimeErrorCode.SHIZUKU_PROTOCOL_MISMATCH)
+                            connection == VolumeServiceConnectionState.CONNECTED &&
+                                it.recoverableError?.code in setOf(
+                                    RuntimeErrorCode.SHIZUKU_CONNECTION_FAILED,
+                                    RuntimeErrorCode.SHIZUKU_PROTOCOL_MISMATCH
+                                ) -> null
+                            else -> it.recoverableError
+                        }
+                    )
+                }
+                if (effectivePausedUntil in (now + 1)..<Long.MAX_VALUE) {
+                    pauseHealthExpiryJob = runtimeScope.launch {
+                        delay((effectivePausedUntil - System.currentTimeMillis()).coerceAtLeast(1L))
+                        _runtimeHealth.update { health ->
+                            if (health.pausedUntilEpochMs == effectivePausedUntil) {
+                                health.copy(pausedUntilEpochMs = 0L)
+                            } else health
+                        }
+                    }
+                }
             }
         }
         runtimeScope.launch {
@@ -127,7 +167,50 @@ class AmplyRuntime(context: Context) {
     }
 
     fun retryVolumeServiceConnection() {
+        clearRuntimeError(RuntimeErrorCode.SHIZUKU_CONNECTION_FAILED)
         connectionCoordinator.retryNow()
+    }
+
+    fun setAccessibilityConnected(connected: Boolean) {
+        _runtimeHealth.update { it.copy(accessibilityConnected = connected) }
+    }
+
+    fun setForegroundServiceRunning(running: Boolean) {
+        _runtimeHealth.update { it.copy(foregroundServiceRunning = running) }
+    }
+
+    fun reportRuntimeError(code: RuntimeErrorCode) {
+        _runtimeHealth.update {
+            it.copy(
+                lastOperation = RuntimeOperationState.FAILED,
+                recoverableError = RuntimeError(code)
+            )
+        }
+    }
+
+    fun clearRuntimeError(code: RuntimeErrorCode? = null) {
+        _runtimeHealth.update {
+            if (code == null || it.recoverableError?.code == code) {
+                it.copy(recoverableError = null)
+            } else {
+                it
+            }
+        }
+    }
+
+    fun reportVolumeOperation(applied: Boolean) {
+        _runtimeHealth.update {
+            it.copy(
+                lastOperation = if (applied) {
+                    RuntimeOperationState.APPLIED
+                } else {
+                    RuntimeOperationState.FAILED
+                },
+                recoverableError = if (applied &&
+                    it.recoverableError?.code == RuntimeErrorCode.VOLUME_CHANGE_FAILED
+                ) null else it.recoverableError
+            )
+        }
     }
 
     fun onAudioModeObserved(mode: Int) {
@@ -173,13 +256,18 @@ class AmplyRuntime(context: Context) {
         val success = when {
             canonical == VolumeTarget.NOTIFICATION -> runCatching {
                 ringerExperimentExecutor.setNotificationVolumeFromControl(clamped)
-            }.isSuccess
+            }.getOrDefault(false)
             canonical.permanentlyVisible || canonical == VolumeTarget.RING -> runCatching {
                 audioManager.setStreamVolume(canonical.streamType, clamped, 0)
-            }.isSuccess
+                audioManager.getStreamVolume(canonical.streamType) == clamped
+            }.getOrDefault(false)
             else -> shizukuVolumeManager.setSystemStreamVolume(canonical.streamType, clamped)
         }
-        if (!success) disableSystemStream(canonical)
+        reportVolumeOperation(success)
+        if (!success) {
+            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
+            disableSystemStream(canonical)
+        }
         return success
     }
 }

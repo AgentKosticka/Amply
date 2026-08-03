@@ -16,7 +16,8 @@ enum class VolumeServiceConnectionState {
     WAITING_FOR_PERMISSION,
     DISCONNECTED,
     BINDING,
-    CONNECTED
+    CONNECTED,
+    PROTOCOL_MISMATCH
 }
 
 internal interface VolumeServiceConnector {
@@ -136,6 +137,7 @@ internal class VolumeServiceConnectionCoordinator(
                 }
                 VolumeServiceConnectionState.BINDING -> bindStartedAt = now
                 VolumeServiceConnectionState.DISCONNECTED -> scheduleRetry(now)
+                VolumeServiceConnectionState.PROTOCOL_MISMATCH -> resetRetryState()
                 VolumeServiceConnectionState.WAITING_FOR_PERMISSION -> Unit
             }
             lastState = state
@@ -143,7 +145,8 @@ internal class VolumeServiceConnectionCoordinator(
 
         when (state) {
             VolumeServiceConnectionState.CONNECTED,
-            VolumeServiceConnectionState.WAITING_FOR_PERMISSION -> Unit
+            VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
+            VolumeServiceConnectionState.PROTOCOL_MISMATCH -> Unit
 
             VolumeServiceConnectionState.BINDING -> {
                 if (now - bindStartedAt >= bindTimeoutMs) {
@@ -200,6 +203,7 @@ internal class VolumeServiceConnectionCoordinator(
             VolumeServiceConnectionState.BINDING ->
                 (bindTimeoutMs - (now - bindStartedAt)).coerceAtLeast(0L)
             VolumeServiceConnectionState.CONNECTED -> IDLE_WAIT_MS
+            VolumeServiceConnectionState.PROTOCOL_MISMATCH -> IDLE_WAIT_MS
         }
     }
 }

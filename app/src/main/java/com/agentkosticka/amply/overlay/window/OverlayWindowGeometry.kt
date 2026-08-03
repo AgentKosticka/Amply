@@ -12,10 +12,15 @@ internal object OverlayWindowGeometry {
     fun landscapeWidthPx(
         displayWidthPx: Int,
         edgeMarginPx: Int,
-        occlusions: HorizontalOcclusionInsets,
-        minimumWidthPx: Int
+        occlusions: HorizontalOcclusionInsets
     ): Int = (displayWidthPx.coerceAtLeast(0) -
         edgeMarginPx.coerceAtLeast(0) * 2 -
         occlusions.total)
-        .coerceAtLeast(minimumWidthPx.coerceAtLeast(0))
+        .coerceAtLeast(1)
+}
+
+enum class OverlayAttachResult {
+    ATTACHED,
+    ALREADY_ATTACHED,
+    FAILED
 }

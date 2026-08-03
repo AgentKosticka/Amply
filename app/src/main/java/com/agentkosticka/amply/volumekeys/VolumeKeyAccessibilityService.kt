@@ -26,6 +26,7 @@ import com.agentkosticka.amply.audio.routing.MediaRouteVolumeState
 import com.agentkosticka.amply.audio.routing.MediaVolumeActionPolicy
 import com.agentkosticka.amply.audio.routing.CallPhase
 import com.agentkosticka.amply.audio.routing.VolumeKeyStreamAction
+import com.agentkosticka.amply.audio.routing.VolumeAdjustmentResult
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.overlay.window.OverlayManager
 import com.agentkosticka.amply.service.OverlayService
@@ -106,7 +107,7 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .build()
 
-    // Phase 3.5: Smart Focus - track foreground app package
+    // Foreground identity is used for routing and never persisted in logs.
     private var foregroundPackage: String? = null
     private val activeCameraIds = mutableSetOf<String>()
     private val volumeKeyCameraAppCache = mutableMapOf<String, Boolean>()
@@ -160,6 +161,7 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
         keyguardManager = getSystemService(KeyguardManager::class.java)
         foregroundAppResolver = ForegroundAppResolver.fromPackageManager(packageManager, packageName)
+        (application as AmplyApplication).runtime.setAccessibilityConnected(true)
 
         // Register audio device callback
         audioManager?.registerAudioDeviceCallback(audioDeviceCallback, null)
@@ -260,13 +262,26 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
                         }
                         is VolumeKeyStreamAction.Adjust -> {
                             if (event.repeatCount == 0) {
-                                val appliedTarget = handleVolumeKeyDown(isUp, action.target)
-                                streamActionRouter.replace(
-                                    event.keyCode,
-                                    VolumeKeyStreamAction.Adjust(appliedTarget)
-                                )
+                                when (val result = handleVolumeKeyDown(event.keyCode, isUp, action.target)) {
+                                    is VolumeAdjustmentResult.Applied -> {
+                                        streamActionRouter.replace(
+                                            event.keyCode,
+                                            VolumeKeyStreamAction.Adjust(result.target)
+                                        )
+                                        true
+                                    }
+                                    VolumeAdjustmentResult.Unavailable,
+                                    is VolumeAdjustmentResult.Failed -> {
+                                        streamActionRouter.replace(
+                                            event.keyCode,
+                                            VolumeKeyStreamAction.PassThrough
+                                        )
+                                        false
+                                    }
+                                }
+                            } else {
+                                true
                             }
-                            true
                         }
                     }
                 }
@@ -346,12 +361,18 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
     /**
      * Handle volume key down with hold-to-repeat logic
      */
-    private fun handleVolumeKeyDown(isUp: Boolean, target: VolumeTarget): VolumeTarget {
+    private fun handleVolumeKeyDown(
+        keyCode: Int,
+        isUp: Boolean,
+        target: VolumeTarget
+    ): VolumeAdjustmentResult {
         // Cancel any existing repeat job
         repeatJob?.cancel()
 
         // Change volume once immediately
-        var repeatTarget = changeVolumeWithFallback(isUp, target)
+        val initial = changeVolumeWithFallback(isUp, target)
+        if (initial !is VolumeAdjustmentResult.Applied) return initial
+        var repeatTarget = initial.target
 
         // Start repeat after initial debounce
         repeatJob = serviceScope.launch {
@@ -359,11 +380,18 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
 
             // Repeat every 150ms while held
             while (isActive) {
-                repeatTarget = changeVolumeWithFallback(isUp, repeatTarget)
+                when (val result = changeVolumeWithFallback(isUp, repeatTarget)) {
+                    is VolumeAdjustmentResult.Applied -> repeatTarget = result.target
+                    VolumeAdjustmentResult.Unavailable,
+                    is VolumeAdjustmentResult.Failed -> {
+                        streamActionRouter.replace(keyCode, VolumeKeyStreamAction.PassThrough)
+                        cancel()
+                    }
+                }
                 delay(150.milliseconds)
             }
         }
-        return repeatTarget
+        return initial
     }
 
     /**
@@ -382,6 +410,14 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         val manager = audioManager ?: return VolumeKeyStreamAction.Adjust(VolumeTarget.MEDIA)
         val runtime = (application as AmplyApplication).runtime
         runtime.onAudioModeObserved(manager.mode)
+        val phoneStateGranted = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!phoneStateGranted &&
+            (manager.mode == AudioManager.MODE_RINGTONE ||
+                com.agentkosticka.amply.audio.routing.VolumeTargetPolicy.isActiveCallMode(manager.mode))
+        ) {
+            return VolumeKeyStreamAction.PassThrough
+        }
         val automatic = runtime.volumeTargetSessionController.resolveForInitialKeyDown(
             audioMode = manager.mode,
             callPhase = currentCallPhase()
@@ -446,28 +482,47 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         }.getOrDefault(false)
     }
 
-    private fun changeVolumeWithFallback(isUp: Boolean, initialTarget: VolumeTarget): VolumeTarget {
+    private fun changeVolumeWithFallback(
+        isUp: Boolean,
+        initialTarget: VolumeTarget
+    ): VolumeAdjustmentResult {
         val runtime = (application as AmplyApplication).runtime
         var target = initialTarget
+        var failedTarget: VolumeTarget? = null
         repeat(VolumeTarget.entries.size) {
-            if (changeVolume(isUp, target)) return target
+            when (val result = changeVolume(isUp, target)) {
+                is VolumeAdjustmentResult.Applied -> return result
+                is VolumeAdjustmentResult.Failed -> failedTarget = result.target
+                VolumeAdjustmentResult.Unavailable -> Unit
+            }
             runtime.disableSystemStream(target)
             target = when (val fallback = resolveStreamAction()) {
                 is VolumeKeyStreamAction.Adjust -> fallback.target
                 is VolumeKeyStreamAction.AdjustRemoteMedia,
                 VolumeKeyStreamAction.SilenceIncomingRinger,
-                VolumeKeyStreamAction.PassThrough -> return target
+                VolumeKeyStreamAction.PassThrough -> return if (failedTarget != null) {
+                    VolumeAdjustmentResult.Failed(failedTarget)
+                } else {
+                    VolumeAdjustmentResult.Unavailable
+                }
             }
         }
-        return target
+        return if (failedTarget != null) {
+            VolumeAdjustmentResult.Failed(failedTarget)
+        } else {
+            VolumeAdjustmentResult.Unavailable
+        }
     }
 
-    private fun changeVolume(isUp: Boolean, target: VolumeTarget): Boolean {
-        val manager = audioManager ?: return false
+    private fun changeVolume(isUp: Boolean, target: VolumeTarget): VolumeAdjustmentResult {
+        val manager = audioManager ?: return VolumeAdjustmentResult.Unavailable
         val streamType = target.streamType
-        val currentVolume = runCatching { manager.getStreamVolume(streamType) }.getOrElse { return false }
-        val minVolume = runCatching { manager.getStreamMinVolume(streamType) }.getOrElse { return false }
-        val maxVolume = runCatching { manager.getStreamMaxVolume(streamType) }.getOrElse { return false }
+        val currentVolume = runCatching { manager.getStreamVolume(streamType) }
+            .getOrElse { return VolumeAdjustmentResult.Failed(target) }
+        val minVolume = runCatching { manager.getStreamMinVolume(streamType) }
+            .getOrElse { return VolumeAdjustmentResult.Failed(target) }
+        val maxVolume = runCatching { manager.getStreamMaxVolume(streamType) }
+            .getOrElse { return VolumeAdjustmentResult.Failed(target) }
 
         val newVolume = VolumeStepPolicy.next(
             current = currentVolume,
@@ -483,20 +538,20 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
                 target = target,
                 isUp = isUp
             )
-            return true
+            return VolumeAdjustmentResult.Applied(target)
         }
 
         val applied = (application as AmplyApplication).runtime
             .setSystemStreamVolume(target, newVolume)
-        if (!applied) return false
+        if (!applied) return VolumeAdjustmentResult.Failed(target)
+        val verified = runCatching { manager.getStreamVolume(streamType) == newVolume }
+            .getOrDefault(false)
+        if (!verified) return VolumeAdjustmentResult.Failed(target)
         showOverlay(target)
-        return true
+        return VolumeAdjustmentResult.Applied(target)
     }
 
-    /**
-     * Show or update the overlay with current sessions
-     * Phase 3.5: Now includes focused app detection for Smart Focus
-     */
+    /** Show or update the overlay with the current routing target. */
     private fun showOverlay(target: VolumeTarget) {
         OverlayService.showFromAccessibilityHost(
             host = this,
@@ -577,6 +632,7 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         routingPreferencesJob?.cancel()
         sequenceRouter.clear()
         streamActionRouter.clear()
+        (application as AmplyApplication).runtime.setAccessibilityConnected(false)
         serviceScope.cancel()
 
         // Unregister audio device callback

@@ -2,18 +2,16 @@ package com.agentkosticka.amply.settings.data
 
 import com.agentkosticka.amply.settings.model.*
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppSettingsCodecTest {
     @Test
-    fun oldJsonDefaultsPassThroughToFalse() {
+    fun oldJsonDefaultsToAutomaticOverlayMode() {
         val decoded = AppSettingsCodec.decode(
             """{"com.example":{"appName":"Example","uid":42,"defaultVolume":0.4,"hiddenInOverlay":false}}"""
         ).values.single()
 
-        assertFalse(decoded.passVolumeKeysToApp)
         assertEquals(OverlayAppMode.AUTO, decoded.overlayMode)
     }
 
@@ -27,24 +25,35 @@ class AppSettingsCodecTest {
     }
 
     @Test
-    fun passThroughSurvivesRoundTripAndCountsAsCustomized() {
+    fun schemaThreeRoundTripKeepsProfileAwareSettings() {
         val original = AppSettings(
             "com.example",
             "Example",
             42,
             defaultVolume = 0.45f,
             overlayMode = OverlayAppMode.PINNED,
-            passVolumeKeysToApp = true,
             lastSeenTimestamp = 123L
         )
         val decoded = AppSettingsCodec.decode(AppSettingsCodec.encode(mapOf(original.identity to original)))
             .getValue(original.identity)
 
-        assertTrue(decoded.passVolumeKeysToApp)
         assertTrue(decoded.isCustomized)
         assertEquals(OverlayAppMode.PINNED, decoded.overlayMode)
         assertEquals(0.45f, decoded.defaultVolume, 0.001f)
         assertEquals(123L, decoded.lastSeenTimestamp)
+    }
+
+    @Test fun legacyPassThroughMigratesToPackageSet() {
+        val raw = """{"_schemaVersion":2,"apps":{"0|com.example":{"packageName":"com.example","uid":42,"passVolumeKeysToApp":true}}}"""
+        assertEquals(setOf("com.example"), AppSettingsCodec.legacyPassThroughPackages(raw))
+        assertEquals("com.example", AppSettingsCodec.decode(raw).values.single().packageName)
+    }
+
+    @Test fun futureSchemaIsRejected() {
+        assertTrue(
+            AppSettingsCodec.decodeResult("""{"_schemaVersion":99,"apps":{}}""") is
+                AppSettingsDecodeResult.Corrupt
+        )
     }
 
     @Test fun samePackageInTwoProfilesSurvivesRoundTrip() {
@@ -60,6 +69,32 @@ class AppSettingsCodecTest {
 
     @Test fun malformedJsonIsReportedInsteadOfSilentlyDecodedAsEmpty() {
         assertTrue(AppSettingsCodec.decodeResult("{broken") is AppSettingsDecodeResult.Corrupt)
+    }
+
+    @Test fun invalidPackageRangeAndNonFiniteVolumeAreRejected() {
+        assertTrue(
+            AppSettingsCodec.decodeResult(
+                """{"apps":{"bad":{"packageName":"not a package!","uid":42}}}"""
+            ) is AppSettingsDecodeResult.Corrupt
+        )
+        assertTrue(
+            AppSettingsCodec.decodeResult(
+                """{"apps":{"com.example":{"packageName":"com.example","uid":42,"defaultVolume":1.5}}}"""
+            ) is AppSettingsDecodeResult.Corrupt
+        )
+        assertTrue(
+            AppSettingsCodec.decodeResult(
+                """{"apps":{"com.example":{"packageName":"com.example","uid":42,"defaultVolume":"NaN"}}}"""
+            ) is AppSettingsDecodeResult.Corrupt
+        )
+    }
+
+    @Test fun duplicateProfileIdentityIsRejected() {
+        val raw = """{"apps":{
+            "0|com.example":{"packageName":"com.example","uid":42},
+            "legacyAlias":{"packageName":"com.example","uid":42}
+        }}""".trimIndent()
+        assertTrue(AppSettingsCodec.decodeResult(raw) is AppSettingsDecodeResult.Corrupt)
     }
 
     @Test fun corruptPrimaryRecoversFromPreviousGoodSnapshot() {

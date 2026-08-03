@@ -1,6 +1,5 @@
 package com.agentkosticka.amply.overlay.ui
 
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -23,8 +22,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -56,7 +55,7 @@ internal fun Modifier.dynamicWidth(widthPx: Density.() -> Float): Modifier = lay
         constraints.copy(minWidth = width, maxWidth = width)
     )
     layout(width, placeable.height) {
-        placeable.placeRelative(0, 0)
+        placeable.place(0, 0)
     }
 }
 
@@ -93,18 +92,19 @@ fun VolumeOverlay(
     val hasPanelContent = apps.isNotEmpty() ||
         (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
     val expandToStart = overlaySide == OverlaySide.RIGHT
-    val configuration = LocalConfiguration.current
     val density = LocalDensity.current
+    val containerSize = LocalWindowInfo.current.containerSize
     var mainPillHeightPx by remember { mutableIntStateOf(0) }
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isLandscape = containerSize.width > containerSize.height
     val measuredAvailableWidth = if (availableWidthDp > 0f) {
         availableWidthDp.dp
     } else {
-        configuration.screenWidthDp.dp - 32.dp
+        with(density) { (containerSize.width - 32.dp.roundToPx()).coerceAtLeast(1).toDp() }
     }
     val desiredPillWidth = CollapsedPillWidth * volumeBars.size.coerceAtLeast(4)
-    val expandedPillWidth = desiredPillWidth.coerceAtMost(measuredAvailableWidth)
-        .coerceAtLeast(ExpandedPillWidth)
+    val maximumWidth = measuredAvailableWidth.coerceAtLeast(CollapsedPillWidth)
+    val minimumExpandedWidth = ExpandedPillWidth.coerceAtMost(maximumWidth)
+    val expandedPillWidth = desiredPillWidth.coerceIn(minimumExpandedWidth, maximumWidth)
     val landscapeContainerWidth = measuredAvailableWidth.coerceAtLeast(expandedPillWidth)
     val landscapePanelWidth = ExpandedPillWidth
     val overlayContainerWidth = if (isLandscape) {
@@ -148,7 +148,11 @@ fun VolumeOverlay(
     val pillContent: @Composable () -> Unit = {
         Column(
             modifier = Modifier.zIndex(1f),
-            horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
+            horizontalAlignment = if (expandToStart) {
+                androidx.compose.ui.AbsoluteAlignment.Right
+            } else {
+                androidx.compose.ui.AbsoluteAlignment.Left
+            }
         ) {
             Box(
                 modifier = Modifier
@@ -266,7 +270,11 @@ fun VolumeOverlay(
                 modifier = Modifier
                     .width(overlayContainerWidth)
                     .then(collapsedHitTestModifier),
-                horizontalArrangement = if (expandToStart) Arrangement.End else Arrangement.Start,
+                horizontalArrangement = if (expandToStart) {
+                    Arrangement.Absolute.Right
+                } else {
+                    Arrangement.Absolute.Left
+                },
                 verticalAlignment = Alignment.Bottom
             ) {
                 if (expandToStart) {
@@ -332,7 +340,11 @@ fun VolumeOverlay(
                 modifier = Modifier
                     .width(overlayContainerWidth)
                     .then(collapsedHitTestModifier),
-                horizontalAlignment = if (expandToStart) Alignment.End else Alignment.Start
+                horizontalAlignment = if (expandToStart) {
+                    androidx.compose.ui.AbsoluteAlignment.Right
+                } else {
+                    androidx.compose.ui.AbsoluteAlignment.Left
+                }
             ) {
                 pillContent()
                 AnimatedVisibility(

@@ -11,8 +11,7 @@ class OverlayWindowGeometryTest {
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = 2800,
                 edgeMarginPx = 48,
-                occlusions = HorizontalOcclusionInsets(left = 162),
-                minimumWidthPx = 648
+                occlusions = HorizontalOcclusionInsets(left = 162)
             )
         )
     }
@@ -24,8 +23,7 @@ class OverlayWindowGeometryTest {
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = 2800,
                 edgeMarginPx = 48,
-                occlusions = HorizontalOcclusionInsets(right = 162),
-                minimumWidthPx = 648
+                occlusions = HorizontalOcclusionInsets(right = 162)
             )
         )
     }
@@ -37,8 +35,7 @@ class OverlayWindowGeometryTest {
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = 2400,
                 edgeMarginPx = 40,
-                occlusions = HorizontalOcclusionInsets(left = 90, right = 40),
-                minimumWidthPx = 600
+                occlusions = HorizontalOcclusionInsets(left = 90, right = 40)
             )
         )
     }
@@ -50,21 +47,19 @@ class OverlayWindowGeometryTest {
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = 2400,
                 edgeMarginPx = 40,
-                occlusions = HorizontalOcclusionInsets(),
-                minimumWidthPx = 600
+                occlusions = HorizontalOcclusionInsets()
             )
         )
     }
 
     @Test
-    fun `very narrow display is clamped to the supported overlay width`() {
+    fun `very narrow display never requests more width than is available`() {
         assertEquals(
-            600,
+            380,
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = 700,
                 edgeMarginPx = 60,
-                occlusions = HorizontalOcclusionInsets(left = 100, right = 100),
-                minimumWidthPx = 600
+                occlusions = HorizontalOcclusionInsets(left = 100, right = 100)
             )
         )
     }

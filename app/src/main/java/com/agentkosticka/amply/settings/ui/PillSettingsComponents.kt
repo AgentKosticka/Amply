@@ -21,6 +21,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -44,7 +51,7 @@ internal fun SideSelector(
         OverlaySide.entries.forEach { side ->
             Button(
                 onClick = { onSelected(side) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).semantics { this.selected = selected == side },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (selected == side) NothingColors.Red else Color(0xFF2A2A2A),
@@ -180,6 +187,19 @@ internal fun PositionPreview(
         modifier = Modifier
             .fillMaxWidth()
             .height(220.dp)
+            .semantics {
+                contentDescription = "Overlay vertical position"
+                stateDescription = "${(verticalFraction.coerceIn(0f, 1f) * 100).roundToInt()} percent"
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    verticalFraction.coerceIn(0f, 1f),
+                    0f..1f,
+                    99
+                )
+                setProgress { requested ->
+                    onFractionChange(requested.coerceIn(0f, 1f))
+                    true
+                }
+            }
             .background(Color(0xFF101010), RoundedCornerShape(18.dp))
             .pointerInput(Unit) {
                 fun update(y: Float) {
@@ -209,7 +229,13 @@ internal fun PositionPreview(
 
         Box(
             modifier = Modifier
-                .align(if (side == OverlaySide.LEFT) Alignment.TopStart else Alignment.TopEnd)
+                .align(
+                    if (side == OverlaySide.LEFT) {
+                        androidx.compose.ui.AbsoluteAlignment.TopLeft
+                    } else {
+                        androidx.compose.ui.AbsoluteAlignment.TopRight
+                    }
+                )
                 .offset {
                     IntOffset(
                         x = 0,

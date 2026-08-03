@@ -1,233 +1,92 @@
-# Amply (1)
+# Amply
 
-Per-app volume control for Android, designed with Nothing OS aesthetics.
+Amply is a sideloaded Android volume controller that intercepts hardware volume keys through an Accessibility Service and uses a Shizuku UserService for privileged per-app audio-session control. It supports Android 10+ (API 29), targets Android 16/API 36 for production, and continuously supports build-only API 37 compatibility testing.
 
-Amply (1) intercepts hardware volume button presses and displays a custom overlay that allows independent volume control for each currently playing audio application. It uses Shizuku for privileged access without requiring root.
+## What it does
 
----
+- Displays an accessibility-owned volume pill without the system overlay permission.
+- Adjusts Android system streams and independent app-player gain.
+- Persists profile-aware per-app volume, pin, and hide settings.
+- Lets selected packages receive the full hardware-key gesture through Stand-Down.
+- Exposes truthful runtime health, retry, pause, and recovery controls.
+- Supports explicit JSON export/import; Android cloud and device-transfer backup are disabled.
+- Provides sanitized diagnostics that exclude app labels and package names by default.
 
-## Table of Contents
+## Requirements and permissions
 
-- [Features](#features)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [How It Works](#how-it-works)
-- [Comparison with Similar Projects](#comparison-with-similar-projects)
-- [Limitations](#limitations)
-- [Building from Source](#building-from-source)
-- [License](#license)
+| Dependency | Required | Purpose |
+| --- | --- | --- |
+| Android 10/API 29+ | Yes | Minimum supported platform |
+| [Shizuku](https://github.com/RikkaApps/Shizuku/releases) | Yes | Discovers privileged playback sessions and changes per-app gain |
+| Amply Accessibility Service | Yes | Observes hardware volume keys and owns the accessibility overlay window |
+| Notifications | Recommended | Shows the foreground runtime state and recovery actions |
+| Phone state | Optional | Improves incoming-call detection; without it, ambiguous call-like keys pass through |
+| Notification policy access | Diagnostics only | Used only by explicitly launched advanced ringer compatibility checks |
 
----
+Amply does **not** request `SYSTEM_ALERT_WINDOW`. Its Accessibility Service does not traverse or collect window content.
 
-## Features
+## Sideload installation
 
-- **Per-App Volume Control**: Adjust the volume of individual applications independently
-- **Volume Overlay**: Custom overlay appears when volume buttons are pressed, replacing or supplementing the system volume UI
-- **Auto-Apply Volume**: Volume settings persist across song changes and new audio players within the same app
-- **Real-time Detection**: Uses AudioPlaybackCallback for immediate detection of new audio streams
-- **Nothing OS Design**: Black and red color scheme inspired by Nothing Phone aesthetics
-- **No Root Required**: Uses Shizuku for privileged operations without root access
-- **Volume Persistence**: Remembers volume levels for each app by UID
-- **Logarithmic Volume Curve**: Natural-feeling volume control that matches human hearing perception
-- **Per-App Volume-Key Stand-Down**: Choose installed apps that should receive hardware volume buttons directly
-- **Temporary Pause**: Pause Amply from the circular control above the expanded pill, with a configurable duration and an in-app Restore now action
-- **Tabbed Control Center**: Separate Apps, Pill, Keys, and Access pages keep related controls together
-- **Pinned Overlay Apps**: Keep previously detected audio apps in the expanded overlay even while they are idle
+1. Download the versioned APK and matching `.sha256` file from GitHub Releases.
+2. Verify the checksum (for example, `sha256sum -c Amply-vX.Y.Z.apk.sha256`).
+3. Install and start Shizuku, then grant Amply permission.
+4. Install the APK and complete Amply's readiness checklist.
+5. Enable the specific Amply Accessibility Service when Android settings opens.
 
----
+Readiness is always derived from current Shizuku and Accessibility state. Revoking either requirement returns the app to recovery setup; optional permission denial does not block use.
 
-## Requirements
+## Safety and limitations
 
-| Requirement | Details |
-|-------------|---------|
-| **Minimum Android Version** | Android 10 (API 29) |
-| **Target Android Version** | Android 16 (API 36) |
-| **Shizuku** | Required, version 11 or higher |
-| **Permissions** | Overlay permission, Accessibility Service |
+- Shizuku must be installed, running, granted, and connected for per-app controls.
+- Some native audio engines may not expose a controllable Android player.
+- Android does not expose the power key to ordinary accessibility key callbacks. Amply therefore does not claim to preserve or synthesize screenshot chords; screenshot behavior is device/firmware dependent and must be tested on physical devices.
+- When phone-state permission is absent or call state is ambiguous, Amply passes call-like volume gestures through to Android.
+- A failed volume operation is passed through rather than consumed. Failed overlay attachment is expired after one second and reported as a recoverable runtime error.
+- Android 17/API 37 compatibility builds are test-only. Published releases must target API 36 until the documented background-audio hardening matrix passes.
+- Advanced ringer diagnostics temporarily modify ringer mode and ring/notification indexes. They require confirmation, are blocked during calls/ringing/alarms/DND, serialize runs, and restore the captured state in cleanup.
 
-### Tested Devices
+## Settings backup and diagnostics
 
-- Nothing Phone (2a) running Android 15 / Nothing OS
-- Should work on any device running Android 10 or higher with Shizuku support
+The Apps tab can export schema-v3 JSON and preview imports. Import files are capped at 2 MiB and 10,000 app records; malformed identities, duplicate records, unsupported schemas, invalid enums/ranges, and non-finite values are rejected before an atomic commit.
 
----
+- **Merge** overwrites matching imported app identities, keeps other records, unions Stand-Down packages, and replaces global settings.
+- **Replace** makes the validated backup the complete app/Stand-Down state and replaces global settings.
 
-## Installation
+If storage is corrupt, affected controls are disabled and recovery remains available through export or reset. Advanced Diagnostics can copy or share build, protocol, permission, connection, and error states without app identities.
 
-1. Install [Shizuku](https://github.com/RikkaApps/Shizuku/releases) and start the Shizuku service
-2. Install Amply (1) APK
-3. Follow the setup wizard:
-   - Grant Shizuku permission when prompted
-   - Enable the Accessibility Service for volume key detection
-   - Grant overlay permission
-4. Press a hardware volume button to see the overlay
+## Building
 
----
-
-## How It Works
-
-Amply (1) uses a multi-layered approach to achieve per-app volume control:
-
-### 1. Audio Session Detection
-
-The app uses `AudioManager.getActivePlaybackConfigurations()` to enumerate all currently active audio players. Each `AudioPlaybackConfiguration` represents an audio stream from an application.
-
-### 2. Privileged Access via Shizuku
-
-Because Android sanitizes UID and player proxy information when accessed from regular app processes, Amply (1) runs a UserService in Shizuku's privileged shell process (UID 2000). This allows access to:
-
-- `AudioPlaybackConfiguration.getClientUid()` - Identifies which app owns the audio stream
-- `AudioPlaybackConfiguration.getPlayerProxy()` - Returns the IPlayer interface for volume control
-
-### 3. Volume Control via IPlayer
-
-The `IPlayer.setVolume()` hidden API is used to set the internal volume multiplier (0.0 to 1.0) for each audio player. This is the same API used by MIUI's "Adjust media sound in multiple apps" feature.
-
-### 4. Volume Key Interception
-
-An Accessibility Service monitors volume key events and package/class identity changes from Android window events. It does not retrieve or traverse window content. When a volume key is detected, it triggers the overlay display and routes volume changes through the custom UI.
-
-### 5. Real-time Callback
-
-`AudioManager.registerAudioPlaybackCallback()` provides real-time notifications when new audio players start or stop. This allows immediate application of saved volume settings to new streams.
-
-### Volume-key routing
-
-Android sends accessibility key callbacks before the foreground app, so Amply cannot learn afterward whether that app would have consumed a specific press. The **Volume Key Handling** settings provide explicit routing instead: selected packages receive the entire down/repeat/up sequence, while Amply intercepts keys elsewhere. If a selected app declines the event, Android continues with its normal volume behavior and pill.
-
-For intercepted keys, Amply automatically targets an active call, alarm, or recent notification before falling back to media volume. Incoming-call volume keys are passed to Android to silence the ringtone without showing Amply. Interacting with a stream while the pill is expanded makes it the active collapsed stream until the overlay hides; expanded stream order remains unchanged.
-
-Variable-volume Cast routes use the remote route's own volume and controls. Fixed or unsupported Cast routes are passed back to Android. On the lock screen Amply keeps its system-stream pill available but never renders per-app names or controls.
-
-The dot rail follows the device's native stream scale up to 30 dots by default, while preserving real stream minima and caps. The Pill tab can override the visual density without changing the native volume range.
-
-For one-off situations, expand Amply's pill and press the circular power button above it. Amply then passes volume keys through globally for the configured period (five minutes by default). The duration can be changed in settings, and **Restore now** re-enables Amply immediately.
-
-The pause duration can also be set to **Turn back on only manually**. This state persists until **Restore now** is selected, including after a reboot.
-
-The expanded overlay normally contains currently playing apps, pinned known-audio apps, and the foreground app after it produces audio during its current foreground visit. That foreground row remains available after playback stops, but leaving and returning to the app starts a new visit that must produce audio again. Hidden apps remain excluded in every case. If Shizuku disconnects, these controls are replaced with a compact disconnected indicator until the privileged service recovers. Settings are profile-aware and can be exported, imported, reset, or cleaned from the Apps tab.
-
----
-
-## Comparison with Similar Projects
-
-| Feature | Amply (1) | VolumeManager | AudioHQ |
-|---------|-----------|---------------|---------|
-| **Root Required** | No | No | Yes |
-| **Shizuku Required** | Yes | Yes | No |
-| **Minimum Android** | Android 10 | Android 10 | Android 7 |
-| **Volume Control Method** | IPlayer.setVolume() | IPlayer.setVolume() | Native AudioFlinger patches |
-| **Volume Persistence** | Yes (per UID) | No | Yes |
-| **Auto-apply to New Streams** | Yes | Yes | Yes |
-| **Volume Key Override** | Yes (Accessibility) | Yes (Accessibility) | No |
-| **Custom Overlay** | Yes | Yes | No (in-app UI only) |
-| **App Detection** | Shizuku UserService | Shizuku direct | Root shell |
-| **Design Style** | Nothing OS | Material You | Material Design |
-| **Open Source** | Yes | Yes | Yes |
-
-### Key Differences
-
-**vs VolumeManager (yume-chan)**
-
-Both projects use the same underlying IPlayer.setVolume() API via Shizuku. The main differences are:
-
-- Amply (1) persists volume settings per UID and auto-applies them to new audio players
-- Amply (1) uses a Shizuku UserService to access privileged AudioPlaybackConfiguration data, while VolumeManager may use different approaches
-- Design philosophy: Amply (1) targets Nothing OS aesthetics, VolumeManager uses Material You
-
-**vs AudioHQ (Alcatraz323)**
-
-AudioHQ requires root access and uses native AudioFlinger patches for volume control. This provides more complete control but requires a rooted device. Amply (1) achieves similar results without root by using Shizuku and the IPlayer API.
-
----
-
-## Limitations
-
-1. **Native Audio Engines**: Some games and apps using OpenSL ES, AAudio, or audio middleware (FMOD, Wwise) may not respond to volume changes. The IPlayer API only controls audio streams that go through Android's Java audio APIs.
-
-2. **Volume Reading**: The IPlayer API is write-only. Volume set by one app is not reflected in another app reading the volume.
-
-3. **Screen Recording**: Audio captured by screen recording may not reflect per-app volume changes, as recording may capture audio before the volume multiplier is applied.
-
-4. **Shizuku Dependency**: Shizuku must be running for the app to function. If Shizuku stops, per-app volume control will not work.
-
----
-
-## Building from Source
-
-### Prerequisites
-
-- Android Studio Hedgehog or newer
-- JDK 17 or higher
-- Android SDK 36 or newer
-
-### Build Steps
+Prerequisites: JDK 17+, Android SDK 37, and a configured `local.properties`.
 
 ```bash
-# Clone the repository
-git clone https://github.com/farizanjum/amply-1.git
-cd amply-1
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
+```
 
-# Build debug APK
-./gradlew assembleDebug
+Production builds default to target SDK 36. A non-publishable API 37 compatibility build can be made with:
 
-# Build release APK
-./gradlew assembleRelease
+```bash
+./gradlew assembleDebug -PamplyTargetSdk=37
+```
 
-# Compile the release-like overlay animation benchmark
-./gradlew :app:assembleBenchmark :benchmark:assembleBenchmark
+Release signing is configured only when all four environment variables exist:
 
-# Regenerate the app-specific Baseline Profile on a connected physical device
+- `AMPLY_KEYSTORE_PATH`
+- `AMPLY_KEYSTORE_PASSWORD`
+- `AMPLY_KEY_ALIAS`
+- `AMPLY_KEY_PASSWORD`
+
+The `vX.Y.Z` GitHub Actions workflow decodes `AMPLY_KEYSTORE_BASE64`, validates tag/version/target metadata, builds a minified signed APK, verifies the signature, and publishes only the APK, checksum, and generated release notes. R8 mappings remain private workflow artifacts.
+
+## Baseline profiles and benchmarks
+
+The app uses `saveInSrc=true`; generated Baseline Profiles live in `app/src/main/generated/baselineProfiles` so a clean release build can rewrite and package them through R8. Regenerate on an API 33+ physical device:
+
+```bash
 ./gradlew :app:generateBaselineProfile
 ```
 
-Run `:benchmark:connectedBenchmarkAndroidTest` on a physical device to measure rapid expand/collapse frame timing for empty, active-app, disconnected, optional-stream, and worst-case states. The worst-case tests compare no compilation with the required shipped Baseline Profile.
+Macrobenchmarks fail if requested expand/collapse targets are absent. A physical-device run is still required for the real Accessibility/Shizuku key-to-overlay path and API 36/37 audio-hardening acceptance matrix.
 
-APK output locations:
-- Debug: `app/build/outputs/apk/debug/app-debug.apk`
-- Release: `app/build/outputs/apk/release/app-release-unsigned.apk`
+## License and notices
 
----
-
-## Project Structure
-
-```text
-app/src/main/java/com/agentkosticka/amply/
-├── audio/
-│   ├── routing/        # Android streams, target selection, Cast, and topology
-│   ├── ringer/         # Loud/vibrate/mute behavior and compatibility checks
-│   └── session/        # Playback detection and per-app player volume
-├── overlay/
-│   ├── service/        # Foreground overlay-service implementation
-│   ├── ui/             # Pill, stream controls, and per-app panel
-│   └── window/         # Window lifecycle, geometry, and presentation policy
-├── permissions/        # App permission state
-├── settings/
-│   ├── data/           # DataStore repository, JSON codec, and recovery
-│   ├── model/          # Persisted settings models
-│   └── ui/             # Tab pages and reusable settings controls
-├── setup/              # First-run wizard
-├── shizuku/
-│   ├── client/         # Permission and UserService connection coordination
-│   ├── protocol/       # Stable Binder contract
-│   └── server/         # Privileged UserService implementation
-├── volumekeys/         # Accessibility routing and foreground resolution
-└── ui/theme/           # Shared Nothing-style theme
-```
-
-`service.OverlayService`, `service.VolumeKeyService`, and `shizuku.VolumeUserService` intentionally retain their original component names so Android and Shizuku keep existing service identity across upgrades. The `benchmark` module drives the benchmark-only host in `app/src/benchmark`; neither is included in normal debug or release behavior.
-
----
-
-## License
-
-This project is provided as-is for educational and personal use.
-
----
-
-## Acknowledgments
-
-- [Shizuku](https://github.com/RikkaApps/Shizuku) by RikkaApps - Privileged API access without root
-- [VolumeManager](https://github.com/yume-chan/VolumeManager) by yume-chan - Inspiration and IPlayer API documentation
-- [AudioHQ](https://github.com/Alcatraz323/audiohq_md2) by Alcatraz323 - Prior art in per-app volume control
-- [HiddenApiBypass](https://github.com/LSPosed/AndroidHiddenApiBypass) by LSPosed - Hidden API access
+Amply is licensed under the [Apache License 2.0](LICENSE). Project notices are in [NOTICE](NOTICE), and packaged third-party attributions are in `app/src/main/assets/third_party_attributions.html`.

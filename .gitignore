@@ -5,7 +5,6 @@ build/
 .idea/
 *.iml
 local.properties
-gradle.properties
 
 # Claude/AI assistant files
 .claude/

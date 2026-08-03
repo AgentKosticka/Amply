@@ -1,7 +1,13 @@
 plugins {
-    id("com.android.test")
-    id("androidx.baselineprofile")
+    alias(libs.plugins.android.test)
+    alias(libs.plugins.androidx.baselineprofile)
 }
+
+val amplyTargetSdk = providers.gradleProperty("amplyTargetSdk")
+    .orNull
+    ?.toIntOrNull()
+    ?.also { require(it == 36 || it == 37) { "amplyTargetSdk must be 36 or 37" } }
+    ?: 36
 
 android {
     namespace = "com.agentkosticka.amply.benchmark"
@@ -10,7 +16,7 @@ android {
 
     defaultConfig {
         minSdk = 29
-        targetSdk = 36
+        targetSdk = amplyTargetSdk
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -31,7 +37,7 @@ androidComponents {
 }
 
 dependencies {
-    implementation("androidx.test.ext:junit:1.3.0")
-    implementation("androidx.test.uiautomator:uiautomator:2.4.0")
-    implementation("androidx.benchmark:benchmark-macro-junit4:1.4.1")
+    implementation(libs.androidx.test.junit)
+    implementation(libs.androidx.test.uiautomator)
+    implementation(libs.androidx.benchmark.macro.junit4)
 }

@@ -10,6 +10,7 @@ import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,7 +58,12 @@ class OverlayAnimationBenchmark {
             val device = androidx.test.uiautomator.UiDevice
                 .getInstance(InstrumentationRegistry.getInstrumentation())
             repeat(20) {
-                device.findObject(By.desc(Pattern.compile("(Expand|Collapse) Amply")))?.click()
+                checkNotNull(
+                    device.wait(
+                        Until.findObject(By.desc(Pattern.compile("(Expand|Collapse) Amply"))),
+                        2_000
+                    )
+                ) { "Amply expand/collapse control was not rendered for '$scenario'" }.click()
             }
         }
     }

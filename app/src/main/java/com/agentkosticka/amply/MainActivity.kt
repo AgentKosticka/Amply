@@ -17,13 +17,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.agentkosticka.amply.settings.ui.SettingsDashboard
 import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.service.VolumeKeyService
 import com.agentkosticka.amply.setup.SetupViewModel
 import com.agentkosticka.amply.setup.SetupWizardScreen
+import com.agentkosticka.amply.setup.SetupReadiness
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,15 +36,10 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { refreshPermissionState() }
-    private var requestNotificationsAfterPhoneState = false
     private val phoneStatePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) {
         refreshPermissionState()
-        if (requestNotificationsAfterPhoneState) {
-            requestNotificationsAfterPhoneState = false
-            requestNotificationPermission()
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,9 +68,17 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun MainContent() {
-        val isSetupCompleted by runtime.preferencesManager.isSetupCompleted.collectAsState(initial = false)
+        val introductionSeen by runtime.preferencesManager.isSetupIntroductionSeen.collectAsState(initial = false)
+        val permissionState by appPermissionState.collectAsState()
+        val shizukuPermission by runtime.shizukuRepository.permissionState.collectAsState()
+        val connectionState by runtime.connectionState.collectAsState()
+        val readiness = SetupReadiness(
+            accessibilityEnabled = permissionState.volumeKeysGranted,
+            shizukuPermission = shizukuPermission,
+            volumeServiceConnection = connectionState
+        )
 
-        if (isSetupCompleted) {
+        if (readiness.canShowDashboard(introductionSeen)) {
             // Show main app screen
             MainAppScreen()
         } else {
@@ -90,10 +93,14 @@ class MainActivity : ComponentActivity() {
 
             SetupWizardScreen(
                 viewModel = viewModel,
+                introductionSeen = introductionSeen,
+                appPermissionState = permissionState,
+                connectionState = connectionState,
+                onAccessibilityClick = { openAccessibilitySettings() },
+                onRetryConnection = { runtime.retryVolumeServiceConnection() },
                 onSetupComplete = {
                     // Setup completed, will automatically switch to main screen
-                },
-                onRequestOptionalPermissions = { requestSetupOptionalPermissions() }
+                }
             )
         }
     }
@@ -104,7 +111,6 @@ class MainActivity : ComponentActivity() {
         SettingsDashboard(
             runtime = runtime,
             appPermissionState = permissionState,
-            onOverlayPermissionClick = { requestOverlayPermission() },
             onAccessibilityClick = { openAccessibilitySettings() },
             onNotificationPolicyClick = { openNotificationPolicySettings() },
             onPhoneStateClick = { requestPhoneStatePermission() },
@@ -125,7 +131,6 @@ class MainActivity : ComponentActivity() {
         }.getOrDefault(false)
 
         _appPermissionState.value = AppPermissionState(
-            overlayGranted = Settings.canDrawOverlays(this),
             volumeKeysGranted = volumeKeysGranted,
             notificationPolicyGranted = getSystemService(NotificationManager::class.java)
                 .isNotificationPolicyAccessGranted,
@@ -136,19 +141,15 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun requestOverlayPermission() {
-        if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri()
-            )
-            startActivity(intent)
-        }
-    }
-
     private fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        startActivity(intent)
+        val detailsIntent = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+            putExtra(
+                Intent.EXTRA_COMPONENT_NAME,
+                android.content.ComponentName(this@MainActivity, VolumeKeyService::class.java)
+            )
+        }
+        runCatching { startActivity(detailsIntent) }
+            .recoverCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
     }
 
     private fun openNotificationPolicySettings() {
@@ -170,17 +171,6 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         ) {
             phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
-        }
-    }
-
-    private fun requestSetupOptionalPermissions() {
-        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestNotificationsAfterPhoneState = true
-            phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
-        } else {
-            requestNotificationPermission()
         }
     }
 

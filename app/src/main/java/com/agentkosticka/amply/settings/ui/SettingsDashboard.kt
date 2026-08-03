@@ -1,17 +1,29 @@
 package com.agentkosticka.amply.settings.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -19,10 +31,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -30,38 +40,55 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.audio.session.AudioSessionState
+import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.settings.model.AppSettings
 import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
 import com.agentkosticka.amply.settings.model.SettingsImportPreview
+import com.agentkosticka.amply.settings.model.ImportMode
+import com.agentkosticka.amply.settings.model.SettingsOperationResult
 import com.agentkosticka.amply.settings.model.AmplyPauseDuration
 import com.agentkosticka.amply.settings.model.OverlayAppMode
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.settings.model.VolumeDotScaleConfig
 import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
+import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
 import com.agentkosticka.amply.ui.theme.NothingColors
+import com.agentkosticka.amply.util.readAtMost
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 internal enum class AppListMode {
     DEFAULT,
@@ -72,7 +99,112 @@ private enum class SettingsTab(val label: String, val icon: androidx.compose.ui.
     ACCESS("Access", Icons.Default.Security),
     APPS("Apps", Icons.Default.Apps),
     PILL("Pill", Icons.Default.Tune),
-    STAND_DOWN("Stand-Down", Icons.AutoMirrored.Filled.VolumeUp)
+    STAND_DOWN("Stand-Down", Icons.AutoMirrored.Filled.VolumeUp),
+    DIAGNOSTICS("Diagnostics", Icons.Default.BugReport)
+}
+
+@Composable
+private fun SwipeAwareTabBar(
+    pagerState: PagerState,
+    onTabClick: (Int) -> Unit
+) {
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val tabWidth = 108.dp
+    val tabSpacing = 4.dp
+    val edgePadding = 8.dp
+    val pagePosition by remember(pagerState) {
+        derivedStateOf {
+            pagerState.currentPage + pagerState.currentPageOffsetFraction
+        }
+    }
+
+    Surface(color = Color(0xFF151515)) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .height(76.dp)
+        ) {
+            val viewportWidthPx = with(density) { maxWidth.toPx() }
+            val firstTabCenterPx = with(density) { (edgePadding + tabWidth / 2).toPx() }
+            val tabStepPx = with(density) { (tabWidth + tabSpacing).toPx() }
+
+            LaunchedEffect(pagerState, viewportWidthPx, tabStepPx) {
+                snapshotFlow {
+                    pagerState.isScrollInProgress to
+                        (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+                }.collect { (scrolling, position) ->
+                    if (scrolling && scrollState.maxValue > 0) {
+                        val target = (firstTabCenterPx + position * tabStepPx - viewportWidthPx / 2f)
+                            .roundToInt()
+                            .coerceIn(0, scrollState.maxValue)
+                        scrollState.scrollTo(target)
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .horizontalScroll(scrollState)
+                    .padding(horizontal = edgePadding),
+                horizontalArrangement = Arrangement.spacedBy(tabSpacing),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SettingsTab.entries.forEachIndexed { index, tab ->
+                    val selectionProgress = (1f - abs(pagePosition - index)).coerceIn(0f, 1f)
+                    val background = lerp(Color.Transparent, DarkControlBackground, selectionProgress)
+                    val iconColor = lerp(NothingColors.GreyMedium, NothingColors.Red, selectionProgress)
+                    val textColor = lerp(NothingColors.GreyMedium, NothingColors.White, selectionProgress)
+
+                    Column(
+                        modifier = Modifier
+                            .width(tabWidth)
+                            .height(64.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(background)
+                            .selectable(
+                                selected = pagerState.settledPage == index,
+                                role = Role.Tab,
+                                onClick = { onTabClick(index) }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = tab.icon,
+                            contentDescription = null,
+                            tint = iconColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = tab.label,
+                            color = textColor,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .width(26.dp)
+                                .height(2.dp)
+                                .graphicsLayer {
+                                    alpha = selectionProgress
+                                    scaleX = 0.45f + selectionProgress * 0.55f
+                                }
+                                .background(NothingColors.Red, RoundedCornerShape(1.dp))
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 internal data class InstalledAppEntry(
@@ -81,13 +213,42 @@ internal data class InstalledAppEntry(
     val uid: Int
 )
 
+private fun buildSanitizedDiagnostics(
+    context: android.content.Context,
+    health: com.agentkosticka.amply.runtime.RuntimeHealth,
+    permissions: AppPermissionState,
+    ringerReport: String
+): String {
+    val packageInfo = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0)
+    }.getOrNull()
+    val versionCode = packageInfo?.longVersionCode
+    return buildString {
+        appendLine("Amply diagnostics")
+        appendLine("Version: ${packageInfo?.versionName ?: "unknown"} ($versionCode)")
+        appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+        appendLine("Protocol: $VOLUME_PROTOCOL_VERSION")
+        appendLine("Accessibility connected: ${health.accessibilityConnected}")
+        appendLine("Foreground service: ${health.foregroundServiceRunning}")
+        appendLine("Shizuku permission: ${health.shizukuPermission}")
+        appendLine("Volume service: ${health.volumeServiceConnection}")
+        appendLine("Paused: ${health.isPaused}")
+        appendLine("Last operation: ${health.lastOperation}")
+        appendLine("Recoverable error: ${health.recoverableError?.code ?: "none"}")
+        appendLine("Phone-state permission: ${permissions.phoneStateGranted}")
+        appendLine("Notification permission: ${permissions.notificationsGranted}")
+        appendLine("Notification-policy access: ${permissions.notificationPolicyGranted}")
+        appendLine()
+        append(ringerReport)
+    }
+}
+
 internal val DarkControlBackground = Color(0xFF2A2A2A)
 
 @Composable
 fun SettingsDashboard(
     runtime: AmplyRuntime,
     appPermissionState: AppPermissionState,
-    onOverlayPermissionClick: () -> Unit,
     onAccessibilityClick: () -> Unit,
     onNotificationPolicyClick: () -> Unit,
     onPhoneStateClick: () -> Unit,
@@ -112,6 +273,7 @@ fun SettingsDashboard(
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
+    val runtimeHealth by runtime.runtimeHealth.collectAsState()
     val selectedExperiment by runtime.ringerExperimentExecutor.selectedMethod.collectAsState()
     val experimentResults by runtime.ringerExperimentExecutor.methodTestResults.collectAsState()
     val experimentProgress by runtime.ringerExperimentExecutor.methodTestProgress.collectAsState()
@@ -121,16 +283,30 @@ fun SettingsDashboard(
     val inactiveVolumeSaveJobs = remember { mutableMapOf<String, Job>() }
     var selectedTabName by rememberSaveable { mutableStateOf(SettingsTab.ACCESS.name) }
     val selectedTab = SettingsTab.entries.firstOrNull { it.name == selectedTabName } ?: SettingsTab.ACCESS
+    val pagerState = rememberPagerState(
+        initialPage = SettingsTab.entries.indexOf(selectedTab),
+        pageCount = { SettingsTab.entries.size }
+    )
     val appsListState = rememberLazyListState()
     val pillListState = rememberLazyListState()
     val keysListState = rememberLazyListState()
     val accessListState = rememberLazyListState()
-    val listStates = mapOf(
-        SettingsTab.APPS to appsListState,
-        SettingsTab.PILL to pillListState,
-        SettingsTab.STAND_DOWN to keysListState,
-        SettingsTab.ACCESS to accessListState
-    )
+    val diagnosticsListState = rememberLazyListState()
+    val listStates = remember(
+        appsListState,
+        pillListState,
+        keysListState,
+        accessListState,
+        diagnosticsListState
+    ) {
+        mapOf(
+            SettingsTab.APPS to appsListState,
+            SettingsTab.PILL to pillListState,
+            SettingsTab.STAND_DOWN to keysListState,
+            SettingsTab.ACCESS to accessListState,
+            SettingsTab.DIAGNOSTICS to diagnosticsListState
+        )
+    }
     var appListMode by rememberSaveable { mutableStateOf(AppListMode.DEFAULT) }
     var appSearch by rememberSaveable { mutableStateOf("") }
     var previewVerticalFraction by remember { mutableFloatStateOf(verticalFraction) }
@@ -139,11 +315,13 @@ fun SettingsDashboard(
     var standDownSearch by rememberSaveable { mutableStateOf("") }
     var installedApps by remember { mutableStateOf<List<InstalledAppEntry>>(emptyList()) }
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var staleAppCount by remember { mutableStateOf(0) }
+    var staleAppCount by remember { mutableIntStateOf(0) }
     var pendingImportRaw by remember { mutableStateOf<String?>(null) }
     var pendingImportPreview by remember { mutableStateOf<SettingsImportPreview?>(null) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showCleanupConfirmation by remember { mutableStateOf(false) }
+    var showRepairConfirmation by remember { mutableStateOf(false) }
+    var pendingRingerTest by remember { mutableStateOf<com.agentkosticka.amply.audio.ringer.RingerExperimentMethod?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -168,32 +346,48 @@ fun SettingsDashboard(
         if (uri != null) scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                        ?: error("Could not open settings file")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val bytes = input.readAtMost(PreferencesManager.MAX_IMPORT_BYTES + 1)
+                        require(bytes.size <= PreferencesManager.MAX_IMPORT_BYTES) {
+                            "Settings file exceeds 2 MiB"
+                        }
+                        val raw = bytes.toString(Charsets.UTF_8)
+                        raw to preferences.previewImport(raw)
+                    } ?: error("Could not open settings file")
                 }
-            }.onSuccess { raw ->
+            }.onSuccess { (raw, preview) ->
                 pendingImportRaw = raw
-                pendingImportPreview = preferences.previewImport(raw)
+                pendingImportPreview = preview
             }.onFailure {
                 Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    val activeSessionsByIdentity = sessionState.sessions.associateBy { it.identity }
-    val activeIdentities = activeSessionsByIdentity.keys
-    val knownApps = mergeAppSettingsWithActiveSessions(appSettings, sessionState.sessions)
-        .filter { it.lastSeenTimestamp > 0L || it.identity in activeIdentities }
-        .filter {
-            val query = appSearch.trim().lowercase()
-            query.isEmpty() || query in it.appName.lowercase() || query in it.packageName.lowercase()
-        }
-        .filter { appListMode == AppListMode.EXPANDED || it.identity in activeIdentities }
-        .sortedWith(
-            compareByDescending<AppSettings> { it.overlayMode == OverlayAppMode.PINNED }
-                .thenByDescending { it.identity in activeIdentities }
-                .thenBy { it.appName.lowercase() }
-        )
+    val activeSessionsByIdentity = remember(sessionState.sessions) {
+        sessionState.sessions.associateBy { it.identity }
+    }
+    val activeIdentities = remember(activeSessionsByIdentity) { activeSessionsByIdentity.keys }
+    val knownApps = remember(
+        appSettings,
+        sessionState.sessions,
+        activeIdentities,
+        appSearch,
+        appListMode
+    ) {
+        val query = appSearch.trim().lowercase()
+        mergeAppSettingsWithActiveSessions(appSettings, sessionState.sessions)
+            .filter { it.lastSeenTimestamp > 0L || it.identity in activeIdentities }
+            .filter {
+                query.isEmpty() || query in it.appName.lowercase() || query in it.packageName.lowercase()
+            }
+            .filter { appListMode == AppListMode.EXPANDED || it.identity in activeIdentities }
+            .sortedWith(
+                compareByDescending<AppSettings> { it.overlayMode == OverlayAppMode.PINNED }
+                    .thenByDescending { it.identity in activeIdentities }
+                    .thenBy { it.appName.lowercase() }
+            )
+    }
     val standDownApps = remember(installedApps, passThroughPackages, standDownSearch) {
         val query = standDownSearch.trim().lowercase()
         installedApps
@@ -205,10 +399,16 @@ fun SettingsDashboard(
     }
 
     LaunchedEffect(Unit) { shizukuRepository.checkPermissionState() }
-    LaunchedEffect(Unit) {
-        while (true) {
-            runtime.ringerExperimentExecutor.refresh()
-            delay(1_000L.milliseconds)
+    LaunchedEffect(pagerState.settledPage) {
+        val page = pagerState.settledPage.coerceIn(SettingsTab.entries.indices)
+        selectedTabName = SettingsTab.entries[page].name
+    }
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == SettingsTab.DIAGNOSTICS) {
+            while (true) {
+                runtime.ringerExperimentExecutor.refresh()
+                delay(1_000L.milliseconds)
+            }
         }
     }
     LaunchedEffect(verticalFraction) { previewVerticalFraction = verticalFraction }
@@ -238,37 +438,28 @@ fun SettingsDashboard(
         containerColor = NothingColors.Black,
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
-            NavigationBar(containerColor = Color(0xFF151515)) {
-                SettingsTab.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = selectedTab == tab,
-                        onClick = { selectedTabName = tab.name },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = NothingColors.White,
-                            selectedTextColor = NothingColors.White,
-                            indicatorColor = NothingColors.Red,
-                            unselectedIconColor = NothingColors.GreyMedium,
-                            unselectedTextColor = NothingColors.GreyMedium
-                        )
-                    )
-                }
+            SwipeAwareTabBar(pagerState = pagerState) { index ->
+                scope.launch { pagerState.animateScrollToPage(index) }
             }
         }
     ) { scaffoldPadding ->
-        Column(
+        HorizontalPager(
+            state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(scaffoldPadding)
-                .background(NothingColors.Black)
-        ) {
-            Box(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 12.dp)) {
-                DashboardHeader()
-            }
+                .background(NothingColors.Black),
+            key = { SettingsTab.entries[it].name },
+            beyondViewportPageCount = 1
+        ) { page ->
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 12.dp)) {
+                    DashboardHeader()
+                }
 
-            when (selectedTab) {
+            when (SettingsTab.entries[page]) {
                 SettingsTab.APPS -> LazyColumn(
+                    modifier = Modifier.weight(1f),
                     state = listStates.getValue(SettingsTab.APPS),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -315,6 +506,7 @@ fun SettingsDashboard(
                             AppSettingsRow(
                                 app = app,
                                 isActive = app.identity in activeIdentities,
+                                enabled = appSettingsStoreHealth != AppSettingsStoreHealth.CORRUPT,
                                 onReset = { scope.launch { preferences.resetApp(app.identity) } },
                                 onOverlayModeChange = { mode ->
                                     scope.launch { preferences.setAppOverlayMode(app.packageName, mode, app.uid) }
@@ -345,12 +537,14 @@ fun SettingsDashboard(
                             onExport = { exportLauncher.launch("amply-settings.json") },
                             onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                             onCleanup = { if (staleAppCount > 0) showCleanupConfirmation = true },
+                            onRepair = { showRepairConfirmation = true },
                             onReset = { showResetConfirmation = true }
                         )
                     }
                 }
 
                 SettingsTab.PILL -> LazyColumn(
+                    modifier = Modifier.weight(1f),
                     state = listStates.getValue(SettingsTab.PILL),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp)
                 ) {
@@ -381,6 +575,7 @@ fun SettingsDashboard(
                 }
 
                 SettingsTab.STAND_DOWN -> LazyColumn(
+                    modifier = Modifier.weight(1f),
                     state = listStates.getValue(SettingsTab.STAND_DOWN),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -422,6 +617,7 @@ fun SettingsDashboard(
                 }
 
                 SettingsTab.ACCESS -> LazyColumn(
+                    modifier = Modifier.weight(1f),
                     state = listStates.getValue(SettingsTab.ACCESS),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -506,14 +702,6 @@ fun SettingsDashboard(
                         Spacer(Modifier.height(10.dp))
                         PermissionButton(
                             "1",
-                            "OVERLAY",
-                            "Grant overlay access",
-                            appPermissionState.overlayGranted,
-                            onOverlayPermissionClick
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        PermissionButton(
-                            "2",
                             "VOLUME KEYS",
                             "Enable accessibility service",
                             appPermissionState.volumeKeysGranted,
@@ -521,7 +709,7 @@ fun SettingsDashboard(
                         )
                         Spacer(Modifier.height(10.dp))
                         PermissionButton(
-                            "3",
+                            "2",
                             "CALL ROUTING",
                             "Distinguish incoming and outgoing calls",
                             appPermissionState.phoneStateGranted,
@@ -529,12 +717,68 @@ fun SettingsDashboard(
                         )
                         Spacer(Modifier.height(10.dp))
                         PermissionButton(
-                            "4",
+                            "3",
                             "NOTIFICATIONS",
                             "Show Amply's foreground-service status",
                             appPermissionState.notificationsGranted,
                             onNotificationsClick
                         )
+                    }
+                }
+
+                SettingsTab.DIAGNOSTICS -> LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    state = listStates.getValue(SettingsTab.DIAGNOSTICS),
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    item {
+                        SectionTitle("ADVANCED DIAGNOSTICS")
+                        Spacer(Modifier.height(10.dp))
+                        SettingsPanel {
+                            Text(
+                                "SUPPORT REPORT",
+                                color = NothingColors.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "The report contains build, protocol, permission, connection, and error states. App labels and package names are excluded.",
+                                color = NothingColors.GreyMedium,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    val report = buildSanitizedDiagnostics(
+                                        context = context,
+                                        health = runtimeHealth,
+                                        permissions = appPermissionState,
+                                        ringerReport = runtime.ringerExperimentExecutor.report()
+                                    )
+                                    context.getSystemService(ClipboardManager::class.java)
+                                        .setPrimaryClip(ClipData.newPlainText("Amply diagnostics", report))
+                                    Toast.makeText(context, "Diagnostics copied", Toast.LENGTH_SHORT).show()
+                                }) { Text("COPY DIAGNOSTICS", color = NothingColors.White) }
+                                TextButton(onClick = {
+                                    val report = buildSanitizedDiagnostics(
+                                        context = context,
+                                        health = runtimeHealth,
+                                        permissions = appPermissionState,
+                                        ringerReport = runtime.ringerExperimentExecutor.report()
+                                    )
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_SUBJECT, "Amply diagnostics")
+                                                putExtra(Intent.EXTRA_TEXT, report)
+                                            },
+                                            "Share Amply diagnostics"
+                                        )
+                                    )
+                                }) { Text("SHARE", color = NothingColors.White) }
+                            }
+                        }
                     }
                     item {
                         RingerExperimentPanel(
@@ -547,14 +791,39 @@ fun SettingsDashboard(
                             notificationPolicyGranted = appPermissionState.notificationPolicyGranted,
                             onNotificationPolicyClick = onNotificationPolicyClick,
                             onSelect = runtime.ringerExperimentExecutor::select,
-                            onTest = { method ->
-                                scope.launch { runtime.ringerExperimentExecutor.testAllTransitions(method) }
-                            }
+                            onTest = { pendingRingerTest = it }
                         )
                     }
                 }
             }
         }
+    }
+    }
+
+    pendingRingerTest?.let { method ->
+        AlertDialog(
+            onDismissRequest = { pendingRingerTest = null },
+            title = { Text("RUN DEVICE-MODIFYING CHECK?") },
+            text = {
+                Text(
+                    "Amply will temporarily change ringer mode and ring/notification volume, then restore the captured values. The check is blocked during calls, ringing, alarms, or Do Not Disturb."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRingerTest = null
+                    scope.launch { runtime.ringerExperimentExecutor.testAllTransitions(method) }
+                }) { Text("RUN CHECK", color = NothingColors.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRingerTest = null }) {
+                    Text("CANCEL", color = NothingColors.GreyMedium)
+                }
+            },
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = NothingColors.White,
+            textContentColor = NothingColors.GreyMedium
+        )
     }
 
     pendingImportPreview?.let { preview ->
@@ -567,7 +836,7 @@ fun SettingsDashboard(
             text = {
                 Text(
                     if (preview.valid) {
-                        "${preview.appCount} app records, ${preview.customizedAppCount} customized. Merge keeps other local app records; Replace removes them."
+                        "${preview.appCount} app records, ${preview.customizedAppCount} customized, and ${preview.standDownCount} stood-down packages. Both modes replace global settings; Merge keeps other app records and unions Stand-Down, while Replace removes local records not in the backup."
                     } else preview.error.orEmpty()
                 )
             },
@@ -575,9 +844,16 @@ fun SettingsDashboard(
                 if (preview.valid) TextButton(onClick = {
                     val raw = pendingImportRaw ?: return@TextButton
                     scope.launch {
-                        runCatching { preferences.importSettings(raw, replace = false) }
-                            .onSuccess { Toast.makeText(context, "Settings merged", Toast.LENGTH_SHORT).show() }
-                            .onFailure { Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                        when (val result = preferences.importSettings(raw, ImportMode.MERGE)) {
+                            SettingsOperationResult.Success ->
+                                Toast.makeText(context, "Settings merged", Toast.LENGTH_SHORT).show()
+                            SettingsOperationResult.StoreCorrupt ->
+                                Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
+                            is SettingsOperationResult.ValidationFailed ->
+                                Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                            is SettingsOperationResult.IoFailed ->
+                                Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                        }
                     }
                     pendingImportRaw = null
                     pendingImportPreview = null
@@ -588,9 +864,16 @@ fun SettingsDashboard(
                     if (preview.valid) TextButton(onClick = {
                         val raw = pendingImportRaw ?: return@TextButton
                         scope.launch {
-                            runCatching { preferences.importSettings(raw, replace = true) }
-                                .onSuccess { Toast.makeText(context, "Settings replaced", Toast.LENGTH_SHORT).show() }
-                                .onFailure { Toast.makeText(context, "Import failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                            when (val result = preferences.importSettings(raw, ImportMode.REPLACE)) {
+                                SettingsOperationResult.Success ->
+                                    Toast.makeText(context, "Settings replaced", Toast.LENGTH_SHORT).show()
+                                SettingsOperationResult.StoreCorrupt ->
+                                    Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
+                                is SettingsOperationResult.ValidationFailed ->
+                                    Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                                is SettingsOperationResult.IoFailed ->
+                                    Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                            }
                         }
                         pendingImportRaw = null
                         pendingImportPreview = null
@@ -625,6 +908,38 @@ fun SettingsDashboard(
             },
             dismissButton = {
                 TextButton(onClick = { showCleanupConfirmation = false }) {
+                    Text("CANCEL", color = NothingColors.GreyMedium)
+                }
+            },
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = NothingColors.White,
+            textContentColor = NothingColors.GreyMedium
+        )
+    }
+
+    if (showRepairConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showRepairConfirmation = false },
+            title = { Text("REPAIR APP SETTINGS?") },
+            text = {
+                Text(
+                    "This removes only unreadable per-app records. Global layout, pause, and Stand-Down settings are preserved; export first if you need the corrupt raw data for support."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        when (preferences.repairAppSettingsStore()) {
+                            SettingsOperationResult.Success ->
+                                Toast.makeText(context, "App settings repaired", Toast.LENGTH_SHORT).show()
+                            else -> Toast.makeText(context, "Repair failed", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    showRepairConfirmation = false
+                }) { Text("REPAIR", color = NothingColors.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRepairConfirmation = false }) {
                     Text("CANCEL", color = NothingColors.GreyMedium)
                 }
             },

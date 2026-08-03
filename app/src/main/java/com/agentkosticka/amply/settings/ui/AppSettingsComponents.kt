@@ -25,12 +25,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,7 +70,6 @@ internal fun mergeAppSettingsWithActiveSessions(
             userId = session.identity.userId,
             defaultVolume = existing?.defaultVolume ?: session.volume,
             overlayMode = existing?.overlayMode ?: OverlayAppMode.AUTO,
-            passVolumeKeysToApp = existing?.passVolumeKeysToApp ?: false,
             lastSeenTimestamp = maxOf(existing?.lastSeenTimestamp ?: 0L, session.lastSeenTimestamp)
         )
     }
@@ -74,6 +81,7 @@ internal fun mergeAppSettingsWithActiveSessions(
 internal fun AppSettingsRow(
     app: AppSettings,
     isActive: Boolean,
+    enabled: Boolean = true,
     onReset: () -> Unit,
     onOverlayModeChange: (OverlayAppMode) -> Unit,
     onVolumeChange: (Float) -> Unit
@@ -95,6 +103,7 @@ internal fun AppSettingsRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.55f)
             .background(Color(0xFF1C1C1C), RoundedCornerShape(27.dp))
             .padding(horizontal = 16.dp, vertical = 15.dp)
     ) {
@@ -160,7 +169,11 @@ internal fun AppSettingsRow(
             )
 
             if (app.isCustomized) {
-                TextButton(onClick = onReset, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                TextButton(
+                    onClick = onReset,
+                    enabled = enabled,
+                    contentPadding = PaddingValues(horizontal = 6.dp)
+                ) {
                     Text("RESET", color = NothingColors.GreyMedium, style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -171,6 +184,8 @@ internal fun AppSettingsRow(
 
         AppVolumeRail(
             volume = displayedVolume,
+            enabled = enabled,
+            accessibilityLabel = "${app.appName} default volume",
             onVolumeChange = { volume ->
                 displayedVolume = volume
                 onVolumeChange(volume)
@@ -182,6 +197,7 @@ internal fun AppSettingsRow(
 
         OverlayModeSelector(
             selected = app.overlayMode,
+            enabled = enabled,
             onSelected = onOverlayModeChange
         )
     }
@@ -190,6 +206,7 @@ internal fun AppSettingsRow(
 @Composable
 private fun OverlayModeSelector(
     selected: OverlayAppMode,
+    enabled: Boolean,
     onSelected: (OverlayAppMode) -> Unit
 ) {
     Row(
@@ -200,6 +217,7 @@ private fun OverlayModeSelector(
             VisibilityButton(
                 text = mode.name,
                 active = selected == mode,
+                enabled = enabled,
                 onClick = { onSelected(mode) },
                 modifier = Modifier.weight(1f)
             )
@@ -211,11 +229,13 @@ private fun OverlayModeSelector(
 private fun VisibilityButton(
     text: String,
     active: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.height(34.dp),
         shape = RoundedCornerShape(10.dp),
         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
@@ -235,27 +255,47 @@ private fun VisibilityButton(
 @Composable
 private fun AppVolumeRail(
     volume: Float,
+    enabled: Boolean,
     onVolumeChange: (Float) -> Unit,
+    accessibilityLabel: String,
     modifier: Modifier = Modifier
 ) {
     Canvas(
         modifier = modifier
-            .height(20.dp)
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { change, _ ->
-                    change.consume()
-                    val inset = 5.dp.toPx()
-                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
-                    onVolumeChange(((change.position.x - inset) / usableWidth).coerceIn(0f, 1f))
+            .heightIn(min = 48.dp)
+            .semantics {
+                contentDescription = accessibilityLabel
+                stateDescription = "${(volume.coerceIn(0f, 1f) * 100).roundToInt()} percent"
+                progressBarRangeInfo = ProgressBarRangeInfo(volume.coerceIn(0f, 1f), 0f..1f, 99)
+                if (enabled) {
+                    setProgress { requested ->
+                        onVolumeChange(requested.coerceIn(0f, 1f))
+                        true
+                    }
+                } else {
+                    disabled()
                 }
             }
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    val inset = 5.dp.toPx()
-                    val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
-                    onVolumeChange(((offset.x - inset) / usableWidth).coerceIn(0f, 1f))
-                }
-            }
+            .then(
+                if (enabled) {
+                    Modifier
+                        .pointerInput(Unit) {
+                            detectHorizontalDragGestures { change, _ ->
+                                change.consume()
+                                val inset = 5.dp.toPx()
+                                val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                                onVolumeChange(((change.position.x - inset) / usableWidth).coerceIn(0f, 1f))
+                            }
+                        }
+                        .pointerInput(Unit) {
+                            detectTapGestures { offset ->
+                                val inset = 5.dp.toPx()
+                                val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
+                                onVolumeChange(((offset.x - inset) / usableWidth).coerceIn(0f, 1f))
+                            }
+                        }
+                } else Modifier
+            )
     ) {
         val level = volume.coerceIn(0f, 1f)
         val thumbRadius = 5.dp.toPx()

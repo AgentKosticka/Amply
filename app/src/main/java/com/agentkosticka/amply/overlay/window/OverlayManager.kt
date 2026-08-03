@@ -1,5 +1,6 @@
 package com.agentkosticka.amply.overlay.window
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Bitmap
@@ -292,9 +293,9 @@ object OverlayManager {
         connectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
         overlaySide: OverlaySide = OverlaySide.LEFT,
         overlayVerticalFraction: Float = 0.5f,
-        requestedPresentationMode: OverlayPresentationMode = OverlayPresentationMode.NORMAL,
-        windowType: Int = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-    ) {
+        requestedPresentationMode: OverlayPresentationMode = OverlayPresentationMode.NORMAL
+    ): OverlayAttachResult {
+        val windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
         ensureManagerScope()
         removeJob?.cancel()
         removeJob = null
@@ -328,11 +329,21 @@ object OverlayManager {
         currentOverlaySide.value = overlaySide
         currentOverlayVerticalFraction.floatValue = overlayVerticalFraction.coerceIn(0f, 1f)
         
-        if (overlayContainer == null) {
+        val attachResult = if (overlayContainer == null) {
             createOverlay(context, windowType)
         } else {
             unparkOverlay()
             updateOverlayPosition(context)
+            OverlayAttachResult.ALREADY_ATTACHED
+        }
+        if (attachResult == OverlayAttachResult.FAILED) {
+            overlayVisible.value = false
+            volumeObservationJob?.cancel()
+            volumeObservationJob = null
+            isOverlayExpanded = false
+            presentationMode = OverlayPresentationMode.NORMAL
+            removeJob = null
+            return attachResult
         }
         overlayVisible.value = true
         startVolumeObservation()
@@ -340,13 +351,14 @@ object OverlayManager {
 
         // Reset auto-hide timer
         scheduleHide(currentAutoHideDelayMs())
+        return attachResult
     }
 
     /**
      * Create the overlay view with proper lifecycle
      * CRITICAL: Uses wrapper FrameLayout for proper view tree lifecycle propagation
      */
-    private fun createOverlay(context: Context, windowType: Int) {
+    private fun createOverlay(context: Context, windowType: Int): OverlayAttachResult {
         // Step 1: Create lifecycle owner FIRST
         val owner = ComposeLifecycleOwner()
         owner.performRestore(null)
@@ -461,8 +473,9 @@ object OverlayManager {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
                 container.post { updateOverlayPosition(context) }
             }
+            return OverlayAttachResult.ATTACHED
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("OverlayManager", "Accessibility overlay attachment failed", e)
             // Cleanup on failure
             newRecomposer.cancel()
             recomposer = null
@@ -470,6 +483,8 @@ object OverlayManager {
             lifecycleOwner = null
             overlayContainerRef = null
             composeView = null
+            currentWindowType = null
+            return OverlayAttachResult.FAILED
         }
     }
 
@@ -478,17 +493,18 @@ object OverlayManager {
      */
     fun hide() {
         hideJob?.cancel()
-
-        if (overlayContainer == null) {
-            return
-        }
-
         val wasVisible = overlayVisible.value
         overlayVisible.value = false
         volumeObservationJob?.cancel()
         volumeObservationJob = null
         if (wasVisible) {
             onOverlayHiddenCallback?.invoke()
+        }
+        if (overlayContainer == null) {
+            isOverlayExpanded = false
+            presentationMode = OverlayPresentationMode.NORMAL
+            removeJob = null
+            return
         }
         removeJob?.cancel()
         removeJob = managerScope.launch {
@@ -847,6 +863,7 @@ object OverlayManager {
         }
     }
 
+    @SuppressLint("RtlHardcoded")
     private fun WindowManager.LayoutParams.applyPosition(context: Context): WindowManager.LayoutParams {
         val margin = (16 * context.resources.displayMetrics.density).toInt()
         val baseOverlayHeight = (BASE_OVERLAY_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
@@ -861,9 +878,9 @@ object OverlayManager {
         val isLandscape = screenWidth > screenHeight
         width = windowWidthForCurrentOrientation(context)
         gravity = when {
-            isLandscape -> Gravity.START or Gravity.TOP
-            currentOverlaySide.value == OverlaySide.LEFT -> Gravity.START or Gravity.TOP
-            else -> Gravity.END or Gravity.TOP
+            isLandscape -> Gravity.LEFT or Gravity.TOP
+            currentOverlaySide.value == OverlaySide.LEFT -> Gravity.LEFT or Gravity.TOP
+            else -> Gravity.RIGHT or Gravity.TOP
         }
         x = margin
         y = windowY.coerceIn(-pauseControlSlotHeight, maxPillY - pauseControlSlotHeight)
@@ -878,13 +895,12 @@ object OverlayManager {
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = currentWindowWidthPx(context),
                 edgeMarginPx = (16f * density).toInt(),
-                occlusions = landscapeHorizontalOcclusionInsets(context),
-                minimumWidthPx = (216f * density).toInt()
+                occlusions = landscapeHorizontalOcclusionInsets(context)
             )
         } else {
-            metrics.widthPixels - (32f * density).toInt()
+            (metrics.widthPixels - (32f * density).toInt()).coerceAtLeast(1)
         }
-        availableOverlayWidthDp.floatValue = (availableWidthPx / density).coerceAtLeast(216f)
+        availableOverlayWidthDp.floatValue = (availableWidthPx / density).coerceAtLeast(1f)
     }
 
     private fun windowWidthForCurrentOrientation(context: Context): Int {
@@ -895,8 +911,7 @@ object OverlayManager {
             OverlayWindowGeometry.landscapeWidthPx(
                 displayWidthPx = currentWindowWidthPx(context),
                 edgeMarginPx = margin,
-                occlusions = landscapeHorizontalOcclusionInsets(context),
-                minimumWidthPx = (216 * metrics.density).toInt()
+                occlusions = landscapeHorizontalOcclusionInsets(context)
             )
         } else {
             WindowManager.LayoutParams.WRAP_CONTENT

@@ -11,6 +11,7 @@ import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,8 +98,7 @@ object NotificationModePolicy {
 class RingerExperimentExecutor(
     context: Context,
     private val shizukuVolumeManager: ShizukuVolumeManager,
-    private val shizukuRepository: ShizukuRepository,
-    private val onMethodSelected: (RingerExperimentMethod) -> Unit = {}
+    private val shizukuRepository: ShizukuRepository
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -120,15 +120,11 @@ class RingerExperimentExecutor(
     private val _runningMethod = MutableStateFlow<RingerExperimentMethod?>(null)
     val runningMethod = _runningMethod.asStateFlow()
     private val overlayToggleMutex = Mutex()
+    private val experimentMutex = Mutex()
 
     init { refresh() }
 
     fun select(method: RingerExperimentMethod) {
-        _selectedMethod.value = method
-        onMethodSelected(method)
-    }
-
-    fun restoreSelected(method: RingerExperimentMethod) {
         _selectedMethod.value = method
     }
 
@@ -136,7 +132,7 @@ class RingerExperimentExecutor(
         activePlaybackUsages = usages
     }
 
-    fun setNotificationVolumeFromControl(volume: Int) {
+    fun setNotificationVolumeFromControl(volume: Int): Boolean {
         val min = audioManager.getStreamMinVolume(AudioManager.STREAM_NOTIFICATION)
         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
         val clamped = volume.coerceIn(min, max)
@@ -147,6 +143,7 @@ class RingerExperimentExecutor(
         }
         runCatching { audioManager.ringerMode = target.toRingerMode() }
         refresh()
+        return audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION) == clamped
     }
 
     fun refresh(): RingerExperimentSnapshot {
@@ -159,18 +156,19 @@ class RingerExperimentExecutor(
     }
 
     suspend fun testAllTransitions(method: RingerExperimentMethod) {
-        if (_busy.value) return
-        _busy.value = true
-        _runningMethod.value = method
-        _methodTestProgress.value += (method to 0f)
-        val results = mutableListOf<RingerTransitionResult>()
-        var overallDetail = ""
-        try {
-            checkExperimentSafety(method)
-            if (notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
-                error("Turn off Do Not Disturb before running compatibility checks")
-            }
-            ALL_RINGER_MODE_TRANSITIONS.forEachIndexed { index, (from, to) ->
+        experimentMutex.withLock {
+            _busy.value = true
+            _runningMethod.value = method
+            _methodTestProgress.value += (method to 0f)
+            val results = mutableListOf<RingerTransitionResult>()
+            var overallDetail = ""
+            val original = refresh()
+            try {
+                checkExperimentSafety(method)
+                if (notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
+                    error("Turn off Do Not Disturb before running compatibility checks")
+                }
+                ALL_RINGER_MODE_TRANSITIONS.forEachIndexed { index, (from, to) ->
                 var sourceError: String? = null
                 var targetError: String? = null
                 try {
@@ -209,15 +207,26 @@ class RingerExperimentExecutor(
                 }
                 results += RingerTransitionResult(from, to, passed, enabledDnd, detail)
                 _methodTestProgress.value += (method to ((index + 1f) / ALL_RINGER_MODE_TRANSITIONS.size))
+                }
+            } catch (e: Exception) {
+                overallDetail = e.message ?: e.javaClass.simpleName
+            } finally {
+                val restoreError = withContext(NonCancellable) {
+                    restoreSnapshot(original)
+                }
+                if (restoreError != null) {
+                    overallDetail = listOf(overallDetail, "Restore failed: $restoreError")
+                        .filter(String::isNotBlank)
+                        .joinToString("; ")
+                }
+                _methodTestResults.value += (
+                    method to RingerMethodTestResult(method, results, overallDetail)
+                )
+                _methodTestProgress.value += (method to 1f)
+                _runningMethod.value = null
+                _busy.value = false
+                refresh()
             }
-        } catch (e: Exception) {
-            overallDetail = e.message ?: e.javaClass.simpleName
-        } finally {
-            _methodTestResults.value += (method to RingerMethodTestResult(method, results, overallDetail))
-            _methodTestProgress.value += (method to 1f)
-            _runningMethod.value = null
-            _busy.value = false
-            refresh()
         }
     }
 
@@ -227,7 +236,7 @@ class RingerExperimentExecutor(
             // state produced by the one before it instead of being discarded.
             val target = NotificationModePolicy.iconTarget(refresh().mode)
             execute(
-                method = _selectedMethod.value,
+                method = overlayToggleMethod(selectedMethod.value),
                 target = target,
                 onApplied = onApplied,
                 settleForDiagnostics = false
@@ -240,40 +249,43 @@ class RingerExperimentExecutor(
         onApplied: () -> Unit = {},
         settleForDiagnostics: Boolean = true
     ): RingerExperimentResult {
-        if (_busy.value) {
-            return RingerExperimentResult(method, target, refresh(), refresh(), false, "Another experiment is running", 0)
+        return experimentMutex.withLock {
+            _busy.value = true
+            val before = refresh()
+            val started = SystemClock.elapsedRealtime()
+            var detail = "Completed"
+            try {
+                checkExperimentSafety(method)
+                withContext(Dispatchers.IO) { apply(method, target) }
+                refresh()
+                onApplied()
+                if (settleForDiagnostics) {
+                    delay(150L.milliseconds)
+                    refresh()
+                    delay(450L.milliseconds)
+                }
+                val after = refresh()
+                val success = after.mode == target
+                if (!success) detail = "Requested ${target.name}, observed ${after.mode.name}"
+                RingerExperimentResult(
+                    method, target, before, after, success, detail,
+                    SystemClock.elapsedRealtime() - started
+                ).also { result -> _results.value += (method to result) }
+            } catch (e: Exception) {
+                val after = refresh()
+                RingerExperimentResult(
+                    method = method,
+                    requested = target,
+                    before = before,
+                    after = after,
+                    success = false,
+                    detail = "${e.javaClass.simpleName}: ${e.message ?: "failed"}",
+                    elapsedMs = SystemClock.elapsedRealtime() - started
+                ).also { result -> _results.value += (method to result) }
+            } finally {
+                _busy.value = false
+            }
         }
-        _busy.value = true
-        val before = refresh()
-        val started = SystemClock.elapsedRealtime()
-        var detail = "Completed"
-        try {
-            checkExperimentSafety(method)
-            withContext(Dispatchers.IO) { apply(method, target) }
-        } catch (e: Exception) {
-            detail = "${e.javaClass.simpleName}: ${e.message ?: "failed"}"
-        }
-        // Publish the real post-RPC state immediately. Delayed reads below are only
-        // for diagnostic settling and must not hold the overlay animation hostage.
-        refresh()
-        onApplied()
-        if (settleForDiagnostics) {
-            delay(150L.milliseconds)
-            refresh()
-            delay(450L.milliseconds)
-        }
-        val after = refresh()
-        val success = after.mode == target
-        if (!success && detail == "Completed") {
-            detail = "Requested ${target.name}, observed ${after.mode.name}"
-        }
-        val result = RingerExperimentResult(
-            method, target, before, after, success, detail,
-            SystemClock.elapsedRealtime() - started
-        )
-        _results.value += (method to result)
-        _busy.value = false
-        return result
     }
 
     fun report(): String = buildString {
@@ -366,10 +378,43 @@ class RingerExperimentExecutor(
         repeat(audioManager.getStreamMaxVolume(AudioManager.STREAM_RING) + 3) {
             if (NotificationAlertMode.resolve(audioManager.ringerMode, 0, 0) == target) return
             val keyCode = if (target == NotificationAlertMode.LOUD) 24 else 25
-            shizukuRepository.executeShellCommand("input keyevent $keyCode") ?: error("Key injection failed")
+            if (!shizukuRepository.injectVolumeKey(keyCode)) error("Key injection failed")
             delay(80L.milliseconds)
         }
     }
+
+    private suspend fun restoreSnapshot(snapshot: RingerExperimentSnapshot): String? =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val notificationMin = audioManager.getStreamMinVolume(AudioManager.STREAM_NOTIFICATION)
+                val notificationMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
+                val ringMin = audioManager.getStreamMinVolume(AudioManager.STREAM_RING)
+                val ringMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
+                audioManager.ringerMode = snapshot.rawRingerMode
+                audioManager.setStreamVolume(
+                    AudioManager.STREAM_NOTIFICATION,
+                    snapshot.notificationVolume.coerceIn(notificationMin, notificationMax),
+                    0
+                )
+                audioManager.setStreamVolume(
+                    AudioManager.STREAM_RING,
+                    snapshot.ringVolume.coerceIn(ringMin, ringMax),
+                    0
+                )
+                if (snapshot.policyAccess &&
+                    notificationManager.currentInterruptionFilter != snapshot.interruptionFilter
+                ) {
+                    notificationManager.setInterruptionFilter(snapshot.interruptionFilter)
+                }
+            }
+            delay(180L.milliseconds)
+            val restored = refresh()
+            check(restored.rawRingerMode == snapshot.rawRingerMode) { "ringer mode did not restore" }
+            check(restored.notificationVolume == snapshot.notificationVolume) {
+                "notification volume did not restore"
+            }
+            check(restored.ringVolume == snapshot.ringVolume) { "ring volume did not restore" }
+        }.exceptionOrNull()?.message
 
     private fun audibleRestore(): Int = lastAudibleNotificationVolume.coerceIn(
         (audioManager.getStreamMinVolume(AudioManager.STREAM_NOTIFICATION) + 1)
@@ -383,3 +428,6 @@ class RingerExperimentExecutor(
         NotificationAlertMode.LOUD -> AudioManager.RINGER_MODE_NORMAL
     }
 }
+
+internal fun overlayToggleMethod(selectedMethod: RingerExperimentMethod): RingerExperimentMethod =
+    selectedMethod

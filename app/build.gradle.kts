@@ -1,9 +1,22 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.plugin.parcelize")
-    id("org.jetbrains.kotlin.plugin.compose")
-    id("androidx.baselineprofile")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.androidx.baselineprofile)
 }
+
+val amplyTargetSdk = providers.gradleProperty("amplyTargetSdk")
+    .orNull
+    ?.toIntOrNull()
+    ?.also { require(it == 36 || it == 37) { "amplyTargetSdk must be 36 or 37" } }
+    ?: 36
+
+val signingEnvironment = listOf(
+    "AMPLY_KEYSTORE_PATH",
+    "AMPLY_KEYSTORE_PASSWORD",
+    "AMPLY_KEY_ALIAS",
+    "AMPLY_KEY_PASSWORD"
+).associateWith { providers.environmentVariable(it).orNull }
 
 android {
     namespace = "com.agentkosticka.amply"
@@ -12,9 +25,9 @@ android {
     defaultConfig {
         applicationId = "com.agentkosticka.amply"
         minSdk = 29
-        targetSdk = 36
+        targetSdk = amplyTargetSdk
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -22,7 +35,19 @@ android {
         }
     }
 
+    val releaseSigningConfig = if (signingEnvironment.values.all { !it.isNullOrBlank() }) {
+        signingConfigs.create("release") {
+            storeFile = file(signingEnvironment.getValue("AMPLY_KEYSTORE_PATH")!!)
+            storePassword = signingEnvironment.getValue("AMPLY_KEYSTORE_PASSWORD")
+            keyAlias = signingEnvironment.getValue("AMPLY_KEY_ALIAS")
+            keyPassword = signingEnvironment.getValue("AMPLY_KEY_PASSWORD")
+        }
+    } else null
+
     buildTypes {
+        debug {
+            isPseudoLocalesEnabled = true
+        }
         create("benchmark") {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
@@ -30,7 +55,9 @@ android {
             isDebuggable = false
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = releaseSigningConfig
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -44,19 +71,13 @@ android {
     }
 
     buildFeatures {
+        aidl = true
         compose = true
         // Disabled BuildConfig due to JDK 24 jlink issues
         buildConfig = false
     }
 
     packaging {
-        jniLibs {
-            keepDebugSymbols += setOf(
-                "**/libandroidx.graphics.path.so",
-                "**/libdatastore_shared_counter.so"
-            )
-        }
-
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -64,61 +85,41 @@ android {
 }
 
 dependencies {
-    // Shizuku - THE MAGIC SAUCE
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
-
-    // Hidden API Bypass - Allows reflection access to hidden Android APIs
-    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
-
-    // AndroidX Core
-    implementation("androidx.core:core-ktx:1.19.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
-    implementation("androidx.activity:activity-compose:1.13.0")
-
-    // Compose BOM
-    implementation(platform("androidx.compose:compose-bom:2026.06.01"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.compose.foundation:foundation")
-
-    // Compose Navigation (for wizard flow)
-    implementation("androidx.navigation:navigation-compose:2.9.8")
-
-    // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-
-    // DataStore for preferences
-    implementation("androidx.datastore:datastore-preferences:1.2.1")
-
-    // ViewModel
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
-
-    // Lifecycle for Service
-    implementation("androidx.lifecycle:lifecycle-service:2.11.0")
-    implementation("androidx.savedstate:savedstate:1.5.0")
-    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
-
-    // SplashScreen API (Android 12+)
-    implementation("androidx.core:core-splashscreen:1.2.0")
-
-    // Testing
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.json:json:20260719")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.01"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
+    implementation(libs.hidden.api.bypass)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.service)
+    implementation(libs.androidx.savedstate)
+    implementation(libs.androidx.profileinstaller)
+    implementation(libs.androidx.core.splashscreen)
+    testImplementation(libs.junit4)
+    testImplementation(libs.json)
+    testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     baselineProfile(project(":benchmark"))
 }
 
 baselineProfile {
     dexLayoutOptimization = true
+    saveInSrc = true
 }

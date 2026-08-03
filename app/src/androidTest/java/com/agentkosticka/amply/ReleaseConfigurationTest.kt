@@ -21,6 +21,8 @@ class ReleaseConfigurationTest {
         val permissions = packageInfo.requestedPermissions.orEmpty().toSet()
         assertEquals(36, context.applicationInfo.targetSdkVersion)
         assertTrue(Manifest.permission.POST_NOTIFICATIONS in permissions)
+        assertFalse(Manifest.permission.SYSTEM_ALERT_WINDOW in permissions)
         assertFalse(Manifest.permission.REQUEST_INSTALL_PACKAGES in permissions)
+        assertFalse(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP != 0)
     }
 }

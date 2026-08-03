@@ -23,14 +23,10 @@ class SetupViewModel(
 ) : ViewModel() {
     private val appContext = context.applicationContext
 
-    private val _currentPage = MutableStateFlow(0)
-    val currentPage: StateFlow<Int> = _currentPage.asStateFlow()
+    private val _externalActionError = MutableStateFlow<String?>(null)
+    val externalActionError: StateFlow<String?> = _externalActionError.asStateFlow()
 
     val permissionState: StateFlow<ShizukuPermissionState> = shizukuRepository.permissionState
-
-    fun goToPage(page: Int) {
-        _currentPage.value = page.coerceIn(0, 4)
-    }
 
     /**
      * Opens the Shizuku app download page
@@ -40,7 +36,8 @@ class SetupViewModel(
             data = "https://github.com/RikkaApps/Shizuku/releases".toUri()
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        appContext.startActivity(intent)
+        runCatching { appContext.startActivity(intent) }
+            .onFailure { _externalActionError.value = "Could not open the Shizuku download page." }
     }
 
     /**
@@ -50,7 +47,10 @@ class SetupViewModel(
         val intent = appContext.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
         if (intent != null) {
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            appContext.startActivity(intent)
+            runCatching { appContext.startActivity(intent) }
+                .onFailure { _externalActionError.value = "Could not open Shizuku." }
+        } else {
+            _externalActionError.value = "Shizuku is not installed."
         }
     }
 
@@ -71,9 +71,14 @@ class SetupViewModel(
     /**
      * Completes the setup wizard
      */
-    fun completeSetup() {
+    fun clearExternalActionError() {
+        _externalActionError.value = null
+    }
+
+    fun completeSetup(accessibilityReady: Boolean) {
+        if (!accessibilityReady) return
         viewModelScope.launch {
-            preferencesManager.setSetupCompleted(true)
+            preferencesManager.setSetupIntroductionSeen(true)
         }
     }
 
