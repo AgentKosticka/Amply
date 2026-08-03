@@ -75,6 +75,7 @@ fun VolumeOverlay(
     apps: List<OverlayAppPresentation> = emptyList(),
     shizukuConnectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
     shizukuIcon: Bitmap? = null,
+    showShizukuDisconnectedWarning: Boolean = true,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
@@ -89,7 +90,8 @@ fun VolumeOverlay(
     onDismissRequest: () -> Unit = {}
 ) {
     var isExpanded by remember { mutableStateOf(false) }
-    val hasPanelContent = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED || apps.isNotEmpty()
+    val hasPanelContent = apps.isNotEmpty() ||
+        (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
@@ -222,7 +224,7 @@ fun VolumeOverlay(
                 onTouchStart = onTouchStart,
                 onTouchEnd = onTouchEnd
             )
-        } else {
+        } else if (showShizukuDisconnectedWarning) {
             ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
         }
     }

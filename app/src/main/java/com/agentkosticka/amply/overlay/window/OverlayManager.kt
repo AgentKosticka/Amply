@@ -108,6 +108,7 @@ object OverlayManager {
     
     private val shizukuConnectionState = mutableStateOf(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     private val shizukuIcon = mutableStateOf<Bitmap?>(null)
+    private val showShizukuDisconnectedWarning = mutableStateOf(true)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -245,6 +246,10 @@ object OverlayManager {
 
     fun updateShizukuIcon(icon: Bitmap?) {
         if (shizukuIcon.value !== icon) shizukuIcon.value = icon
+    }
+
+    fun updateShizukuDisconnectedWarningEnabled(enabled: Boolean) {
+        showShizukuDisconnectedWarning.value = enabled
     }
 
     /**
@@ -393,6 +398,7 @@ object OverlayManager {
                     apps = currentApps.value,
                     shizukuConnectionState = shizukuConnectionState.value,
                     shizukuIcon = shizukuIcon.value,
+                    showShizukuDisconnectedWarning = showShizukuDisconnectedWarning.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
                     onStreamVolumeChange = { streamType, newVolume ->

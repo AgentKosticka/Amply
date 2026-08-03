@@ -190,6 +190,11 @@ open class OverlayForegroundService : Service() {
                     preferences.volumeDotScaleConfig.collect(OverlayManager::updateVolumeDotScaleConfig)
                 },
                 serviceScope.launch {
+                    preferences.disableShizukuDisconnectedWarning.collect { disabled ->
+                        OverlayManager.updateShizukuDisconnectedWarningEnabled(!disabled)
+                    }
+                },
+                serviceScope.launch {
                     runtime.selectedVolumeTarget.collect { target ->
                         OverlayManager.updateSelectedVolumeTarget(target)
                     }

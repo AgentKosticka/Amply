@@ -38,6 +38,8 @@ class PreferencesManager(private val context: Context) {
         private val AMPLY_PAUSE_DURATION_MINUTES = intPreferencesKey("amply_pause_duration_minutes")
         private val AMPLY_PAUSE_DURATION = stringPreferencesKey("amply_pause_duration")
         private val AMPLY_PAUSED_UNTIL_EPOCH_MS = longPreferencesKey("amply_paused_until_epoch_ms")
+        private val DISABLE_SHIZUKU_DISCONNECTED_WARNING =
+            booleanPreferencesKey("disable_shizuku_disconnected_warning")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
         private val RINGER_METHOD = stringPreferencesKey("ringer_method")
         private const val AUTO_PRUNE_AGE_MS = 90L * 24L * 60L * 60L * 1_000L
@@ -124,6 +126,14 @@ class PreferencesManager(private val context: Context) {
 
     val amplyPausedUntilEpochMs: Flow<Long> = context.dataStore.data.map { preferences ->
         preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] ?: 0L
+    }
+
+    val disableShizukuDisconnectedWarning: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] ?: false
+    }
+
+    suspend fun setDisableShizukuDisconnectedWarning(disabled: Boolean) {
+        context.dataStore.edit { it[DISABLE_SHIZUKU_DISCONNECTED_WARNING] = disabled }
     }
 
     val ringerMethod: Flow<String> = context.dataStore.data.map { preferences ->
@@ -303,6 +313,7 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(AMPLY_PAUSE_DURATION_MINUTES)
             preferences.remove(AMPLY_PAUSE_DURATION)
             preferences.remove(AMPLY_PAUSED_UNTIL_EPOCH_MS)
+            preferences.remove(DISABLE_SHIZUKU_DISCONNECTED_WARNING)
             preferences.remove(LAST_STALE_APP_CLEANUP_EPOCH_MS)
             preferences.remove(GAME_MODE_ENABLED)
             preferences.remove(RINGER_METHOD)
@@ -328,6 +339,10 @@ class PreferencesManager(private val context: Context) {
                 ).name
             )
             .put("ringerMethod", preferences[RINGER_METHOD] ?: "SHIZUKU_INTERNAL_MODE")
+            .put(
+                "disableShizukuDisconnectedWarning",
+                preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] ?: false
+            )
             .put("standDownPackages", JSONArray(passThrough.sorted()))
             .put("appSettings", JSONObject(AppSettingsCodec.encode(settings)))
             .put("appSettingsHealth", health.name)
@@ -381,6 +396,8 @@ class PreferencesManager(private val context: Context) {
                 root.optString("pauseDuration")
             ).name
             preferences[RINGER_METHOD] = root.optString("ringerMethod", "SHIZUKU_INTERNAL_MODE")
+            preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] =
+                root.optBoolean("disableShizukuDisconnectedWarning", false)
             val packages = root.optJSONArray("standDownPackages")?.let { array ->
                 buildSet { for (index in 0 until array.length()) add(array.getString(index)) }
             }.orEmpty()

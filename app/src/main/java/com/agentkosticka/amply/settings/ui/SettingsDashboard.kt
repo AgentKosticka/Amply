@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +23,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -103,6 +106,9 @@ fun SettingsDashboard(
     val passThroughPackages by preferences.volumeKeyPassThroughPackages.collectAsState(initial = emptySet())
     val pauseDuration by preferences.amplyPauseDuration.collectAsState(initial = AmplyPauseDuration.FIVE_MINUTES)
     val pausedUntil by preferences.amplyPausedUntilEpochMs.collectAsState(initial = 0L)
+    val disableShizukuDisconnectedWarning by preferences.disableShizukuDisconnectedWarning.collectAsState(
+        initial = false
+    )
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
@@ -449,6 +455,50 @@ fun SettingsDashboard(
                                     if (shizukuState == ShizukuPermissionState.GRANTED) runtime.retryVolumeServiceConnection()
                                 }
                             )
+                        }
+                    }
+                    item {
+                        SettingsPanel {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            preferences.setDisableShizukuDisconnectedWarning(
+                                                !disableShizukuDisconnectedWarning
+                                            )
+                                        }
+                                    },
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "HIDE SHIZUKU DISCONNECTION WARNING",
+                                        color = NothingColors.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "Don't show the connection warning in the volume overlay when Shizuku disconnects.",
+                                        color = NothingColors.GreyMedium,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = disableShizukuDisconnectedWarning,
+                                    onCheckedChange = { disabled ->
+                                        scope.launch {
+                                            preferences.setDisableShizukuDisconnectedWarning(disabled)
+                                        }
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = NothingColors.White,
+                                        checkedTrackColor = NothingColors.Red,
+                                        uncheckedThumbColor = NothingColors.GreyMedium,
+                                        uncheckedTrackColor = Color(0xFF333333)
+                                    )
+                                )
+                            }
                         }
                     }
                     item {
