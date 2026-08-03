@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.parcelize")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("androidx.baselineprofile")
 }
 
 android {
@@ -100,6 +101,7 @@ dependencies {
     // Lifecycle for Service
     implementation("androidx.lifecycle:lifecycle-service:2.10.0")
     implementation("androidx.savedstate:savedstate:1.4.0")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     // SplashScreen API (Android 12+)
     implementation("androidx.core:core-splashscreen:1.2.0")
@@ -107,10 +109,16 @@ dependencies {
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260719")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2026.05.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    baselineProfile(project(":benchmark"))
+}
+
+baselineProfile {
+    dexLayoutOptimization = true
 }

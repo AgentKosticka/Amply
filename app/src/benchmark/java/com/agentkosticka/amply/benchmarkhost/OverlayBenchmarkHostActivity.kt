@@ -6,7 +6,9 @@ import androidx.activity.compose.setContent
 import com.agentkosticka.amply.audio.routing.StreamIcon
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeTarget
-import com.agentkosticka.amply.audio.session.OverlayAppEntry
+import com.agentkosticka.amply.audio.session.AppVolumeControlState
+import com.agentkosticka.amply.audio.session.AppVolumeTarget
+import com.agentkosticka.amply.overlay.ui.OverlayAppPresentation
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.overlay.ui.VolumeOverlay
@@ -19,8 +21,13 @@ class OverlayBenchmarkHostActivity : ComponentActivity() {
         val scenario = intent.getStringExtra("scenario").orEmpty()
         val disconnected = scenario == "disconnected"
         val optional = scenario == "optional"
-        val appCount = if (scenario == "apps") 4 else 0
-        val targets = if (optional) VolumeTarget.entries.filter { it != VolumeTarget.ENFORCED_AUDIBLE }
+        val worstCase = scenario == "worst"
+        val appCount = when {
+            worstCase -> 8
+            scenario == "apps" -> 4
+            else -> 0
+        }
+        val targets = if (optional || worstCase) VolumeTarget.entries.filter { it != VolumeTarget.ENFORCED_AUDIBLE }
         else listOf(VolumeTarget.MEDIA, VolumeTarget.ALARM, VolumeTarget.NOTIFICATION, VolumeTarget.CALL)
         val bars = targets.mapIndexed { index, target ->
             VolumeBarModel(
@@ -37,13 +44,16 @@ class OverlayBenchmarkHostActivity : ComponentActivity() {
             )
         }
         val apps = List(appCount) { index ->
-            OverlayAppEntry(
-                packageName = "benchmark.app.$index",
-                uid = 10_000 + index,
-                appName = "Benchmark app ${index + 1}",
-                appIcon = null,
+            OverlayAppPresentation(
+                target = AppVolumeTarget(
+                    packageName = "benchmark.app.$index",
+                    uid = 10_000 + index,
+                    appName = "Benchmark app ${index + 1}"
+                ),
+                icon = null,
                 volume = 0.4f + index * 0.1f,
-                isPlaying = true
+                isPlaying = true,
+                controlState = AppVolumeControlState.ACTIVE
             )
         }
         setContent {

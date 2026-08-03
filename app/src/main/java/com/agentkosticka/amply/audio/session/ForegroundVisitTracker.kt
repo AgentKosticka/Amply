@@ -24,7 +24,9 @@ class ForegroundVisitTracker {
             return
         }
 
-        val active = latestSessions.firstOrNull { it.packageName == normalized }
+        val inferred = _state.value.lastAudioSession
+            ?.takeIf { _state.value.packageName == null && it.packageName == normalized }
+        val active = latestSessions.firstOrNull { it.packageName == normalized } ?: inferred
         _state.value = ForegroundVisitState(
             packageName = normalized,
             visitId = _state.value.visitId + 1L,
@@ -41,7 +43,17 @@ class ForegroundVisitTracker {
 
     private fun markCurrentVisitIfPlaying() {
         val current = _state.value
-        val packageName = current.packageName ?: return
+        val packageName = current.packageName
+        if (packageName == null) {
+            val identities = latestSessions.mapTo(linkedSetOf()) { it.identity }
+            if (identities.size == 1) {
+                val active = latestSessions.first()
+                if (!current.heardAudio || current.lastAudioSession?.identity != active.identity) {
+                    _state.value = current.copy(heardAudio = true, lastAudioSession = active)
+                }
+            }
+            return
+        }
         val active = latestSessions.firstOrNull { it.packageName == packageName } ?: return
         if (!current.heardAudio || current.lastAudioSession != active) {
             _state.value = current.copy(heardAudio = true, lastAudioSession = active)

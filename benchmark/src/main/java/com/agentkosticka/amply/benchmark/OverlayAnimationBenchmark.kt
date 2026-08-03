@@ -3,6 +3,8 @@ package com.agentkosticka.amply.benchmark
 import android.content.ComponentName
 import android.content.Intent
 import androidx.benchmark.macro.FrameTimingMetric
+import androidx.benchmark.macro.BaselineProfileMode
+import androidx.benchmark.macro.CompilationMode
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -21,12 +23,24 @@ class OverlayAnimationBenchmark {
     @Test fun activeApps() = measure("apps")
     @Test fun disconnected() = measure("disconnected")
     @Test fun optionalStreams() = measure("optional")
+    @Test fun worstCaseWithoutCompilation() = measure(
+        scenario = "worst",
+        compilationMode = CompilationMode.None()
+    )
+    @Test fun worstCaseWithBaselineProfile() = measure(
+        scenario = "worst",
+        compilationMode = CompilationMode.Partial(BaselineProfileMode.Require)
+    )
 
-    private fun measure(scenario: String) {
+    private fun measure(
+        scenario: String,
+        compilationMode: CompilationMode = CompilationMode.DEFAULT
+    ) {
         benchmarkRule.measureRepeated(
             packageName = "com.agentkosticka.amply",
             metrics = listOf(FrameTimingMetric()),
             iterations = 5,
+            compilationMode = compilationMode,
             startupMode = StartupMode.WARM,
             setupBlock = {
                 val intent = Intent().apply {

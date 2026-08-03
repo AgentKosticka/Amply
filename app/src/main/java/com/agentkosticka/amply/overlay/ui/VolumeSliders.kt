@@ -35,6 +35,7 @@ fun DraggableDotSlider(
     dotCount: Int = 16,
     onVolumeChange: (Int) -> Unit,
     enabled: Boolean = true,
+    visuallyEnabled: Boolean = enabled,
     limitFeedbackLevel: Int? = null,
     limitFeedbackEventId: Long? = null,
     modifier: Modifier = Modifier
@@ -133,7 +134,7 @@ fun DraggableDotSlider(
             )
 
             val dotColor = when {
-                !enabled || !available -> Color(0xFF343434)
+                !visuallyEnabled || !available -> Color(0xFF343434)
                 level <= filledDots -> {
                     if (dotPercentage > 0.75f) NothingColors.Red else NothingColors.White
                 }
@@ -145,7 +146,7 @@ fun DraggableDotSlider(
                 radius = dotRadius,
                 center = Offset(x, y)
             )
-            if (enabled && minVolume > 0 && level == projectedMin && available) {
+            if (visuallyEnabled && minVolume > 0 && level == projectedMin && available) {
                 drawCircle(
                     color = NothingColors.GreyMedium.copy(alpha = 0.7f),
                     radius = dotRadius + 2.dp.toPx(),

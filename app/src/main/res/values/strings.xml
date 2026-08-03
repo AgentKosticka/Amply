@@ -3,5 +3,5 @@
     <string name="app_name">Amply (1)</string>
 
     <!-- Accessibility Service -->
-    <string name="accessibility_service_description">Allows Amply (1) to detect volume button presses and show a custom volume control overlay. This service does not collect or transmit any data.</string>
+    <string name="accessibility_service_description">Allows Amply (1) to detect volume buttons and foreground-window package changes so it can show the correct volume controls. It does not read window content or collect or transmit data.</string>
 </resources>

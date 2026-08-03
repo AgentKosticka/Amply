@@ -191,25 +191,26 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Phase 3.5: Track foreground app for Smart Focus
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val resolvedPackage = if (::foregroundAppResolver.isInitialized) {
-                foregroundAppResolver.resolve(
-                    ForegroundWindowCandidate(
-                        packageName = event.packageName?.toString(),
-                        className = event.className?.toString()
-                    )
-                )
-            } else null
-            if (resolvedPackage != null) {
-                if (foregroundPackage != resolvedPackage) {
-                    foregroundPackage = resolvedPackage
-                    val runtime = (application as AmplyApplication).runtime
-                    runtime.onForegroundPackageChanged(resolvedPackage)
-                    runtime.shizukuRepository.checkPermissionStateThrottled()
-                }
-            }
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) {
+            refreshForegroundPackage(event)
         }
+    }
+
+    private fun refreshForegroundPackage(event: AccessibilityEvent) {
+        if (!::foregroundAppResolver.isInitialized) return
+        val eventWindow = ForegroundWindowCandidate(
+            packageName = event.packageName?.toString(),
+            className = event.className?.toString()
+        )
+        val resolvedPackage = foregroundAppResolver.resolve(eventWindow) ?: return
+        if (foregroundPackage == resolvedPackage) return
+
+        foregroundPackage = resolvedPackage
+        val runtime = (application as AmplyApplication).runtime
+        runtime.onForegroundPackageChanged(resolvedPackage)
+        runtime.shizukuRepository.checkPermissionStateThrottled()
     }
 
     override fun onInterrupt() {

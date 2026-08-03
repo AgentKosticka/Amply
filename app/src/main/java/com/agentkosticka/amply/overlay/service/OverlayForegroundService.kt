@@ -19,9 +19,15 @@ import com.agentkosticka.amply.AmplyApplication
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.R
 import com.agentkosticka.amply.settings.model.OverlaySide
+import com.agentkosticka.amply.settings.model.AppIdentity
+import com.agentkosticka.amply.settings.model.AppSettings
 import com.agentkosticka.amply.audio.routing.VolumeTarget
+import com.agentkosticka.amply.audio.session.AppVolumeControlState
+import com.agentkosticka.amply.audio.session.AudioSessionState
+import com.agentkosticka.amply.audio.session.ForegroundVisitState
 import com.agentkosticka.amply.overlay.window.OverlayManager
 import com.agentkosticka.amply.overlay.window.OverlayPresentationMode
+import com.agentkosticka.amply.overlay.ui.OverlayAppPresentation
 import com.agentkosticka.amply.service.OverlayService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,8 +35,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
+
+private data class OverlayProjectionInput(
+    val sessionState: AudioSessionState,
+    val settings: Map<AppIdentity, AppSettings>,
+    val connectionState: com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState,
+    val foregroundVisit: ForegroundVisitState,
+    val controlStates: Map<AppIdentity, AppVolumeControlState>
+)
 
 /**
  * Foreground service that manages the floating volume overlay
@@ -92,6 +109,8 @@ open class OverlayForegroundService : Service() {
     private var overlaySide: OverlaySide = OverlaySide.LEFT
     private var overlayVerticalFraction: Float = 0.5f
     private var preferenceJobs: List<Job> = emptyList()
+    private lateinit var appPresenter: OverlayAppPresenter
+    private var latestPresentedApps: List<OverlayAppPresentation> = emptyList()
     private var screenOffReceiverRegistered = false
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -153,6 +172,7 @@ open class OverlayForegroundService : Service() {
         try {
             val preferences = runtime.preferencesManager
             val sessionManager = runtime.audioSessionManager
+            appPresenter = OverlayAppPresenter(applicationContext)
             runtimeInitialized = true
 
             preferenceJobs = listOf(
@@ -184,15 +204,35 @@ open class OverlayForegroundService : Service() {
                         runtime.connectionState,
                         runtime.foregroundVisitState,
                         sessionManager.appVolumeControlStates
-                    ) { _, settings, connectionState, foregroundVisit, _ ->
-                        connectionState to sessionManager.getOverlayApps(
-                            foregroundVisitSession = foregroundVisit.lastAudioSession
-                                ?.takeIf { foregroundVisit.heardAudio },
-                            shizukuConnected = connectionState == com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState.CONNECTED,
-                            settings = settings
+                    ) { sessionState, settings, connectionState, foregroundVisit, controlStates ->
+                        OverlayProjectionInput(
+                            sessionState = sessionState,
+                            settings = settings,
+                            connectionState = connectionState,
+                            foregroundVisit = foregroundVisit,
+                            controlStates = controlStates
                         )
-                    }.collect { (connectionState, apps) ->
+                    }.map { input ->
+                        withContext(Dispatchers.Default) {
+                            val entries = sessionManager.getOverlayApps(
+                                foregroundVisitSession = input.foregroundVisit.lastAudioSession
+                                    ?.takeIf { input.foregroundVisit.heardAudio },
+                                shizukuConnected = input.connectionState == com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState.CONNECTED,
+                                settings = input.settings,
+                                activeSessions = input.sessionState.sessions,
+                                controlStates = input.controlStates
+                            )
+                            input.connectionState to appPresenter.present(entries)
+                        }
+                    }.distinctUntilChanged().collect { (connectionState, apps) ->
+                        latestPresentedApps = apps
                         OverlayManager.updateApps(apps, connectionState)
+                    }
+                },
+                serviceScope.launch(Dispatchers.Default) {
+                    val icon = appPresenter.loadShizukuIcon()
+                    withContext(Dispatchers.Main) {
+                        OverlayManager.updateShizukuIcon(icon)
                     }
                 }
             )
@@ -238,19 +278,14 @@ open class OverlayForegroundService : Service() {
             return
         }
         val locked = getSystemService(KeyguardManager::class.java).isKeyguardLocked
-        if (!locked) runtime.onForegroundPackageChanged(foregroundPackage)
+        if (!locked) foregroundPackage?.let(runtime::onForegroundPackageChanged)
 
         val sessionManager = runtime.audioSessionManager
         if (!OverlayManager.isShowing()) {
             sessionManager.requestRefresh()
         }
         val connectionState = runtime.connectionState.value
-        val foregroundVisit = runtime.foregroundVisitState.value
-        val apps = if (locked) emptyList() else sessionManager.getOverlayApps(
-            foregroundVisitSession = foregroundVisit.lastAudioSession
-                ?.takeIf { foregroundVisit.heardAudio },
-            shizukuConnected = connectionState == com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState.CONNECTED
-        )
+        val apps = if (locked) emptyList() else latestPresentedApps
 
         Log.d(
             "OverlayService",
@@ -308,6 +343,7 @@ open class OverlayForegroundService : Service() {
             activeRuntimeRef = null
         }
         preferenceJobs.forEach { it.cancel() }
+        if (::appPresenter.isInitialized) appPresenter.clear()
         serviceScope.cancel()
         OverlayManager.cleanup()
         OverlayManager.clearAppVolumeCallback()

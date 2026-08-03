@@ -64,4 +64,28 @@ class ForegroundVisitTrackerTest {
         tracker.onForegroundChanged("app")
         assertTrue(tracker.state.value.heardAudio)
     }
+
+    @Test fun singlePlayingAppIsLatchedWhileForegroundIsTemporarilyUnknown() {
+        val tracker = ForegroundVisitTracker()
+        tracker.onSessionsChanged(listOf(session("app")))
+        tracker.onSessionsChanged(emptyList())
+
+        assertTrue(tracker.state.value.heardAudio)
+        assertEquals("app", tracker.state.value.lastAudioSession?.packageName)
+    }
+
+    @Test fun inferredAudioCarriesIntoMatchingForegroundVisitButNotAnotherApp() {
+        val matching = ForegroundVisitTracker()
+        matching.onSessionsChanged(listOf(session("app")))
+        matching.onSessionsChanged(emptyList())
+        matching.onForegroundChanged("app")
+        assertTrue(matching.state.value.heardAudio)
+
+        val different = ForegroundVisitTracker()
+        different.onSessionsChanged(listOf(session("app")))
+        different.onSessionsChanged(emptyList())
+        different.onForegroundChanged("other")
+        assertFalse(different.state.value.heardAudio)
+        assertNull(different.state.value.lastAudioSession)
+    }
 }

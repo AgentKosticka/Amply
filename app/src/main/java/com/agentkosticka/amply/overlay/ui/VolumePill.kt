@@ -58,6 +58,7 @@ import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.StreamIcon
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
+import com.agentkosticka.amply.audio.routing.VolumeLimitFeedbackPolicy
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlin.math.roundToInt
@@ -244,6 +245,36 @@ private fun StreamVolumeColumn(
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val percentageBoundaryShake = remember { Animatable(0f) }
+    val usesPercentageBoundaryFeedback = VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(
+        isUp = limitFeedback?.isUpperBound ?: false,
+        min = stream.minVolume,
+        max = stream.maxVolume,
+        referenceMax = stream.referenceMaxVolume
+    )
+    val usesDotBoundaryFeedback = VolumeLimitFeedbackPolicy.usesDotBoundaryFeedback(
+        isUp = limitFeedback?.isUpperBound ?: false,
+        min = stream.minVolume,
+        max = stream.maxVolume,
+        referenceMax = stream.referenceMaxVolume
+    )
+    LaunchedEffect(limitFeedback?.eventId, usesPercentageBoundaryFeedback) {
+        if (limitFeedback == null || !usesPercentageBoundaryFeedback) return@LaunchedEffect
+        percentageBoundaryShake.snapTo(0f)
+        percentageBoundaryShake.animateTo(
+            targetValue = 0f,
+            animationSpec = keyframes {
+                durationMillis = 230
+                0f at 0
+                -1f at 35
+                1f at 75
+                -0.75f at 115
+                0.55f at 155
+                -0.25f at 195
+                0f at 230
+            }
+        )
+    }
     val displayedPercentage = if (stream.maxVolume > 0) {
         ((stream.currentVolume.toFloat() / stream.maxVolume.toFloat()) * 100f)
             .roundToInt()
@@ -307,7 +338,11 @@ private fun StreamVolumeColumn(
             maxLines = 1,
             overflow = TextOverflow.Clip,
             textAlign = TextAlign.Center,
-            modifier = Modifier.width(40.dp)
+            modifier = Modifier
+                .width(40.dp)
+                .graphicsLayer {
+                    translationX = percentageBoundaryShake.value * 4.dp.toPx()
+                }
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -320,8 +355,11 @@ private fun StreamVolumeColumn(
             dotCount = stream.dotCount,
             onVolumeChange = onVolumeChange,
             enabled = enabled,
-            limitFeedbackLevel = limitFeedback?.dotLevel,
-            limitFeedbackEventId = limitFeedback?.eventId,
+            // Input stops immediately when a stream begins collapsing, but its dots
+            // keep their enabled colors while the parent column fades away.
+            visuallyEnabled = stream.enabled,
+            limitFeedbackLevel = limitFeedback?.dotLevel?.takeIf { usesDotBoundaryFeedback },
+            limitFeedbackEventId = limitFeedback?.eventId?.takeIf { usesDotBoundaryFeedback },
             modifier = Modifier
                 .height(130.dp)
                 .width(40.dp)

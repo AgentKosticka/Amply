@@ -85,7 +85,7 @@ The `IPlayer.setVolume()` hidden API is used to set the internal volume multipli
 
 ### 4. Volume Key Interception
 
-An Accessibility Service monitors volume key events. When detected, it triggers the overlay display and routes volume changes through the custom UI.
+An Accessibility Service monitors volume key events and package/class identity changes from Android window events. It does not retrieve or traverse window content. When a volume key is detected, it triggers the overlay display and routes volume changes through the custom UI.
 
 ### 5. Real-time Callback
 
@@ -176,9 +176,12 @@ cd amply-1
 
 # Compile the release-like overlay animation benchmark
 ./gradlew :app:assembleBenchmark :benchmark:assembleBenchmark
+
+# Regenerate the app-specific Baseline Profile on a connected physical device
+./gradlew :app:generateBaselineProfile
 ```
 
-Run `:benchmark:connectedBenchmarkAndroidTest` on a physical device to measure rapid expand/collapse frame timing for empty, active-app, disconnected, and optional-stream states.
+Run `:benchmark:connectedBenchmarkAndroidTest` on a physical device to measure rapid expand/collapse frame timing for empty, active-app, disconnected, optional-stream, and worst-case states. The worst-case tests compare no compilation with the required shipped Baseline Profile.
 
 APK output locations:
 - Debug: `app/build/outputs/apk/debug/app-debug.apk`

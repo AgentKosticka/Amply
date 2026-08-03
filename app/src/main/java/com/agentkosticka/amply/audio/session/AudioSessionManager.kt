@@ -140,11 +140,7 @@ class AudioSessionManager(
 
         refreshJob = managerScope.launch {
             requestRefresh()
-            for (ignored in refreshRequests) {
-                delay(REFRESH_DEBOUNCE_MS.milliseconds)
-                while (refreshRequests.tryReceive().isSuccess) {
-                    // Collapse callback bursts into one privileged query.
-                }
+            processRefreshRequests(refreshRequests, REFRESH_DEBOUNCE_MS) {
                 try {
                     refreshMutex.withLock {
                         updateSessions()
@@ -480,12 +476,14 @@ class AudioSessionManager(
     fun getOverlayApps(
         foregroundVisitSession: AudioSession?,
         shizukuConnected: Boolean = shizukuVolumeManager.isConnected.value,
-        settings: Map<AppIdentity, AppSettings> = appSettingsCache
+        settings: Map<AppIdentity, AppSettings> = appSettingsCache,
+        activeSessions: List<AudioSession> = _sessionState.value.sessions,
+        controlStates: Map<AppIdentity, AppVolumeControlState> = _appVolumeControlStates.value
     ): List<OverlayAppEntry> {
-        val activeByIdentity = compactSessionsByPackage(_sessionState.value.sessions)
+        val activeByIdentity = compactSessionsByPackage(activeSessions)
             .associateBy { it.identity }
         return selectOverlayPackages(
-            activeSessions = _sessionState.value.sessions,
+            activeSessions = activeSessions,
             appSettings = settings,
             foregroundVisitSession = foregroundVisitSession,
             shizukuConnected = shizukuConnected
@@ -507,7 +505,7 @@ class AudioSessionManager(
                 controlState = if (active == null) {
                     AppVolumeControlState.SAVED_ONLY
                 } else {
-                    _appVolumeControlStates.value[identity] ?: AppVolumeControlState.ACTIVE
+                    controlStates[identity] ?: AppVolumeControlState.ACTIVE
                 }
             )
         }
@@ -603,16 +601,16 @@ class AudioSessionManager(
         }
     }
 
-    fun setAppVolume(app: OverlayAppEntry, volume: Float) {
-        val active = _sessionState.value.sessions.firstOrNull { it.identity == app.identity }
+    fun setAppVolume(target: AppVolumeTarget, volume: Float) {
+        val active = _sessionState.value.sessions.firstOrNull { it.identity == target.identity }
         if (active != null) {
-            setSessionVolume(active.sessionId, app.packageName, volume)
+            setSessionVolume(active.sessionId, target.packageName, volume)
         } else {
             managerScope.launch {
                 preferencesManager.persistAppVolume(
-                    packageName = app.packageName,
-                    appName = app.appName,
-                    uid = app.uid,
+                    packageName = target.packageName,
+                    appName = target.appName,
+                    uid = target.uid,
                     volume = volume
                 )
             }

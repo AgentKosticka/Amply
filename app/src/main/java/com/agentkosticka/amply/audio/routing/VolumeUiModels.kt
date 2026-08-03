@@ -63,10 +63,25 @@ object VolumeDotScale {
 data class VolumeLimitFeedback(
     val target: VolumeTarget,
     val dotLevel: Int,
+    val isUpperBound: Boolean,
     val eventId: Long
 )
 
 object VolumeLimitFeedbackPolicy {
+    fun usesPercentageBoundaryFeedback(
+        isUp: Boolean,
+        min: Int,
+        max: Int,
+        referenceMax: Int
+    ): Boolean = if (isUp) max > 0 else min == 0
+
+    fun usesDotBoundaryFeedback(
+        isUp: Boolean,
+        min: Int,
+        max: Int,
+        referenceMax: Int
+    ): Boolean = if (isUp) max < referenceMax else min > 0
+
     fun rejectedDotLevel(
         isUp: Boolean,
         min: Int,

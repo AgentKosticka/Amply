@@ -209,4 +209,19 @@ class SystemStreamsTest {
             VolumeLimitFeedbackPolicy.rejectedDotLevel(isUp = true, min = 0, max = 16)
         )
     }
+
+    @Test
+    fun boundaryFeedbackSelectsNumbersAndMarkedDotsIndependently() {
+        assertTrue(VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(isUp = false, min = 0, max = 16, referenceMax = 16))
+        assertFalse(VolumeLimitFeedbackPolicy.usesDotBoundaryFeedback(isUp = false, min = 0, max = 16, referenceMax = 16))
+
+        assertFalse(VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(isUp = false, min = 1, max = 16, referenceMax = 16))
+        assertTrue(VolumeLimitFeedbackPolicy.usesDotBoundaryFeedback(isUp = false, min = 1, max = 16, referenceMax = 16))
+
+        assertTrue(VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(isUp = true, min = 1, max = 16, referenceMax = 16))
+        assertFalse(VolumeLimitFeedbackPolicy.usesDotBoundaryFeedback(isUp = true, min = 1, max = 16, referenceMax = 16))
+
+        assertTrue(VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(isUp = true, min = 1, max = 15, referenceMax = 16))
+        assertTrue(VolumeLimitFeedbackPolicy.usesDotBoundaryFeedback(isUp = true, min = 1, max = 15, referenceMax = 16))
+    }
 }

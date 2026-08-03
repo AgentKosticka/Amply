@@ -1,7 +1,6 @@
 package com.agentkosticka.amply.overlay.ui
 
 import android.graphics.Bitmap
-import android.os.Process
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,7 +27,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -37,7 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.agentkosticka.amply.audio.session.OverlayAppEntry
+import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeControlState
 import com.agentkosticka.amply.ui.theme.NothingColors
 
@@ -54,23 +52,19 @@ private val OverlayCornerRadius = 27.dp
 internal fun AmplyPanel(
     panelWidth: Dp,
     maxHeight: Dp,
-    apps: List<OverlayAppEntry>,
-    onAppVolumeChange: (OverlayAppEntry, Float) -> Unit,
+    apps: List<OverlayAppPresentation>,
+    onAppVolumeChange: (AppVolumeTarget, Float) -> Unit,
     onClose: () -> Unit,
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
 ) {
-    val haptic = LocalHapticFeedback.current
     val panelShape = RoundedCornerShape(OverlayCornerRadius)
 
     Column(
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 100.dp, max = maxHeight)
-            .graphicsLayer {
-                shape = panelShape
-                clip = true
-            }
+            .clip(panelShape)
             .background(
                 color = Color(0xFF1C1C1C),
                 shape = panelShape
@@ -114,10 +108,7 @@ internal fun AmplyPanel(
                     }
                     AppVolumeRow(
                         app = app,
-                        onVolumeChange = { newVolume ->
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAppVolumeChange(app, newVolume)
-                        }
+                        onVolumeChange = { newVolume -> onAppVolumeChange(app.target, newVolume) }
                     )
                 }
             }
@@ -133,10 +124,7 @@ internal fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 82.dp)
-            .graphicsLayer {
-                shape = panelShape
-                clip = true
-            }
+            .clip(panelShape)
             .background(Color(0xFF1C1C1C), panelShape)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -180,11 +168,14 @@ internal fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
  */
 @Composable
 private fun AppVolumeRow(
-    app: OverlayAppEntry,
+    app: OverlayAppPresentation,
     onVolumeChange: (Float) -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     var localVolume by remember(app.identity) { mutableFloatStateOf(app.volume) }
-    val appIconImage = remember(app.appIconBitmap) { app.appIconBitmap?.asImageBitmap() }
+    var lastHapticStep by remember(app.identity) {
+        mutableIntStateOf((app.volume.coerceIn(0f, 1f) * 20f).toInt())
+    }
     LaunchedEffect(app.volume) {
         localVolume = app.volume
     }
@@ -216,17 +207,17 @@ private fun AppVolumeRow(
                             .background(Color(0xFF343434)),
                         contentAlignment = Alignment.Center
                     ) {
-                        appIconImage?.let { icon ->
+                        app.icon?.let { icon ->
                             Image(
                                 bitmap = icon,
-                                contentDescription = app.appName,
+                                contentDescription = app.target.appName,
                                 modifier = Modifier
                                     .size(24.dp)
                                     .clip(RoundedCornerShape(7.dp))
                             )
                         } ?: Icon(
                             imageVector = Icons.Default.MusicNote,
-                            contentDescription = app.appName,
+                            contentDescription = app.target.appName,
                             tint = NothingColors.GreyMedium,
                             modifier = Modifier.size(15.dp)
                         )
@@ -244,7 +235,7 @@ private fun AppVolumeRow(
                 }
 
                 Text(
-                    text = app.appName,
+                    text = app.target.appName,
                     color = NothingColors.White,
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
@@ -252,7 +243,7 @@ private fun AppVolumeRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                if (app.identity.userId != Process.myUid() / 100_000) {
+                if (app.identity.userId != android.os.Process.myUid() / 100_000) {
                     Text(
                         text = "W",
                         color = NothingColors.GreyMedium,
@@ -294,7 +285,17 @@ private fun AppVolumeRow(
             enabled = app.controlState != AppVolumeControlState.UNAVAILABLE,
             onVolumeChange = { newVolume ->
                 localVolume = newVolume
+                val hapticStep = (newVolume.coerceIn(0f, 1f) * 20f).toInt()
+                if (hapticStep != lastHapticStep) {
+                    lastHapticStep = hapticStep
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
                 onVolumeChange(newVolume)
+            },
+            onValueCommitted = { finalVolume ->
+                localVolume = finalVolume
+                onVolumeChange(finalVolume)
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             },
             modifier = Modifier.fillMaxWidth()
         )
@@ -308,6 +309,7 @@ private fun AppVolumeRow(
 private fun HorizontalVolumeRail(
     volume: Float,
     onVolumeChange: (Float) -> Unit,
+    onValueCommitted: (Float) -> Unit,
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -315,12 +317,17 @@ private fun HorizontalVolumeRail(
         modifier = modifier
             .height(20.dp)
             .then(if (enabled) Modifier.pointerInput(Unit) {
-                detectHorizontalDragGestures { change, _ ->
+                var latestVolume = volume
+                detectHorizontalDragGestures(
+                    onDragStart = { latestVolume = volume },
+                    onDragEnd = { onValueCommitted(latestVolume) },
+                    onDragCancel = { onValueCommitted(latestVolume) }
+                ) { change, _ ->
                     change.consume()
                     val inset = 5.dp.toPx()
                     val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
-                    val newVolume = ((change.position.x - inset) / usableWidth).coerceIn(0f, 1f)
-                    onVolumeChange(newVolume)
+                    latestVolume = ((change.position.x - inset) / usableWidth).coerceIn(0f, 1f)
+                    onVolumeChange(latestVolume)
                 }
             } else Modifier)
             .then(if (enabled) Modifier.pointerInput(Unit) {
@@ -329,6 +336,7 @@ private fun HorizontalVolumeRail(
                     val usableWidth = (size.width - inset * 2f).coerceAtLeast(1f)
                     val newVolume = ((offset.x - inset) / usableWidth).coerceIn(0f, 1f)
                     onVolumeChange(newVolume)
+                    onValueCommitted(newVolume)
                 }
             } else Modifier)
     ) {

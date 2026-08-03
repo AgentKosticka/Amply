@@ -1,6 +1,5 @@
 package com.agentkosticka.amply.audio.session
 
-import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.Parcelable
 import com.agentkosticka.amply.settings.model.AppIdentity
@@ -49,7 +48,6 @@ data class OverlayAppEntry(
     val uid: Int,
     val appName: String,
     val appIcon: Drawable?,
-    val appIconBitmap: Bitmap? = null,
     val volume: Float,
     val isPlaying: Boolean,
     val controlState: AppVolumeControlState = if (isPlaying) {

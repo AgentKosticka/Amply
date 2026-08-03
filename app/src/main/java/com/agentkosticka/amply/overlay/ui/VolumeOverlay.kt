@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.agentkosticka.amply.audio.session.OverlayAppEntry
+import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
@@ -72,14 +72,14 @@ fun VolumeOverlay(
     volumeLimitFeedback: VolumeLimitFeedback? = null,
     visible: Boolean = true,
     iconType: String = "MUSIC",
-    apps: List<OverlayAppEntry> = emptyList(),
+    apps: List<OverlayAppPresentation> = emptyList(),
     shizukuConnectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
     shizukuIcon: Bitmap? = null,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
     onStreamSelected: (VolumeTarget) -> Unit = {},
-    onAppVolumeChange: (OverlayAppEntry, Float) -> Unit = { _, _ -> },
+    onAppVolumeChange: (AppVolumeTarget, Float) -> Unit = { _, _ -> },
     onMuteToggle: (Int) -> Unit = {},
     onInteraction: () -> Unit = {},
     onTouchStart: () -> Unit = {},
@@ -231,10 +231,9 @@ fun VolumeOverlay(
         visibleState = pillTransitionState,
         enter = slideInHorizontally(
             initialOffsetX = { if (expandToStart) it / 2 else -it / 2 },
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium
-            )
+            // A monotonic tween avoids the spring's late overshoot, which becomes
+            // visible now that the overlay composition is reused between appearances.
+            animationSpec = tween(220, easing = FastOutSlowInEasing)
         ) + fadeIn(animationSpec = tween(200)),
         exit = slideOutHorizontally(
             targetOffsetX = { if (expandToStart) it / 2 else -it / 2 },
@@ -361,8 +360,6 @@ fun VolumeOverlay(
                                     pivotFractionX = if (expandToStart) 1f else 0f,
                                     pivotFractionY = 0.5f
                                 )
-                                shape = RoundedCornerShape(OverlayCornerRadius)
-                                clip = true
                             }
                         ) {
                             panelBody(ExpandedPillWidth, 360.dp)

@@ -12,6 +12,8 @@ internal object OverlayWindowPolicy {
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
         WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+
+    val parkedFlags: Int = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
 }
 
 enum class OverlayPresentationMode {
