@@ -5,7 +5,8 @@ import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -70,9 +71,9 @@ fun DraggableDotSlider(
         )
     }
 
-    Canvas(
-        modifier = modifier
-            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
             .semantics {
                 contentDescription = accessibilityLabel
                 stateDescription = "$currentVolume of $maxVolume"
@@ -132,74 +133,77 @@ fun DraggableDotSlider(
                 } else {
                     Modifier
                 }
-            )
+            ),
+        propagateMinConstraints = true
     ) {
-        val safeDotCount = dotCount.coerceAtLeast(1)
-        val spacing = if (safeDotCount == 1) 0f else size.height / (safeDotCount - 1)
-        val dotRadius = minOf(3.5.dp.toPx(), (spacing * 0.34f).coerceAtLeast(0.75.dp.toPx()))
-        val filledDots = VolumeDotScale.displayLevel(currentVolume, referenceMaxVolume, dotCount)
-        val projectedMin = VolumeDotScale.projectedLevel(
-            minVolume,
-            referenceMaxVolume,
-            dotCount
-        ).coerceAtLeast(1)
-
-        for (i in 0 until safeDotCount) {
-            val y = size.height - (i * spacing)
-            val level = i + 1
-            val shakeX = if (level == limitFeedbackLevel) {
-                rejectedDotShake.value * 3.5.dp.toPx()
-            } else {
-                0f
-            }
-            val x = size.width / 2 + shakeX
-            val dotPercentage = if (safeDotCount == 1) 0f else i.toFloat() / (safeDotCount - 1)
-            val available = VolumeDotScale.isLevelAvailable(
-                level,
+        Canvas(modifier = modifier) {
+            val safeDotCount = dotCount.coerceAtLeast(1)
+            val spacing = if (safeDotCount == 1) 0f else size.height / (safeDotCount - 1)
+            val dotRadius = minOf(3.5.dp.toPx(), (spacing * 0.34f).coerceAtLeast(0.75.dp.toPx()))
+            val filledDots = VolumeDotScale.displayLevel(currentVolume, referenceMaxVolume, dotCount)
+            val projectedMin = VolumeDotScale.projectedLevel(
                 minVolume,
-                maxVolume,
                 referenceMaxVolume,
                 dotCount
-            )
+            ).coerceAtLeast(1)
 
-            val dotColor = when {
-                !visuallyEnabled || !available -> Color(0xFF343434)
-                level <= filledDots -> {
-                    if (dotPercentage > 0.75f) NothingColors.Red else NothingColors.White
+            for (i in 0 until safeDotCount) {
+                val y = size.height - (i * spacing)
+                val level = i + 1
+                val shakeX = if (level == limitFeedbackLevel) {
+                    rejectedDotShake.value * 3.5.dp.toPx()
+                } else {
+                    0f
                 }
-                else -> Color(0xFF444444)
-            }
+                val x = size.width / 2 + shakeX
+                val dotPercentage = if (safeDotCount == 1) 0f else i.toFloat() / (safeDotCount - 1)
+                val available = VolumeDotScale.isLevelAvailable(
+                    level,
+                    minVolume,
+                    maxVolume,
+                    referenceMaxVolume,
+                    dotCount
+                )
 
-            drawCircle(
-                color = dotColor,
-                radius = dotRadius,
-                center = Offset(x, y)
-            )
-            if (visuallyEnabled && minVolume > 0 && level == projectedMin && available) {
+                val dotColor = when {
+                    !visuallyEnabled || !available -> Color(0xFF343434)
+                    level <= filledDots -> {
+                        if (dotPercentage > 0.75f) NothingColors.Red else NothingColors.White
+                    }
+                    else -> Color(0xFF444444)
+                }
+
                 drawCircle(
-                    color = NothingColors.GreyMedium.copy(alpha = 0.7f),
-                    radius = dotRadius + 2.dp.toPx(),
-                    center = Offset(x, y),
-                    style = Stroke(width = 1.dp.toPx())
+                    color = dotColor,
+                    radius = dotRadius,
+                    center = Offset(x, y)
                 )
-            }
-            if (!available) {
-                val crossRadius = dotRadius * 0.72f
-                val crossColor = NothingColors.GreyMedium.copy(alpha = 0.55f)
-                drawLine(
-                    color = crossColor,
-                    start = Offset(x - crossRadius, y - crossRadius),
-                    end = Offset(x + crossRadius, y + crossRadius),
-                    strokeWidth = 1.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
-                drawLine(
-                    color = crossColor,
-                    start = Offset(x + crossRadius, y - crossRadius),
-                    end = Offset(x - crossRadius, y + crossRadius),
-                    strokeWidth = 1.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
+                if (visuallyEnabled && minVolume > 0 && level == projectedMin && available) {
+                    drawCircle(
+                        color = NothingColors.GreyMedium.copy(alpha = 0.7f),
+                        radius = dotRadius + 2.dp.toPx(),
+                        center = Offset(x, y),
+                        style = Stroke(width = 1.dp.toPx())
+                    )
+                }
+                if (!available) {
+                    val crossRadius = dotRadius * 0.72f
+                    val crossColor = NothingColors.GreyMedium.copy(alpha = 0.55f)
+                    drawLine(
+                        color = crossColor,
+                        start = Offset(x - crossRadius, y - crossRadius),
+                        end = Offset(x + crossRadius, y + crossRadius),
+                        strokeWidth = 1.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = crossColor,
+                        start = Offset(x + crossRadius, y - crossRadius),
+                        end = Offset(x - crossRadius, y + crossRadius),
+                        strokeWidth = 1.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                }
             }
         }
     }
