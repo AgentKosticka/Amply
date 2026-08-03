@@ -30,7 +30,7 @@ class VolumeControlSemanticsTest {
 
         compose.onNodeWithContentDescription("Test volume")
             .assertHeightIsAtLeast(48.dp)
-            .performSemanticsAction(SemanticsActions.SetProgress) { action -> action(0.8f) }
+            .performSemanticsAction(SemanticsActions.SetProgress) { action -> action(8f) }
         compose.runOnIdle { assertEquals(8, changedTo) }
     }
 
