@@ -22,6 +22,7 @@ Amply is a sideloaded Android volume controller that intercepts hardware volume 
 | Notifications | Recommended | Shows the foreground runtime state and recovery actions |
 | Phone state | Optional | Improves incoming-call detection; without it, ambiguous call-like keys pass through |
 | Notification policy access | Diagnostics only | Used only by explicitly launched advanced ringer compatibility checks |
+| Network access | Automatic updates | Checks Amply’s latest public GitHub Release at most once per 24 hours while online |
 
 Amply does **not** request `SYSTEM_ALERT_WINDOW`. Its Accessibility Service does not traverse or collect window content.
 

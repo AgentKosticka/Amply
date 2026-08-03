@@ -20,9 +20,23 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import com.agentkosticka.amply.settings.ui.SettingsDashboard
 import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.service.VolumeKeyService
@@ -36,6 +50,7 @@ import com.agentkosticka.amply.tutorial.TutorialStage
 import com.agentkosticka.amply.tutorial.TutorialWaitingScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -72,6 +87,7 @@ class MainActivity : ComponentActivity() {
         if (::runtime.isInitialized) {
             refreshPermissionState()
             runtime.shizukuRepository.checkPermissionState()
+            lifecycleScope.launch { runtime.updateChecker.checkIfDue() }
         }
     }
 
@@ -83,6 +99,7 @@ class MainActivity : ComponentActivity() {
         val connectionState by runtime.connectionState.collectAsState()
         val tutorialStage by runtime.tutorialCoordinator.stage.collectAsState()
         val runtimeHealth by runtime.runtimeHealth.collectAsState()
+        val availableUpdate by runtime.updateChecker.availableUpdate.collectAsState()
         val readiness = SetupReadiness(
             accessibilityEnabled = permissionState.volumeKeysGranted,
             shizukuPermission = shizukuPermission,
@@ -142,6 +159,73 @@ class MainActivity : ComponentActivity() {
                     stage = tutorialStage,
                     coordinator = runtime.tutorialCoordinator
                 )
+            }
+
+            availableUpdate?.let { update ->
+                if (
+                    readiness.canShowDashboard(introductionSeen) &&
+                    tutorialStage == TutorialStage.COMPLETED
+                ) {
+                    AlertDialog(
+                        onDismissRequest = runtime.updateChecker::dismissAvailableUpdate,
+                        title = {
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.update_available_eyebrow),
+                                    color = com.agentkosticka.amply.ui.theme.NothingColors.Red,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = stringResource(
+                                        R.string.update_available_title,
+                                        update.version.toString()
+                                    ),
+                                    color = com.agentkosticka.amply.ui.theme.NothingColors.White,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        },
+                        text = {
+                            Text(
+                                stringResource(R.string.update_available_message),
+                                color = com.agentkosticka.amply.ui.theme.NothingColors.GreyMedium,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                runtime.updateChecker.dismissAvailableUpdate()
+                                openReleasePage(update.releaseUrl)
+                            }) {
+                                Text(
+                                    stringResource(R.string.update_view_release),
+                                    color = com.agentkosticka.amply.ui.theme.NothingColors.Red,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = runtime.updateChecker::dismissAvailableUpdate) {
+                                Text(
+                                    stringResource(R.string.update_later),
+                                    color = com.agentkosticka.amply.ui.theme.NothingColors.GreyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                        containerColor = Color(0xFF151515),
+                        tonalElevation = 0.dp,
+                        titleContentColor = com.agentkosticka.amply.ui.theme.NothingColors.White,
+                        textContentColor = com.agentkosticka.amply.ui.theme.NothingColors.GreyMedium
+                    )
+                }
             }
         }
     }
@@ -222,6 +306,10 @@ class MainActivity : ComponentActivity() {
         ) {
             phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
         }
+    }
+
+    private fun openReleasePage(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     }
 
 }

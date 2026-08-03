@@ -89,4 +89,9 @@
     <string name="setup_finish">Finish setup</string>
     <string name="setup_complete_required">Complete required steps</string>
     <string name="dismiss">Dismiss</string>
+    <string name="update_available_eyebrow">UPDATE AVAILABLE</string>
+    <string name="update_available_title">Amply %1$s is ready</string>
+    <string name="update_available_message">A new signed APK is available on GitHub Releases. Review what changed before installing it.</string>
+    <string name="update_view_release">VIEW RELEASE</string>
+    <string name="update_later">LATER</string>
 </resources>

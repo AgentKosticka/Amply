@@ -44,6 +44,8 @@ class PreferencesManager(private val context: Context) {
         private val DISABLE_SHIZUKU_DISCONNECTED_WARNING =
             booleanPreferencesKey("disable_shizuku_disconnected_warning")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
+        private val LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS =
+            longPreferencesKey("last_successful_update_check_epoch_ms")
         private val LEGACY_RINGER_METHOD = stringPreferencesKey("ringer_method")
         const val MAX_IMPORT_BYTES = 2 * 1024 * 1024
         const val EXPORT_SCHEMA_VERSION = 3
@@ -82,6 +84,18 @@ class PreferencesManager(private val context: Context) {
     ): SettingsOperationResult = editSettings { preferences ->
         preferences[SETUP_COMPLETED] = true
         preferences[TUTORIAL_STAGE] = stage.name
+    }
+
+    internal suspend fun lastSuccessfulUpdateCheckEpochMs(): Long =
+        context.dataStore.data.first()[LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS] ?: 0L
+
+    internal suspend fun recordSuccessfulUpdateCheck(epochMs: Long): SettingsOperationResult {
+        if (epochMs <= 0L) {
+            return SettingsOperationResult.ValidationFailed("Invalid update-check timestamp")
+        }
+        return editSettings { preferences ->
+            preferences[LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS] = epochMs
+        }
     }
 
     val overlaySide: Flow<OverlaySide> = context.dataStore.data

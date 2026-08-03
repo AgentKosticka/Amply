@@ -22,6 +22,7 @@ import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.tutorial.TutorialCoordinator
+import com.agentkosticka.amply.update.AppUpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +52,7 @@ class AmplyRuntime(context: Context) {
 
     val preferencesManager = PreferencesManager(appContext)
     internal val tutorialCoordinator = TutorialCoordinator(preferencesManager, runtimeScope)
+    internal val updateChecker = AppUpdateChecker(appContext, preferencesManager)
     val shizukuRepository = ShizukuRepository(appContext)
     val shizukuVolumeManager = ShizukuVolumeManager(appContext)
     val ringerExperimentExecutor = RingerExperimentExecutor(
