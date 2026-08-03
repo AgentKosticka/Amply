@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application>
         <profileable android:shell="true" />
+        <!-- This class is available only when the benchmark build type is active. -->
         <activity
-            android:name=".benchmarkhost.OverlayBenchmarkHostActivity"
+            android:name="com.agentkosticka.amply.benchmarkhost.OverlayBenchmarkHostActivity"
             android:exported="true"
-            android:theme="@style/Theme.Amply" />
+            android:theme="@style/Theme.Amply"
+            tools:ignore="MissingClass" />
     </application>
 </manifest>

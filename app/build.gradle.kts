@@ -17,6 +17,7 @@ val signingEnvironment = listOf(
     "AMPLY_KEY_ALIAS",
     "AMPLY_KEY_PASSWORD"
 ).associateWith { providers.environmentVariable(it).orNull }
+val releaseSigningConfigured = signingEnvironment.values.none { value -> value.isNullOrBlank() }
 
 android {
     namespace = "com.agentkosticka.amply"
@@ -35,7 +36,7 @@ android {
         }
     }
 
-    val releaseSigningConfig = if (signingEnvironment.values.all { !it.isNullOrBlank() }) {
+    val releaseSigningConfig = if (releaseSigningConfigured) {
         signingConfigs.create("release") {
             storeFile = file(signingEnvironment.getValue("AMPLY_KEYSTORE_PATH")!!)
             storePassword = signingEnvironment.getValue("AMPLY_KEYSTORE_PASSWORD")
