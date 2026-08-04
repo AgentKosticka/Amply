@@ -49,6 +49,41 @@ jobs:
           LIMIT="$((BASELINE + BASELINE / 10))"
           echo "Release APK: $ACTUAL bytes; baseline: $BASELINE; limit: $LIMIT"
           test "$ACTUAL" -le "$LIMIT"
+      - name: Stage promotable release build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -name '*.apk' -print -quit)"
+          ZIPALIGN="$(find "$ANDROID_SDK_ROOT/build-tools" -name zipalign -type f | sort -V | tail -1)"
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -n "$APK"
+          test -n "$ZIPALIGN"
+          test -n "$APKSIGNER"
+
+          if "$APKSIGNER" verify "$APK" >/dev/null 2>&1; then
+            echo 'CI release APK is unexpectedly signed.' >&2
+            exit 1
+          fi
+
+          mkdir -p release-build
+          "$ZIPALIGN" -P 16 -f 4 "$APK" release-build/app-release-unsigned-aligned.apk
+          "$ZIPALIGN" -c -P 16 -v 4 release-build/app-release-unsigned-aligned.apk
+          if "$APKSIGNER" verify release-build/app-release-unsigned-aligned.apk >/dev/null 2>&1; then
+            echo 'Staged CI APK is unexpectedly signed.' >&2
+            exit 1
+          fi
+          cp app/build/outputs/mapping/release/mapping.txt release-build/mapping.txt
+          printf '%s\n' "$GITHUB_SHA" > release-build/commit-sha.txt
+      - name: Upload promotable release build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-build-${{ github.sha }}
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+          path: release-build/
       - uses: actions/upload-artifact@v7
         if: always()
         with:

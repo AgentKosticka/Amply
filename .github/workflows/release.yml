@@ -5,12 +5,13 @@ on:
     tags: ['v*.*.*']
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     env:
       AMPLY_KEYSTORE_PASSWORD: ${{ secrets.AMPLY_KEYSTORE_PASSWORD }}
       AMPLY_KEY_ALIAS: ${{ secrets.AMPLY_KEY_ALIAS }}
@@ -19,20 +20,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Make Gradle wrapper executable
-        run: chmod +x gradlew
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v5
       - name: Validate tag, version, version code, and target
         id: version
         shell: bash
         run: |
           set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_COMMIT_SHA="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test -n "$TAG_COMMIT_SHA"
           VERSION_NAME="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
           VERSION_CODE="$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -1)"
           test "$TAG_VERSION" = "$VERSION_NAME"
@@ -47,6 +47,47 @@ jobs:
           test "$VERSION_CODE" -gt "$PREVIOUS_CODE"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$TAG_COMMIT_SHA" >> "$GITHUB_OUTPUT"
+      - name: Find successful CI run for tagged commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_COMMIT_SHA: ${{ steps.version.outputs.commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_ID="$(gh run list \
+            --workflow ci.yml \
+            --branch main \
+            --commit "$TAG_COMMIT_SHA" \
+            --event push \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')"
+
+          if [[ -z "$RUN_ID" ]]; then
+            echo "No successful main-branch CI run exists for tagged commit $TAG_COMMIT_SHA." >&2
+            exit 1
+          fi
+
+          test "$(gh run view "$RUN_ID" --json headSha --jq '.headSha')" = "$TAG_COMMIT_SHA"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: Download CI release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ steps.ci.outputs.run_id }}
+          TAG_COMMIT_SHA: ${{ steps.version.outputs.commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-release
+          gh run download "$CI_RUN_ID" \
+            --name "release-build-$TAG_COMMIT_SHA" \
+            --dir ci-release
+          test "$(tr -d '[:space:]' < ci-release/commit-sha.txt)" = "$TAG_COMMIT_SHA"
+          test -s ci-release/app-release-unsigned-aligned.apk
+          test -s ci-release/mapping.txt
       - name: Materialize signing key
         env:
           AMPLY_KEYSTORE_BASE64: ${{ secrets.AMPLY_KEYSTORE_BASE64 }}
@@ -58,26 +99,39 @@ jobs:
           printf '%s' "$AMPLY_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/amply-signing/release.jks"
           chmod 600 "$RUNNER_TEMP/amply-signing/release.jks"
           echo "AMPLY_KEYSTORE_PATH=$RUNNER_TEMP/amply-signing/release.jks" >> "$GITHUB_ENV"
-      - name: Build signed production APK
-        run: ./gradlew --dependency-verification=strict clean testDebugUnitTest lintDebug assembleRelease
-      - name: Verify and name release artifacts
+      - name: Sign, verify, and name release APK
         id: artifacts
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_APK="$(find app/build/outputs/apk/release -name '*.apk' -print -quit)"
-          AAPT="$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt -type f | sort -V | tail -1)"
-          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          test -n "$SOURCE_APK"
-          "$AAPT" dump badging "$SOURCE_APK" | grep -q "targetSdkVersion:'36'"
-          "$APKSIGNER" verify --verbose --print-certs "$SOURCE_APK"
-          ! "$AAPT" dump permissions "$SOURCE_APK" | grep -q 'android.permission.SYSTEM_ALERT_WINDOW'
-          "$AAPT" dump xmltree "$SOURCE_APK" AndroidManifest.xml | grep 'android:allowBackup' | grep -q '0x0'
-          unzip -l "$SOURCE_APK" | grep -q 'assets/NOTICE'
-          unzip -l "$SOURCE_APK" | grep -q 'assets/third_party_attributions.html'
-          unzip -l "$SOURCE_APK" | grep -Eq 'assets/dexopt/baseline\.prof|BUNDLE-METADATA/com\.android\.tools\.build\.profiles/baseline-prof\.txt'
+          SOURCE_APK="ci-release/app-release-unsigned-aligned.apk"
           APK="Amply-${GITHUB_REF_NAME}.apk"
-          cp "$SOURCE_APK" "$APK"
+          AAPT="$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt -type f | sort -V | tail -1)"
+          ZIPALIGN="$(find "$ANDROID_SDK_ROOT/build-tools" -name zipalign -type f | sort -V | tail -1)"
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
+
+          test -n "$AAPT"
+          test -n "$ZIPALIGN"
+          test -n "$APKSIGNER"
+
+          "$ZIPALIGN" -c -P 16 -v 4 "$SOURCE_APK"
+          "$APKSIGNER" sign \
+            --ks "$AMPLY_KEYSTORE_PATH" \
+            --ks-key-alias "$AMPLY_KEY_ALIAS" \
+            --ks-pass env:AMPLY_KEYSTORE_PASSWORD \
+            --key-pass env:AMPLY_KEY_PASSWORD \
+            --out "$APK" \
+            "$SOURCE_APK"
+
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$AAPT" dump badging "$APK" | grep -q "targetSdkVersion:'36'"
+          ! "$AAPT" dump permissions "$APK" | grep -q 'android.permission.SYSTEM_ALERT_WINDOW'
+          "$AAPT" dump xmltree "$APK" AndroidManifest.xml | grep 'android:allowBackup' | grep -q '0x0'
+          unzip -l "$APK" | grep -q 'assets/NOTICE'
+          unzip -l "$APK" | grep -q 'assets/third_party_attributions.html'
+          unzip -l "$APK" | grep -Eq 'assets/dexopt/baseline\.prof|BUNDLE-METADATA/com\.android\.tools\.build\.profiles/baseline-prof\.txt'
+
           sha256sum "$APK" > "$APK.sha256"
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
       - name: Keep R8 mapping private
@@ -86,7 +140,7 @@ jobs:
           name: r8-mapping-${{ github.ref_name }}
           retention-days: 90
           if-no-files-found: error
-          path: app/build/outputs/mapping/release/mapping.txt
+          path: ci-release/mapping.txt
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
