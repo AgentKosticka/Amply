@@ -100,6 +100,11 @@ fun VolumeOverlay(
     val isExpanded = expanded ?: internalExpanded
     val showCollapsedDnd = selectedTarget == VolumeTarget.RING ||
         selectedTarget == VolumeTarget.NOTIFICATION
+    val dndCollapsedSize = animateDpAsState(
+        targetValue = if (!isExpanded && showCollapsedDnd) CollapsedPillWidth else 48.dp,
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "dndCollapsedSize"
+    )
     val dndCollapsedTranslation = animateFloatAsState(
         targetValue = with(LocalDensity.current) {
             if (!isExpanded && showCollapsedDnd && showStandDownButton) {
@@ -214,7 +219,7 @@ fun VolumeOverlay(
                                 )
                                 Box(
                                     modifier = Modifier
-                                        .size(48.dp)
+                                        .size(dndCollapsedSize.value)
                                         .clip(CircleShape)
                                         .background(dndBackground)
                                         .clickable {
