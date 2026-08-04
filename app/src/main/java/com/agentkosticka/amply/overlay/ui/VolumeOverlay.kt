@@ -100,6 +100,17 @@ fun VolumeOverlay(
     val isExpanded = expanded ?: internalExpanded
     val showCollapsedDnd = selectedTarget == VolumeTarget.RING ||
         selectedTarget == VolumeTarget.NOTIFICATION
+    val dndCollapsedTranslation = animateFloatAsState(
+        targetValue = with(LocalDensity.current) {
+            if (!isExpanded && showCollapsedDnd && showStandDownButton) {
+                CollapsedPillWidth.toPx()
+            } else {
+                0f
+            }
+        },
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "dndCollapsedTranslation"
+    )
     fun updateExpanded(value: Boolean) {
         internalExpanded = value
         onExpandedChange(value)
@@ -183,7 +194,14 @@ fun VolumeOverlay(
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (showDndButton) {
-                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                            Box(
+                                Modifier
+                                    .size(48.dp)
+                                    .graphicsLayer {
+                                        translationX = dndCollapsedTranslation.value
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = isExpanded || showCollapsedDnd,
                                     enter = fadeIn(tween(180)) + slideInVertically { it },
