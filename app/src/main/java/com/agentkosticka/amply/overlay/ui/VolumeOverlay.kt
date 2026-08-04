@@ -192,11 +192,11 @@ fun VolumeOverlay(
                         .height(PauseControlSlotHeight),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row {
                         if (showDndButton) {
                             Box(
                                 Modifier
-                                    .size(48.dp)
+                                    .size(CollapsedPillWidth)
                                     .graphicsLayer {
                                         translationX = dndCollapsedTranslation.value
                                     },
@@ -238,7 +238,7 @@ fun VolumeOverlay(
                             }
                         }
                         if (showStandDownButton) {
-                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(CollapsedPillWidth), contentAlignment = Alignment.Center) {
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = isExpanded,
                                     enter = fadeIn(tween(180)) + slideInVertically { it },

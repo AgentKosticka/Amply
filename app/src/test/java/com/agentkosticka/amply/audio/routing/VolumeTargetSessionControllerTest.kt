@@ -148,6 +148,31 @@ class VolumeTargetSessionControllerTest {
     }
 
     @Test
+    fun visibleOverlayLatchesNotificationAfterPlaybackStops() {
+        var now = 1_000L
+        val controller = VolumeTargetSessionController { now }
+        controller.onPlaybackUsagesChanged(setOf(AudioAttributes.USAGE_NOTIFICATION))
+        assertEquals(
+            VolumeKeyStreamAction.Adjust(VolumeTarget.NOTIFICATION),
+            controller.resolveForInitialKeyDown(AudioManager.MODE_NORMAL, CallPhase.NONE)
+        )
+        controller.onOverlayShown()
+
+        controller.onPlaybackUsagesChanged(emptySet())
+        now = 5_000L
+        controller.onTimeAdvanced()
+
+        assertEquals(VolumeTarget.NOTIFICATION, controller.selectedTarget.value)
+        assertEquals(
+            VolumeKeyStreamAction.Adjust(VolumeTarget.NOTIFICATION),
+            controller.resolveForInitialKeyDown(AudioManager.MODE_NORMAL, CallPhase.NONE)
+        )
+
+        controller.onOverlayHidden()
+        assertEquals(VolumeTarget.MEDIA, controller.selectedTarget.value)
+    }
+
+    @Test
     fun dynamicStreamPriorityMatchesRoutingContract() {
         val active = setOf(
             VolumeTarget.SYSTEM,

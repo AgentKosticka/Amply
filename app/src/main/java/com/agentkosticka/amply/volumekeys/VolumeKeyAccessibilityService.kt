@@ -491,11 +491,15 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         var target = initialTarget
         var failedTarget: VolumeTarget? = null
         repeat(VolumeTarget.entries.size) {
-            when (val result = changeVolume(isUp, target)) {
+            val result = changeVolume(isUp, target)
+            when (result) {
                 is VolumeAdjustmentResult.Applied -> return result
                 is VolumeAdjustmentResult.Failed -> failedTarget = result.target
                 VolumeAdjustmentResult.Unavailable -> Unit
             }
+            // Once an overlay appearance is on screen, its selected stream is locked.
+            // A failed adjustment must pass through rather than silently retargeting it.
+            if (OverlayManager.isShowing()) return result
             runtime.disableSystemStream(target)
             target = when (val fallback = resolveStreamAction()) {
                 is VolumeKeyStreamAction.Adjust -> fallback.target

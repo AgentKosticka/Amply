@@ -119,6 +119,7 @@ class VolumeTargetSessionController(
     private var context = SystemVolumeContext()
     private var overlayVisible = false
     private var manualTarget: VolumeTarget? = null
+    private var latchedTarget: VolumeTarget? = null
     private val _selectedTarget = MutableStateFlow(VolumeTarget.MEDIA)
     val selectedTarget: StateFlow<VolumeTarget> = _selectedTarget.asStateFlow()
 
@@ -147,7 +148,7 @@ class VolumeTargetSessionController(
 
     @Synchronized
     fun onStreamsChanged(streams: ActiveSystemStreams, disabledTargets: Set<VolumeTarget> = emptySet()) {
-        if (!streams.shizukuConnected && manualTarget?.permanentlyVisible == false) {
+        if (!overlayVisible && !streams.shizukuConnected && manualTarget?.permanentlyVisible == false) {
             manualTarget = null
         }
         context = context.copy(
@@ -172,7 +173,7 @@ class VolumeTargetSessionController(
         if (VolumeTargetPolicy.isIncomingRinging(audioMode, callPhase)) {
             return VolumeKeyStreamAction.SilenceIncomingRinger
         }
-        val target = manualTarget ?: VolumeTargetPolicy.automaticTarget(context, clock())
+        val target = manualTarget ?: latchedTarget ?: VolumeTargetPolicy.automaticTarget(context, clock())
         _selectedTarget.value = target
         return VolumeKeyStreamAction.Adjust(target)
     }
@@ -182,14 +183,15 @@ class VolumeTargetSessionController(
         if (!overlayVisible) {
             overlayVisible = true
             manualTarget = null
+            latchedTarget = _selectedTarget.value
         }
-        publishAutomaticIfAllowed()
     }
 
     @Synchronized
     fun onUserSelected(target: VolumeTarget) {
         if (!overlayVisible) overlayVisible = true
         manualTarget = target
+        latchedTarget = target
         _selectedTarget.value = target
     }
 
@@ -197,6 +199,7 @@ class VolumeTargetSessionController(
     fun onOverlayHidden() {
         overlayVisible = false
         manualTarget = null
+        latchedTarget = null
         _selectedTarget.value = VolumeTargetPolicy.automaticTarget(context, clock())
     }
 
@@ -205,6 +208,7 @@ class VolumeTargetSessionController(
 
     @Synchronized
     fun onTargetUnavailable(target: VolumeTarget) {
+        if (overlayVisible) return
         if (manualTarget?.let(context.topology::canonicalTarget) == context.topology.canonicalTarget(target)) {
             manualTarget = null
         }
@@ -212,7 +216,7 @@ class VolumeTargetSessionController(
     }
 
     private fun publishAutomaticIfAllowed() {
-        if (manualTarget == null) {
+        if (!overlayVisible && manualTarget == null) {
             _selectedTarget.value = VolumeTargetPolicy.automaticTarget(context, clock())
         }
     }
