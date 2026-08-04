@@ -11,15 +11,32 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.MutatePriority
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -39,7 +56,6 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -48,7 +64,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -57,75 +73,75 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import kotlinx.coroutines.flow.first
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.audio.session.AudioSessionState
-import com.agentkosticka.amply.settings.data.PreferencesManager
-import com.agentkosticka.amply.settings.model.AppSettings
-import com.agentkosticka.amply.settings.model.AppIdentity
 import com.agentkosticka.amply.permissions.AppPermissionState
-import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
-import com.agentkosticka.amply.settings.model.SettingsImportPreview
-import com.agentkosticka.amply.settings.model.ImportMode
-import com.agentkosticka.amply.settings.model.SettingsOperationResult
+import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.settings.model.AmplyPauseDuration
+import com.agentkosticka.amply.settings.model.AppIdentity
+import com.agentkosticka.amply.settings.model.AppSettings
+import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
+import com.agentkosticka.amply.settings.model.ImportMode
 import com.agentkosticka.amply.settings.model.OverlayAppMode
 import com.agentkosticka.amply.settings.model.OverlaySide
+import com.agentkosticka.amply.settings.model.SettingsImportPreview
+import com.agentkosticka.amply.settings.model.SettingsOperationResult
 import com.agentkosticka.amply.settings.model.VolumeDotScaleConfig
 import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
-import com.agentkosticka.amply.ui.theme.NothingColors
 import com.agentkosticka.amply.tutorial.TutorialCoachmarkCard
 import com.agentkosticka.amply.tutorial.TutorialStage
+import com.agentkosticka.amply.ui.theme.NothingColors
 import com.agentkosticka.amply.util.readAtMost
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 
 internal enum class AppListMode {
     DEFAULT,
@@ -199,7 +215,7 @@ private fun Modifier.appReorderGestures(host: AppReorderGestureHost): Modifier =
                     val delta = change.position.y - change.previousPosition.y
                     if (!dragging) {
                         accumulatedDrag += delta
-                        if (kotlin.math.abs(accumulatedDrag) > viewConfiguration.touchSlop) {
+                        if (abs(accumulatedDrag) > viewConfiguration.touchSlop) {
                             dragging = true
                             host.callbacks[identity]?.onStart?.invoke()
                             val overSlop = accumulatedDrag -
@@ -528,7 +544,7 @@ fun SettingsDashboard(
 
     val currentAppPermissionState by rememberUpdatedState(appPermissionState)
     val currentShowDndButton by rememberUpdatedState(showDndButton)
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -721,7 +737,7 @@ fun SettingsDashboard(
             viewportEnd = layoutInfo.viewportEndOffset
         )
         draggedOverlayTopWindow = reorderGestureHost.listCoordinates
-            ?.localToWindow(androidx.compose.ui.geometry.Offset(0f, visualTop))
+            ?.localToWindow(Offset(0f, visualTop))
             ?.y
             ?: draggedOverlayTopWindow
     }
@@ -759,7 +775,7 @@ fun SettingsDashboard(
             val landedStage = SettingsTab.entries[page].tutorialStage
             val currentIndex = TutorialStage.appStages.indexOf(tutorialStage)
             val landedIndex = landedStage?.let(TutorialStage.appStages::indexOf) ?: -1
-            if (landedStage != null && landedIndex >= 0 && kotlin.math.abs(landedIndex - currentIndex) <= 1) {
+            if (landedStage != null && landedIndex >= 0 && abs(landedIndex - currentIndex) <= 1) {
                 if (landedStage != tutorialStage) runtime.tutorialCoordinator.goTo(landedStage)
             } else {
                 pagerState.animateScrollToPage(tutorialStage.settingsTabIndex)
@@ -820,7 +836,7 @@ fun SettingsDashboard(
                 } else {
                     tabNavigation.job?.cancel()
                     tabNavigation.job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                        val pageDistance = kotlin.math.abs(index - pagerState.currentPage)
+                        val pageDistance = abs(index - pagerState.currentPage)
                         pagerState.animateScrollToPage(
                             page = index,
                             animationSpec = tween(
@@ -1007,7 +1023,7 @@ fun SettingsDashboard(
                                                     val consumed = scrollBy(frameScroll)
                                                     updateDraggedAppPosition()
                                                     updateDraggedOverlayPosition()
-                                                    if (kotlin.math.abs(consumed) < 0.5f) {
+                                                    if (abs(consumed) < 0.5f) {
                                                         reorderAutoScroll.direction = 0f
                                                         reorderAutoScroll.velocityPxPerSecond = 0f
                                                         break
@@ -1037,7 +1053,7 @@ fun SettingsDashboard(
                                         val targetTop = targetInfo?.let { info ->
                                             reorderGestureHost.listCoordinates
                                                 ?.localToWindow(
-                                                    androidx.compose.ui.geometry.Offset(
+                                                    Offset(
                                                         0f,
                                                         info.offset.toFloat()
                                                     )
