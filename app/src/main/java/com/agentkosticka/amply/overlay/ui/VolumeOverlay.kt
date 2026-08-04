@@ -208,14 +208,9 @@ fun VolumeOverlay(
                                     exit = fadeOut(tween(120)) + slideOutVertically { it }
                                 ) {
                                 val dndBackground by animateColorAsState(
-                                    targetValue = if (dndActive) NothingColors.Red else Color(0xFF2A2A2A),
+                                    targetValue = if (dndActive) NothingColors.Red else Color(0xFF1C1C1C),
                                     animationSpec = tween(180),
                                     label = "dndBackground"
-                                )
-                                val dndIconColor by animateColorAsState(
-                                    targetValue = if (dndActive) NothingColors.White else NothingColors.GreyMedium,
-                                    animationSpec = tween(180),
-                                    label = "dndIcon"
                                 )
                                 Box(
                                     modifier = Modifier
@@ -235,7 +230,7 @@ fun VolumeOverlay(
                                         } else {
                                             "Turn Do Not Disturb on"
                                         },
-                                        tint = dndIconColor,
+                                        tint = NothingColors.White,
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }
