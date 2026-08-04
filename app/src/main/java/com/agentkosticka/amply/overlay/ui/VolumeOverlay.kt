@@ -75,6 +75,7 @@ fun VolumeOverlay(
     shizukuConnectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
     shizukuIcon: Bitmap? = null,
     showShizukuDisconnectedWarning: Boolean = true,
+    showStandDownButton: Boolean = true,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     initiallyExpanded: Boolean = false,
@@ -160,34 +161,36 @@ fun VolumeOverlay(
                 androidx.compose.ui.AbsoluteAlignment.Left
             }
         ) {
-            Box(
-                modifier = Modifier
-                    .width(CollapsedPillWidth)
-                    .height(PauseControlSlotHeight),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isExpanded,
-                    enter = fadeIn(tween(180)) + slideInVertically { it },
-                    exit = fadeOut(tween(120)) + slideOutVertically { it }
+            if (showStandDownButton) {
+                Box(
+                    modifier = Modifier
+                        .width(CollapsedPillWidth)
+                        .height(PauseControlSlotHeight),
+                    contentAlignment = Alignment.TopCenter
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(NothingColors.Red)
-                            .clickable {
-                                onPauseAmply()
-                                onInteraction()
-                            },
-                        contentAlignment = Alignment.Center
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isExpanded,
+                        enter = fadeIn(tween(180)) + slideInVertically { it },
+                        exit = fadeOut(tween(120)) + slideOutVertically { it }
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.PowerSettingsNew,
-                            contentDescription = "Pause Amply temporarily",
-                            tint = NothingColors.White,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(NothingColors.Red)
+                                .clickable {
+                                    onPauseAmply()
+                                    onInteraction()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PowerSettingsNew,
+                                contentDescription = "Pause Amply temporarily",
+                                tint = NothingColors.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }

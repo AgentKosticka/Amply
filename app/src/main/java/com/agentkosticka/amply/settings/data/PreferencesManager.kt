@@ -43,6 +43,8 @@ class PreferencesManager(private val context: Context) {
         private val AMPLY_PAUSED_UNTIL_EPOCH_MS = longPreferencesKey("amply_paused_until_epoch_ms")
         private val DISABLE_SHIZUKU_DISCONNECTED_WARNING =
             booleanPreferencesKey("disable_shizuku_disconnected_warning")
+        private val HIDE_PER_APP_VOLUME_CONTROL = booleanPreferencesKey("hide_per_app_volume_control")
+        private val HIDE_STAND_DOWN_BUTTON = booleanPreferencesKey("hide_stand_down_button")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
         private val LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS =
             longPreferencesKey("last_successful_update_check_epoch_ms")
@@ -174,6 +176,20 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setDisableShizukuDisconnectedWarning(disabled: Boolean): SettingsOperationResult =
         editSettings { it[DISABLE_SHIZUKU_DISCONNECTED_WARNING] = disabled }
+
+    val hidePerAppVolumeControl: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[HIDE_PER_APP_VOLUME_CONTROL] ?: false
+    }
+
+    suspend fun setHidePerAppVolumeControl(hidden: Boolean): SettingsOperationResult =
+        editSettings { it[HIDE_PER_APP_VOLUME_CONTROL] = hidden }
+
+    val hideStandDownButton: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[HIDE_STAND_DOWN_BUTTON] ?: false
+    }
+
+    suspend fun setHideStandDownButton(hidden: Boolean): SettingsOperationResult =
+        editSettings { it[HIDE_STAND_DOWN_BUTTON] = hidden }
 
     suspend fun setAmplyPauseDuration(duration: AmplyPauseDuration): SettingsOperationResult =
         editSettings { it[AMPLY_PAUSE_DURATION] = duration.name }
@@ -365,6 +381,8 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(AMPLY_PAUSE_DURATION)
             preferences.remove(AMPLY_PAUSED_UNTIL_EPOCH_MS)
             preferences.remove(DISABLE_SHIZUKU_DISCONNECTED_WARNING)
+            preferences.remove(HIDE_PER_APP_VOLUME_CONTROL)
+            preferences.remove(HIDE_STAND_DOWN_BUTTON)
             preferences.remove(LAST_STALE_APP_CLEANUP_EPOCH_MS)
             preferences.remove(LEGACY_GAME_MODE_ENABLED)
             preferences.remove(LEGACY_RINGER_METHOD)
@@ -402,6 +420,8 @@ class PreferencesManager(private val context: Context) {
                 "disableShizukuDisconnectedWarning",
                 preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] ?: false
             )
+            .put("hidePerAppVolumeControl", preferences[HIDE_PER_APP_VOLUME_CONTROL] ?: false)
+            .put("hideStandDownButton", preferences[HIDE_STAND_DOWN_BUTTON] ?: false)
             .put("standDownPackages", JSONArray(passThrough.sorted()))
             .put("appSettings", JSONObject(AppSettingsCodec.encode(settings)))
             .put("appSettingsHealth", health.name)
@@ -454,6 +474,8 @@ class PreferencesManager(private val context: Context) {
                 preferences[AMPLY_PAUSE_DURATION] = imported.pauseDuration.name
                 preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] =
                     imported.disableShizukuDisconnectedWarning
+                preferences[HIDE_PER_APP_VOLUME_CONTROL] = imported.hidePerAppVolumeControl
+                preferences[HIDE_STAND_DOWN_BUTTON] = imported.hideStandDownButton
                 val existingPackages = decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
                     ?: AppSettingsCodec.legacyPassThroughPackages(
                         preferences[APP_SETTINGS_JSON_V2] ?: preferences[APP_SETTINGS_JSON]
@@ -483,6 +505,8 @@ class PreferencesManager(private val context: Context) {
         val customDotCount: Int,
         val pauseDuration: AmplyPauseDuration,
         val disableShizukuDisconnectedWarning: Boolean,
+        val hidePerAppVolumeControl: Boolean,
+        val hideStandDownButton: Boolean,
         val standDownPackages: Set<String>
     )
 
@@ -537,6 +561,16 @@ class PreferencesManager(private val context: Context) {
             }
             root.getBoolean("disableShizukuDisconnectedWarning")
         } else false
+        val hidePerAppVolumeControl = optionalBoolean(
+            root,
+            "hidePerAppVolumeControl",
+            "Invalid per-app volume visibility setting"
+        )
+        val hideStandDownButton = optionalBoolean(
+            root,
+            "hideStandDownButton",
+            "Invalid Stand-Down button visibility setting"
+        )
         val standDown = linkedSetOf<String>()
         require(!root.has("standDownPackages") || root.get("standDownPackages") is JSONArray) {
             "Invalid Stand-Down records"
@@ -562,8 +596,16 @@ class PreferencesManager(private val context: Context) {
             customDotCount = customDotCount,
             pauseDuration = pauseDuration,
             disableShizukuDisconnectedWarning = warningDisabled,
+            hidePerAppVolumeControl = hidePerAppVolumeControl,
+            hideStandDownButton = hideStandDownButton,
             standDownPackages = standDown
         )
+    }
+
+    private fun optionalBoolean(root: JSONObject, key: String, error: String): Boolean {
+        if (!root.has(key)) return false
+        require(root.get(key) is Boolean) { error }
+        return root.getBoolean(key)
     }
 
     private suspend fun editSettings(

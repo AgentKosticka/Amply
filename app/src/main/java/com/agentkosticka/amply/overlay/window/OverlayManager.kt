@@ -111,6 +111,8 @@ object OverlayManager {
     private val shizukuConnectionState = mutableStateOf(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     private val shizukuIcon = mutableStateOf<Bitmap?>(null)
     private val showShizukuDisconnectedWarning = mutableStateOf(true)
+    private val showPerAppVolumeControl = mutableStateOf(true)
+    private val showStandDownButton = mutableStateOf(true)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -256,6 +258,16 @@ object OverlayManager {
 
     fun updateShizukuDisconnectedWarningEnabled(enabled: Boolean) {
         showShizukuDisconnectedWarning.value = enabled
+    }
+
+    fun updatePerAppVolumeControlEnabled(enabled: Boolean) {
+        showPerAppVolumeControl.value = enabled
+    }
+
+    fun updateStandDownButtonEnabled(enabled: Boolean) {
+        if (showStandDownButton.value == enabled) return
+        showStandDownButton.value = enabled
+        overlayContainer?.context?.let(::updateOverlayPosition)
     }
 
     /**
@@ -424,10 +436,11 @@ object OverlayManager {
                     volumeLimitFeedback = volumeLimitFeedback.value,
                     visible = overlayVisible.value,
                     iconType = iconType.value,
-                    apps = currentApps.value,
+                    apps = if (showPerAppVolumeControl.value) currentApps.value else emptyList(),
                     shizukuConnectionState = shizukuConnectionState.value,
                     shizukuIcon = shizukuIcon.value,
                     showShizukuDisconnectedWarning = showShizukuDisconnectedWarning.value,
+                    showStandDownButton = showStandDownButton.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
                     onStreamVolumeChange = { streamType, newVolume ->
@@ -884,8 +897,11 @@ object OverlayManager {
     private fun WindowManager.LayoutParams.applyPosition(context: Context): WindowManager.LayoutParams {
         val margin = (16 * context.resources.displayMetrics.density).toInt()
         val baseOverlayHeight = (BASE_OVERLAY_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
-        val pauseControlSlotHeight =
+        val pauseControlSlotHeight = if (showStandDownButton.value) {
             (PAUSE_CONTROL_SLOT_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
+        } else {
+            0
+        }
         val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
         val maxPillY = (screenHeight - baseOverlayHeight).coerceAtLeast(0)

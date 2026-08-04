@@ -203,6 +203,16 @@ open class OverlayForegroundService : Service() {
                     }
                 },
                 serviceScope.launch {
+                    preferences.hidePerAppVolumeControl.collect { hidden ->
+                        OverlayManager.updatePerAppVolumeControlEnabled(!hidden)
+                    }
+                },
+                serviceScope.launch {
+                    preferences.hideStandDownButton.collect { hidden ->
+                        OverlayManager.updateStandDownButtonEnabled(!hidden)
+                    }
+                },
+                serviceScope.launch {
                     runtime.selectedVolumeTarget.collect { target ->
                         OverlayManager.updateSelectedVolumeTarget(target)
                     }

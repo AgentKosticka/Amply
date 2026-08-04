@@ -20,6 +20,7 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -106,6 +107,46 @@ internal enum class SettingsTab(val label: String, val icon: androidx.compose.ui
     PILL("Pill", Icons.Default.Tune),
     STAND_DOWN("Stand-Down", Icons.AutoMirrored.Filled.VolumeUp),
     DIAGNOSTICS("Diagnostics", Icons.Default.BugReport)
+}
+
+@Composable
+private fun OverlayPreferenceToggle(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange
+            )
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = NothingColors.White, fontWeight = FontWeight.Bold)
+            Text(
+                description,
+                color = NothingColors.GreyMedium,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = NothingColors.White,
+                checkedTrackColor = NothingColors.Red,
+                uncheckedThumbColor = NothingColors.GreyMedium,
+                uncheckedTrackColor = Color(0xFF333333)
+            )
+        )
+    }
 }
 
 @Composable
@@ -275,6 +316,8 @@ fun SettingsDashboard(
     val disableShizukuDisconnectedWarning by preferences.disableShizukuDisconnectedWarning.collectAsState(
         initial = false
     )
+    val hidePerAppVolumeControl by preferences.hidePerAppVolumeControl.collectAsState(initial = false)
+    val hideStandDownButton by preferences.hideStandDownButton.collectAsState(initial = false)
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
@@ -574,7 +617,8 @@ fun SettingsDashboard(
                 SettingsTab.PILL -> LazyColumn(
                     modifier = Modifier.weight(1f),
                     state = listStates.getValue(SettingsTab.PILL),
-                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp)
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     item {
                         SectionTitle("PILL LAYOUT")
@@ -596,6 +640,49 @@ fun SettingsDashboard(
                                 deviceReferenceMax = remember(context) { deviceVolumeReference(context) },
                                 onChange = { config ->
                                     scope.launch { preferences.setVolumeDotScale(config) }
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        SectionTitle(
+                            stringResource(com.agentkosticka.amply.R.string.pill_optional_controls)
+                        )
+                    }
+                    item {
+                        SettingsPanel {
+                            OverlayPreferenceToggle(
+                                title = stringResource(com.agentkosticka.amply.R.string.pill_hide_shizuku_warning),
+                                description = stringResource(com.agentkosticka.amply.R.string.pill_hide_shizuku_warning_description),
+                                checked = disableShizukuDisconnectedWarning,
+                                onCheckedChange = { disabled ->
+                                    scope.launch {
+                                        preferences.setDisableShizukuDisconnectedWarning(disabled)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        SettingsPanel {
+                            OverlayPreferenceToggle(
+                                title = stringResource(com.agentkosticka.amply.R.string.pill_hide_per_app_control),
+                                description = stringResource(com.agentkosticka.amply.R.string.pill_hide_per_app_control_description),
+                                checked = hidePerAppVolumeControl,
+                                onCheckedChange = { hidden ->
+                                    scope.launch { preferences.setHidePerAppVolumeControl(hidden) }
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        SettingsPanel {
+                            OverlayPreferenceToggle(
+                                title = stringResource(com.agentkosticka.amply.R.string.pill_hide_stand_down),
+                                description = stringResource(com.agentkosticka.amply.R.string.pill_hide_stand_down_description),
+                                checked = hideStandDownButton,
+                                onCheckedChange = { hidden ->
+                                    scope.launch { preferences.setHideStandDownButton(hidden) }
                                 }
                             )
                         }
@@ -679,50 +766,6 @@ fun SettingsDashboard(
                                     if (shizukuState == ShizukuPermissionState.GRANTED) runtime.retryVolumeServiceConnection()
                                 }
                             )
-                        }
-                    }
-                    item {
-                        SettingsPanel {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        scope.launch {
-                                            preferences.setDisableShizukuDisconnectedWarning(
-                                                !disableShizukuDisconnectedWarning
-                                            )
-                                        }
-                                    },
-                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        "HIDE SHIZUKU DISCONNECTION WARNING",
-                                        color = NothingColors.White,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        "Don't show the connection warning in the volume overlay when Shizuku disconnects.",
-                                        color = NothingColors.GreyMedium,
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
-                                Switch(
-                                    checked = disableShizukuDisconnectedWarning,
-                                    onCheckedChange = { disabled ->
-                                        scope.launch {
-                                            preferences.setDisableShizukuDisconnectedWarning(disabled)
-                                        }
-                                    },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = NothingColors.White,
-                                        checkedTrackColor = NothingColors.Red,
-                                        uncheckedThumbColor = NothingColors.GreyMedium,
-                                        uncheckedTrackColor = Color(0xFF333333)
-                                    )
-                                )
-                            }
                         }
                     }
                     item {
