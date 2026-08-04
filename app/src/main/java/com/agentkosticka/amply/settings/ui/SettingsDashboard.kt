@@ -48,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -58,6 +59,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import kotlinx.coroutines.flow.first
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -517,6 +522,43 @@ fun SettingsDashboard(
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showCleanupConfirmation by remember { mutableStateOf(false) }
     var showRepairConfirmation by remember { mutableStateOf(false) }
+    var showDndPermissionFallback by remember { mutableStateOf(false) }
+    var waitingForDndPermission by remember { mutableStateOf(false) }
+    var wentToSettingsForDndPermission by remember { mutableStateOf(false) }
+
+    val currentAppPermissionState by rememberUpdatedState(appPermissionState)
+    val currentShowDndButton by rememberUpdatedState(showDndButton)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    if (waitingForDndPermission) {
+                        wentToSettingsForDndPermission = true
+                    }
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    val hasPolicyAccess = runtime.dndController.hasPolicyAccess() || currentAppPermissionState.notificationPolicyGranted
+                    if (currentShowDndButton && !hasPolicyAccess) {
+                        if (waitingForDndPermission && wentToSettingsForDndPermission) {
+                            showDndPermissionFallback = true
+                            waitingForDndPermission = false
+                            wentToSettingsForDndPermission = false
+                        }
+                    } else if (hasPolicyAccess) {
+                        showDndPermissionFallback = false
+                        waitingForDndPermission = false
+                        wentToSettingsForDndPermission = false
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     var pendingRingerTest by remember { mutableStateOf<com.agentkosticka.amply.audio.ringer.RingerExperimentMethod?>(null) }
     var draggedAppIdentity by remember { mutableStateOf<AppIdentity?>(null) }
     var draggedOverlayTopWindow by remember { mutableFloatStateOf(0f) }
@@ -1195,6 +1237,9 @@ fun SettingsDashboard(
                                 onCheckedChange = { show ->
                                     scope.launch { preferences.setShowDndButton(show) }
                                     if (show && !runtime.dndController.hasPolicyAccess()) {
+                                        waitingForDndPermission = true
+                                        wentToSettingsForDndPermission = false
+                                        showDndPermissionFallback = false
                                         onNotificationPolicyClick()
                                     }
                                 }
@@ -1522,8 +1567,12 @@ fun SettingsDashboard(
                                 val raw = pendingImportRaw ?: return@TextButton
                                 scope.launch {
                                     when (val result = preferences.importSettings(raw, ImportMode.MERGE)) {
-                                        SettingsOperationResult.Success ->
+                                        SettingsOperationResult.Success -> {
                                             Toast.makeText(context, "Settings merged", Toast.LENGTH_SHORT).show()
+                                            if (preferences.showDndButton.first() && !runtime.dndController.hasPolicyAccess()) {
+                                                showDndPermissionFallback = true
+                                            }
+                                        }
                                         SettingsOperationResult.StoreCorrupt ->
                                             Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
                                         is SettingsOperationResult.ValidationFailed ->
@@ -1542,8 +1591,12 @@ fun SettingsDashboard(
                                 val raw = pendingImportRaw ?: return@TextButton
                                 scope.launch {
                                     when (val result = preferences.importSettings(raw, ImportMode.REPLACE)) {
-                                        SettingsOperationResult.Success ->
+                                        SettingsOperationResult.Success -> {
                                             Toast.makeText(context, "Settings replaced", Toast.LENGTH_SHORT).show()
+                                            if (preferences.showDndButton.first() && !runtime.dndController.hasPolicyAccess()) {
+                                                showDndPermissionFallback = true
+                                            }
+                                        }
                                         SettingsOperationResult.StoreCorrupt ->
                                             Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
                                         is SettingsOperationResult.ValidationFailed ->
@@ -1565,6 +1618,54 @@ fun SettingsDashboard(
                         },
                         contentPadding = PaddingValues(horizontal = 6.dp)
                     ) { Text("CANCEL", color = NothingColors.GreyMedium, maxLines = 1, softWrap = false) }
+                }
+            },
+            containerColor = Color(0xFF1C1C1C),
+            titleContentColor = NothingColors.White,
+            textContentColor = NothingColors.GreyMedium
+        )
+    }
+
+    if (showDndPermissionFallback) {
+        AlertDialog(
+            onDismissRequest = {
+                showDndPermissionFallback = false
+                waitingForDndPermission = false
+                wentToSettingsForDndPermission = false
+                scope.launch { preferences.setShowDndButton(false) }
+            },
+            title = { Text("CAN'T ENABLE DND BUTTON WITHOUT PERMISSIONS") },
+            text = {
+                Text(
+                    "Amply requires Do Not Disturb (Notification Policy) access to show the DND button. Please grant permissions or disable the button."
+                )
+            },
+            confirmButton = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    TextButton(
+                        onClick = {
+                            waitingForDndPermission = true
+                            wentToSettingsForDndPermission = false
+                            showDndPermissionFallback = false
+                            onNotificationPolicyClick()
+                        }
+                    ) {
+                        Text("GIVE PERMISSIONS", color = NothingColors.White, maxLines = 1, softWrap = false)
+                    }
+                    TextButton(
+                        onClick = {
+                            showDndPermissionFallback = false
+                            waitingForDndPermission = false
+                            wentToSettingsForDndPermission = false
+                            scope.launch { preferences.setShowDndButton(false) }
+                        }
+                    ) {
+                        Text("DISABLE DND BUTTON", color = NothingColors.Red, maxLines = 1, softWrap = false)
+                    }
                 }
             },
             containerColor = Color(0xFF1C1C1C),
