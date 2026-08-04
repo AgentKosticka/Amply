@@ -161,7 +161,7 @@ class RingerExperimentExecutor(
             shizukuVolumeManager.applyRingerExperiment(
                 RingerExperimentMethod.SHIZUKU_INTERNAL_MODE.number,
                 target.ordinal,
-                restoreVolume
+                0
             )?.let { it > 0 } == true
         } else {
             false
