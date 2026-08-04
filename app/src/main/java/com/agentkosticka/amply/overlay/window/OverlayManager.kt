@@ -125,7 +125,7 @@ object OverlayManager {
     private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
     private var onRemoteMediaVolumeChangeCallback: ((Long, Int) -> Boolean)? = null
     private val overlayVisible = mutableStateOf(false)
-    private var isOverlayExpanded = false
+    private val overlayExpanded = mutableStateOf(false)
     private var presentationMode = OverlayPresentationMode.NORMAL
 
     private val overlayContainer: FrameLayout?
@@ -328,7 +328,10 @@ object OverlayManager {
         }
 
         val newAppearance = !overlayVisible.value
-        if (newAppearance) presentationMode = requestedPresentationMode
+        if (newAppearance) {
+            presentationMode = requestedPresentationMode
+            overlayExpanded.value = false
+        }
 
         // Update state
         updateAvailableOverlayWidth(context)
@@ -357,7 +360,7 @@ object OverlayManager {
             overlayVisible.value = false
             volumeObservationJob?.cancel()
             volumeObservationJob = null
-            isOverlayExpanded = false
+            overlayExpanded.value = false
             presentationMode = OverlayPresentationMode.NORMAL
             removeJob = null
             return attachResult
@@ -435,6 +438,7 @@ object OverlayManager {
                     selectedTarget = selectedVolumeTarget.value,
                     volumeLimitFeedback = volumeLimitFeedback.value,
                     visible = overlayVisible.value,
+                    expanded = overlayExpanded.value,
                     iconType = iconType.value,
                     apps = if (showPerAppVolumeControl.value) currentApps.value else emptyList(),
                     shizukuConnectionState = shizukuConnectionState.value,
@@ -457,17 +461,27 @@ object OverlayManager {
                         toggleMute(streamType)
                     },
                     onInteraction = {
-                        scheduleHide(currentAutoHideDelayMs()) // Reset timer on interaction
+                        if (overlayVisible.value) {
+                            scheduleHide(currentAutoHideDelayMs()) // Reset timer on interaction
+                        }
                     },
                     onTouchStart = {
-                        cancelAutoHide() // Stop timer while user is touching
+                        if (overlayVisible.value) cancelAutoHide() // Stop timer while user is touching
                     },
                     onTouchEnd = {
-                        scheduleHide(currentAutoHideDelayMs()) // Start timer when touch ends
+                        if (overlayVisible.value) {
+                            scheduleHide(currentAutoHideDelayMs()) // Start timer when touch ends
+                        }
                     },
                     onExpandedChange = { expanded ->
-                        isOverlayExpanded = expanded
-                        scheduleHide(currentAutoHideDelayMs())
+                        // A click can finish dispatching after hide() has already started. Ignore
+                        // that stale event so it cannot arm expansion for the next appearance.
+                        if (!overlayVisible.value) {
+                            overlayExpanded.value = false
+                        } else {
+                            overlayExpanded.value = expanded
+                            scheduleHide(currentAutoHideDelayMs())
+                        }
                     },
                     onPauseAmply = {
                         onPauseAmplyCallback?.invoke()
@@ -525,13 +539,14 @@ object OverlayManager {
         hideJob?.cancel()
         val wasVisible = overlayVisible.value
         overlayVisible.value = false
+        overlayExpanded.value = false
         volumeObservationJob?.cancel()
         volumeObservationJob = null
         if (wasVisible) {
             onOverlayHiddenCallback?.invoke()
         }
         if (overlayContainer == null) {
-            isOverlayExpanded = false
+            overlayExpanded.value = false
             presentationMode = OverlayPresentationMode.NORMAL
             removeJob = null
             return
@@ -553,7 +568,7 @@ object OverlayManager {
         runCatching { windowManager?.updateViewLayout(container, params) }
             .onFailure { Log.w("OverlayManager", "Failed to park overlay input window", it) }
         container.visibility = View.INVISIBLE
-        isOverlayExpanded = false
+        overlayExpanded.value = false
         removeJob = null
     }
 
@@ -590,7 +605,7 @@ object OverlayManager {
         overlayVisible.value = false
         volumeObservationJob?.cancel()
         volumeObservationJob = null
-        isOverlayExpanded = false
+        overlayExpanded.value = false
         presentationMode = OverlayPresentationMode.NORMAL
         volumeLimitFeedback.value = null
         removeJob = null
@@ -839,7 +854,7 @@ object OverlayManager {
     }
 
     private fun currentAutoHideDelayMs(): Long =
-        if (isOverlayExpanded) EXPANDED_AUTO_HIDE_DELAY_MS else COLLAPSED_AUTO_HIDE_DELAY_MS
+        if (overlayExpanded.value) EXPANDED_AUTO_HIDE_DELAY_MS else COLLAPSED_AUTO_HIDE_DELAY_MS
 
     /**
      * Check if overlay is showing
