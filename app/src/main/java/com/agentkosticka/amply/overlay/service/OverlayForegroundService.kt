@@ -49,6 +49,7 @@ import java.lang.ref.WeakReference
 private data class OverlayProjectionInput(
     val sessionState: AudioSessionState,
     val settings: Map<AppIdentity, AppSettings>,
+    val appOrder: List<AppIdentity>,
     val connectionState: com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState,
     val foregroundVisit: ForegroundVisitState,
     val controlStates: Map<AppIdentity, AppVolumeControlState>
@@ -221,16 +222,21 @@ open class OverlayForegroundService : Service() {
                     runtime.dynamicStreamState.collect(OverlayManager::updateDynamicStreams)
                 },
                 serviceScope.launch {
+                    val settingsAndOrder = combine(
+                        preferences.appSettings,
+                        preferences.appOverlayOrder
+                    ) { settings, order -> settings to order }
                     combine(
                         runtime.sessionState,
-                        preferences.appSettings,
+                        settingsAndOrder,
                         runtime.connectionState,
                         runtime.foregroundVisitState,
                         sessionManager.appVolumeControlStates
-                    ) { sessionState, settings, connectionState, foregroundVisit, controlStates ->
+                    ) { sessionState, settingsWithOrder, connectionState, foregroundVisit, controlStates ->
                         OverlayProjectionInput(
                             sessionState = sessionState,
-                            settings = settings,
+                            settings = settingsWithOrder.first,
+                            appOrder = settingsWithOrder.second,
                             connectionState = connectionState,
                             foregroundVisit = foregroundVisit,
                             controlStates = controlStates
@@ -243,7 +249,8 @@ open class OverlayForegroundService : Service() {
                                 shizukuConnected = input.connectionState == com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState.CONNECTED,
                                 settings = input.settings,
                                 activeSessions = input.sessionState.sessions,
-                                controlStates = input.controlStates
+                                controlStates = input.controlStates,
+                                appOrder = input.appOrder
                             )
                             input.connectionState to appPresenter.present(entries)
                         }

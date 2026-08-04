@@ -372,7 +372,8 @@ class AudioSessionManager(
         shizukuConnected: Boolean = shizukuVolumeManager.isConnected.value,
         settings: Map<AppIdentity, AppSettings> = appSettingsCache,
         activeSessions: List<AudioSession> = _sessionState.value.sessions,
-        controlStates: Map<AppIdentity, AppVolumeControlState> = _appVolumeControlStates.value
+        controlStates: Map<AppIdentity, AppVolumeControlState> = _appVolumeControlStates.value,
+        appOrder: List<AppIdentity> = emptyList()
     ): List<OverlayAppEntry> {
         val activeByIdentity = compactSessionsByPackage(activeSessions)
             .associateBy { it.identity }
@@ -380,7 +381,8 @@ class AudioSessionManager(
             activeSessions = activeSessions,
             appSettings = settings,
             foregroundVisitSession = foregroundVisitSession,
-            shizukuConnected = shizukuConnected
+            shizukuConnected = shizukuConnected,
+            appOrder = appOrder
         ).mapNotNull { identity ->
             val active = activeByIdentity[identity]
             val setting = settings[identity]

@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ButtonDefaults
@@ -27,13 +28,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
@@ -43,7 +47,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import com.agentkosticka.amply.audio.session.AudioSession
 import com.agentkosticka.amply.settings.model.AppSettings
 import com.agentkosticka.amply.settings.model.AppIdentity
@@ -82,26 +85,26 @@ internal fun AppSettingsRow(
     app: AppSettings,
     isActive: Boolean,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    reorderEnabled: Boolean = true,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
+    onReorderHandleBoundsChanged: (Rect) -> Unit = {},
     onReset: () -> Unit,
     onOverlayModeChange: (OverlayAppMode) -> Unit,
     onVolumeChange: (Float) -> Unit
 ) {
-    val context = LocalContext.current
     var displayedVolume by remember(app.identity) { mutableFloatStateOf(app.defaultVolume) }
     LaunchedEffect(app.defaultVolume) {
         displayedVolume = app.defaultVolume
     }
-    val icon = remember(app.packageName) {
-        try {
-            context.packageManager.getApplicationIcon(app.packageName)
-        } catch (_: Exception) {
-            null
-        }
-    }
+    val icon = rememberApplicationIconBitmap(app.packageName, bitmapSizePx = 72)
     val volumePercent = (displayedVolume * 100).roundToInt()
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .alpha(if (enabled) 1f else 0.55f)
             .background(Color(0xFF1C1C1C), RoundedCornerShape(27.dp))
@@ -120,7 +123,7 @@ internal fun AppSettingsRow(
             ) {
                 icon?.let {
                     Image(
-                        bitmap = it.toBitmap(72, 72).asImageBitmap(),
+                        bitmap = it,
                         contentDescription = app.appName,
                         modifier = Modifier.size(32.dp)
                     )
@@ -159,6 +162,31 @@ internal fun AppSettingsRow(
                     )
                 }
             }
+
+            Icon(
+                imageVector = Icons.Default.DragHandle,
+                contentDescription = null,
+                tint = if (reorderEnabled && enabled) NothingColors.GreyMedium else Color(0xFF555555),
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics {
+                        contentDescription = "Move ${app.appName}"
+                        customActions = buildList {
+                            if (canMoveUp) add(CustomAccessibilityAction("Move up") {
+                                onMoveUp()
+                                true
+                            })
+                            if (canMoveDown) add(CustomAccessibilityAction("Move down") {
+                                onMoveDown()
+                                true
+                            })
+                        }
+                    }
+                    .onGloballyPositioned { coordinates ->
+                        onReorderHandleBoundsChanged(coordinates.boundsInWindow())
+                    }
+                    .padding(12.dp)
+            )
 
             Text(
                 text = "$volumePercent%",

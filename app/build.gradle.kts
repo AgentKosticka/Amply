@@ -27,8 +27,8 @@ android {
         applicationId = "com.agentkosticka.amply"
         minSdk = 29
         targetSdk = amplyTargetSdk
-        versionCode = 9
-        versionName = "1.1.6"
+        versionCode = 20
+        versionName = "1.2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -38,6 +38,7 @@ class PreferencesManager(private val context: Context) {
         private val APP_SETTINGS_JSON_V2 = stringPreferencesKey("app_settings_json_v2")
         private val APP_SETTINGS_JSON_BACKUP = stringPreferencesKey("app_settings_json_v2_backup")
         private val VOLUME_KEY_PASS_THROUGH_JSON = stringPreferencesKey("volume_key_pass_through_packages")
+        private val APP_OVERLAY_ORDER_JSON = stringPreferencesKey("app_overlay_order")
         private val AMPLY_PAUSE_DURATION_MINUTES = intPreferencesKey("amply_pause_duration_minutes")
         private val AMPLY_PAUSE_DURATION = stringPreferencesKey("amply_pause_duration")
         private val AMPLY_PAUSED_UNTIL_EPOCH_MS = longPreferencesKey("amply_paused_until_epoch_ms")
@@ -168,6 +169,22 @@ class PreferencesManager(private val context: Context) {
 
     val amplyPausedUntilEpochMs: Flow<Long> = context.dataStore.data.map { preferences ->
         preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] ?: 0L
+    }
+
+    val appOverlayOrder: Flow<List<AppIdentity>> = context.dataStore.data.map { preferences ->
+        decodeAppOverlayOrder(preferences[APP_OVERLAY_ORDER_JSON])
+    }
+
+    suspend fun setAppOverlayOrder(order: List<AppIdentity>): SettingsOperationResult {
+        if (order.size > AppSettingsCodec.MAX_APP_RECORDS || order.distinct().size != order.size) {
+            return SettingsOperationResult.ValidationFailed("Invalid app overlay order")
+        }
+        if (order.any { it.userId < 0 || !AppSettingsCodec.isValidPackageName(it.packageName) }) {
+            return SettingsOperationResult.ValidationFailed("Invalid app identity")
+        }
+        return editSettings { preferences ->
+            preferences[APP_OVERLAY_ORDER_JSON] = encodeAppOverlayOrder(order)
+        }
     }
 
     val disableShizukuDisconnectedWarning: Flow<Boolean> = context.dataStore.data.map { preferences ->
@@ -361,6 +378,9 @@ class PreferencesManager(private val context: Context) {
                     )).toMutableSet()
                 stoodDown.removeAll(packagesAbsentFromEveryProfile)
                 preferences[VOLUME_KEY_PASS_THROUGH_JSON] = encodeStringSet(stoodDown)
+                val ordered = decodeAppOverlayOrder(preferences[APP_OVERLAY_ORDER_JSON])
+                    .filterNot { it in stale }
+                preferences[APP_OVERLAY_ORDER_JSON] = encodeAppOverlayOrder(ordered)
             }
             if (automatic) preferences[LAST_STALE_APP_CLEANUP_EPOCH_MS] = nowEpochMs
         }
@@ -377,6 +397,7 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(APP_SETTINGS_JSON_V2)
             preferences.remove(APP_SETTINGS_JSON_BACKUP)
             preferences.remove(VOLUME_KEY_PASS_THROUGH_JSON)
+            preferences.remove(APP_OVERLAY_ORDER_JSON)
             preferences.remove(AMPLY_PAUSE_DURATION_MINUTES)
             preferences.remove(AMPLY_PAUSE_DURATION)
             preferences.remove(AMPLY_PAUSED_UNTIL_EPOCH_MS)
@@ -423,6 +444,10 @@ class PreferencesManager(private val context: Context) {
             .put("hidePerAppVolumeControl", preferences[HIDE_PER_APP_VOLUME_CONTROL] ?: false)
             .put("hideStandDownButton", preferences[HIDE_STAND_DOWN_BUTTON] ?: false)
             .put("standDownPackages", JSONArray(passThrough.sorted()))
+            .put(
+                "appOverlayOrder",
+                JSONArray(decodeAppOverlayOrder(preferences[APP_OVERLAY_ORDER_JSON]).map { it.storageKey })
+            )
             .put("appSettings", JSONObject(AppSettingsCodec.encode(settings)))
             .put("appSettingsHealth", health.name)
         if (health != AppSettingsStoreHealth.HEALTHY) {
@@ -487,6 +512,7 @@ class PreferencesManager(private val context: Context) {
                         existingPackages + imported.standDownPackages
                     }
                 )
+                preferences[APP_OVERLAY_ORDER_JSON] = encodeAppOverlayOrder(imported.appOverlayOrder)
                 preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] = 0L
                 preferences.remove(LEGACY_GAME_MODE_ENABLED)
                 preferences.remove(LEGACY_RINGER_METHOD)
@@ -507,6 +533,7 @@ class PreferencesManager(private val context: Context) {
         val disableShizukuDisconnectedWarning: Boolean,
         val hidePerAppVolumeControl: Boolean,
         val hideStandDownButton: Boolean,
+        val appOverlayOrder: List<AppIdentity>,
         val standDownPackages: Set<String>
     )
 
@@ -572,6 +599,26 @@ class PreferencesManager(private val context: Context) {
             "Invalid Stand-Down button visibility setting"
         )
         val standDown = linkedSetOf<String>()
+        val appOverlayOrder = mutableListOf<AppIdentity>()
+        val seenOrderedApps = mutableSetOf<AppIdentity>()
+        require(!root.has("appOverlayOrder") || root.get("appOverlayOrder") is JSONArray) {
+            "Invalid app overlay order"
+        }
+        root.optJSONArray("appOverlayOrder")?.let { orderedApps ->
+            require(orderedApps.length() <= AppSettingsCodec.MAX_APP_RECORDS) {
+                "Too many ordered apps"
+            }
+            for (index in 0 until orderedApps.length()) {
+                require(orderedApps.get(index) is String) { "Invalid ordered app identity" }
+                val identity = AppIdentity.fromStorageKey(orderedApps.getString(index))
+                    ?: error("Invalid ordered app identity")
+                require(AppSettingsCodec.isValidPackageName(identity.packageName)) {
+                    "Invalid ordered app identity"
+                }
+                require(seenOrderedApps.add(identity)) { "Duplicate ordered app identity" }
+                appOverlayOrder += identity
+            }
+        }
         require(!root.has("standDownPackages") || root.get("standDownPackages") is JSONArray) {
             "Invalid Stand-Down records"
         }
@@ -598,6 +645,7 @@ class PreferencesManager(private val context: Context) {
             disableShizukuDisconnectedWarning = warningDisabled,
             hidePerAppVolumeControl = hidePerAppVolumeControl,
             hideStandDownButton = hideStandDownButton,
+            appOverlayOrder = appOverlayOrder,
             standDownPackages = standDown
         )
     }
@@ -700,5 +748,22 @@ class PreferencesManager(private val context: Context) {
     }.getOrNull()
 
     private fun encodeStringSet(values: Set<String>): String = JSONArray(values.sorted()).toString()
+
+    private fun decodeAppOverlayOrder(raw: String?): List<AppIdentity> = runCatching {
+        if (raw == null) return emptyList()
+        val array = JSONArray(raw)
+        buildList {
+            val seen = mutableSetOf<AppIdentity>()
+            for (index in 0 until array.length()) {
+                val identity = AppIdentity.fromStorageKey(array.getString(index)) ?: continue
+                if (AppSettingsCodec.isValidPackageName(identity.packageName) && seen.add(identity)) {
+                    add(identity)
+                }
+            }
+        }
+    }.getOrDefault(emptyList())
+
+    private fun encodeAppOverlayOrder(values: List<AppIdentity>): String =
+        JSONArray(values.map { it.storageKey }).toString()
 }
 

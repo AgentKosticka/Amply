@@ -8,7 +8,8 @@ internal fun selectOverlayPackages(
     activeSessions: List<AudioSession>,
     appSettings: Map<AppIdentity, AppSettings>,
     foregroundVisitSession: AudioSession?,
-    shizukuConnected: Boolean
+    shizukuConnected: Boolean,
+    appOrder: List<AppIdentity> = emptyList()
 ): List<AppIdentity> {
     if (!shizukuConnected) return emptyList()
 
@@ -30,5 +31,11 @@ internal fun selectOverlayPackages(
     activeIdentities
         .filterTo(result) { appSettings[it]?.overlayMode != OverlayAppMode.HIDDEN }
 
-    return result.toList()
+    val rank = appOrder.withIndex().associate { (index, identity) -> identity to index }
+    return result.withIndex()
+        .sortedWith(
+            compareBy<IndexedValue<AppIdentity>> { rank[it.value] ?: Int.MAX_VALUE }
+                .thenBy { it.index }
+        )
+        .map { it.value }
 }

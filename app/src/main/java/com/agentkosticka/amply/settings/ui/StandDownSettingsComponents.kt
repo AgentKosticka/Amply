@@ -20,17 +20,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import androidx.core.net.toUri
 import com.agentkosticka.amply.settings.model.AmplyPauseDuration
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -181,10 +177,7 @@ internal fun StandDownAppRow(
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit
 ) {
-    val context = LocalContext.current
-    val icon = remember(app.packageName) {
-        runCatching { context.packageManager.getApplicationIcon(app.packageName) }.getOrNull()
-    }
+    val icon = rememberApplicationIconBitmap(app.packageName, bitmapSizePx = 80)
     SettingsPanel {
         Row(
             modifier = Modifier
@@ -199,7 +192,7 @@ internal fun StandDownAppRow(
             ) {
                 icon?.let {
                     Image(
-                        bitmap = it.toBitmap(80, 80).asImageBitmap(),
+                        bitmap = it,
                         contentDescription = null,
                         modifier = Modifier.size(32.dp)
                     )

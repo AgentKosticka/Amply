@@ -7,13 +7,23 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
@@ -41,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -52,25 +63,39 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.audio.session.AudioSessionState
 import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.settings.model.AppSettings
+import com.agentkosticka.amply.settings.model.AppIdentity
 import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
 import com.agentkosticka.amply.settings.model.SettingsImportPreview
@@ -88,6 +113,7 @@ import com.agentkosticka.amply.tutorial.TutorialCoachmarkCard
 import com.agentkosticka.amply.tutorial.TutorialStage
 import com.agentkosticka.amply.util.readAtMost
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -108,6 +134,119 @@ internal enum class SettingsTab(val label: String, val icon: androidx.compose.ui
     STAND_DOWN("Stand-Down", Icons.AutoMirrored.Filled.VolumeUp),
     DIAGNOSTICS("Diagnostics", Icons.Default.BugReport)
 }
+
+private class UiJobHolder {
+    var job: Job? = null
+}
+
+private class ReorderAutoScrollState {
+    var job: Job? = null
+    var direction: Float = 0f
+    var velocityPxPerSecond: Float = 0f
+}
+
+private class ReorderMotionState {
+    var distance: Float = 0f
+    var initialOffset: Int = 0
+    var itemSize: Int = 0
+    var expectedLazyIndex: Int? = null
+}
+
+private data class AppReorderCallbacks(
+    val onStart: () -> Unit,
+    val onDrag: (Float) -> Unit,
+    val onEnd: () -> Unit
+)
+
+private class AppReorderGestureHost {
+    var listCoordinates: LayoutCoordinates? = null
+    val handleBounds = mutableMapOf<AppIdentity, Rect>()
+    val rowBounds = mutableMapOf<AppIdentity, Rect>()
+    val callbacks = mutableMapOf<AppIdentity, AppReorderCallbacks>()
+}
+
+private fun Modifier.appReorderGestures(host: AppReorderGestureHost): Modifier =
+    onGloballyPositioned { host.listCoordinates = it }
+        .pointerInput(host) {
+            awaitEachGesture {
+                val down = awaitFirstDown(
+                    requireUnconsumed = false,
+                    pass = PointerEventPass.Initial
+                )
+                val windowPosition = host.listCoordinates?.localToWindow(down.position)
+                    ?: return@awaitEachGesture
+                val identity = host.handleBounds.entries
+                    .lastOrNull { (_, bounds) -> bounds.contains(windowPosition) }
+                    ?.key
+                    ?: return@awaitEachGesture
+                if (host.callbacks[identity] == null) return@awaitEachGesture
+
+                var accumulatedDrag = 0f
+                var dragging = false
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == down.id }
+                    if (change == null || !change.pressed) {
+                        if (dragging) host.callbacks[identity]?.onEnd?.invoke()
+                        break
+                    }
+
+                    val delta = change.position.y - change.previousPosition.y
+                    if (!dragging) {
+                        accumulatedDrag += delta
+                        if (kotlin.math.abs(accumulatedDrag) > viewConfiguration.touchSlop) {
+                            dragging = true
+                            host.callbacks[identity]?.onStart?.invoke()
+                            val overSlop = accumulatedDrag -
+                                kotlin.math.sign(accumulatedDrag) * viewConfiguration.touchSlop
+                            if (overSlop != 0f) {
+                                host.callbacks[identity]?.onDrag?.invoke(overSlop)
+                            }
+                            change.consume()
+                        }
+                    } else {
+                        if (delta != 0f) host.callbacks[identity]?.onDrag?.invoke(delta)
+                        change.consume()
+                    }
+                }
+            }
+        }
+
+private fun Modifier.lazyScrollProgressIndicator(state: LazyListState): Modifier =
+    drawWithContent {
+        drawContent()
+        if (!state.canScrollBackward && !state.canScrollForward) return@drawWithContent
+
+        val indicatorState = state.scrollIndicatorState ?: return@drawWithContent
+        val maximumScrollOffset =
+            (indicatorState.contentSize - indicatorState.viewportSize).coerceAtLeast(1)
+        val progress = when {
+            !state.canScrollBackward -> 0f
+            !state.canScrollForward -> 1f
+            else -> indicatorState.scrollOffset.toFloat() / maximumScrollOffset
+        }.coerceIn(0f, 1f)
+
+        val trackInset = 10.dp.toPx()
+        val trackHeight = (size.height - trackInset * 2f).coerceAtLeast(1f)
+        val thumbHeight = 48.dp.toPx().coerceAtMost(trackHeight)
+        val thumbTop = trackInset + (trackHeight - thumbHeight) * progress
+        val trackWidth = 3.dp.toPx()
+        val thumbWidth = 6.dp.toPx()
+        val centerX = size.width - 8.dp.toPx()
+
+        drawRoundRect(
+            color = NothingColors.White.copy(alpha = 0.22f),
+            topLeft = Offset(centerX - trackWidth / 2f, trackInset),
+            size = Size(trackWidth, trackHeight),
+            cornerRadius = CornerRadius(trackWidth)
+        )
+        drawRoundRect(
+            color = NothingColors.Red,
+            topLeft = Offset(centerX - thumbWidth / 2f, thumbTop),
+            size = Size(thumbWidth, thumbHeight),
+            cornerRadius = CornerRadius(thumbWidth)
+        )
+    }
 
 @Composable
 private fun OverlayPreferenceToggle(
@@ -185,7 +324,8 @@ private fun SwipeAwareTabBar(
                         val target = (firstTabCenterPx + position * tabStepPx - viewportWidthPx / 2f)
                             .roundToInt()
                             .coerceIn(0, scrollState.maxValue)
-                        scrollState.scrollTo(target)
+                        val delta = target - scrollState.value
+                        if (delta != 0) scrollState.dispatchRawDelta(delta.toFloat())
                     }
                 }
             }
@@ -199,6 +339,7 @@ private fun SwipeAwareTabBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SettingsTab.entries.forEachIndexed { index, tab ->
+                    val interactionSource = remember(tab) { MutableInteractionSource() }
                     val selectionProgress = (1f - abs(pagePosition - index)).coerceIn(0f, 1f)
                     val background = lerp(Color.Transparent, DarkControlBackground, selectionProgress)
                     val iconColor = lerp(NothingColors.GreyMedium, NothingColors.Red, selectionProgress)
@@ -212,6 +353,8 @@ private fun SwipeAwareTabBar(
                             .background(background)
                             .selectable(
                                 selected = pagerState.settledPage == index,
+                                interactionSource = interactionSource,
+                                indication = null,
                                 role = Role.Tab,
                                 onClick = { onTabClick(index) }
                             )
@@ -307,6 +450,7 @@ fun SettingsDashboard(
     val verticalFraction by preferences.overlayVerticalFraction.collectAsState(initial = 0.5f)
     val dotScaleConfig by preferences.volumeDotScaleConfig.collectAsState(initial = VolumeDotScaleConfig())
     val appSettings by preferences.appSettings.collectAsState(initial = emptyMap())
+    val appOverlayOrder by preferences.appOverlayOrder.collectAsState(initial = emptyList())
     val appSettingsStoreHealth by preferences.appSettingsStoreHealth.collectAsState(
         initial = AppSettingsStoreHealth.HEALTHY
     )
@@ -329,6 +473,8 @@ fun SettingsDashboard(
     val runningExperiment by runtime.ringerExperimentExecutor.runningMethod.collectAsState()
     val experimentBusy by runtime.ringerExperimentExecutor.busy.collectAsState()
     val scope = rememberCoroutineScope()
+    val hapticFeedback = LocalHapticFeedback.current
+    val dashboardDensity = LocalDensity.current
     val inactiveVolumeSaveJobs = remember { mutableMapOf<String, Job>() }
     var selectedTabName by rememberSaveable { mutableStateOf(SettingsTab.ACCESS.name) }
     val selectedTab = SettingsTab.entries.firstOrNull { it.name == selectedTabName } ?: SettingsTab.ACCESS
@@ -371,6 +517,14 @@ fun SettingsDashboard(
     var showCleanupConfirmation by remember { mutableStateOf(false) }
     var showRepairConfirmation by remember { mutableStateOf(false) }
     var pendingRingerTest by remember { mutableStateOf<com.agentkosticka.amply.audio.ringer.RingerExperimentMethod?>(null) }
+    var draggedAppIdentity by remember { mutableStateOf<AppIdentity?>(null) }
+    var draggedOverlayTopWindow by remember { mutableFloatStateOf(0f) }
+    var draggedRowBounds by remember { mutableStateOf<Rect?>(null) }
+    var transientAppOrder by remember { mutableStateOf<List<AppIdentity>?>(null) }
+    val reorderAutoScroll = remember { ReorderAutoScrollState() }
+    val reorderMotion = remember { ReorderMotionState() }
+    val reorderGestureHost = remember { AppReorderGestureHost() }
+    val tabNavigation = remember { UiJobHolder() }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -419,12 +573,14 @@ fun SettingsDashboard(
     val activeIdentities = remember(activeSessionsByIdentity) { activeSessionsByIdentity.keys }
     val knownApps = remember(
         appSettings,
+        appOverlayOrder,
         sessionState.sessions,
         activeIdentities,
         appSearch,
         appListMode
     ) {
         val query = appSearch.trim().lowercase()
+        val orderRank = appOverlayOrder.withIndex().associate { (index, identity) -> identity to index }
         mergeAppSettingsWithActiveSessions(appSettings, sessionState.sessions)
             .filter { it.lastSeenTimestamp > 0L || it.identity in activeIdentities }
             .filter {
@@ -432,10 +588,93 @@ fun SettingsDashboard(
             }
             .filter { appListMode == AppListMode.EXPANDED || it.identity in activeIdentities }
             .sortedWith(
-                compareByDescending<AppSettings> { it.overlayMode == OverlayAppMode.PINNED }
+                compareBy<AppSettings> { orderRank[it.identity] ?: Int.MAX_VALUE }
+                    .thenByDescending { it.overlayMode == OverlayAppMode.PINNED }
                     .thenByDescending { it.identity in activeIdentities }
                     .thenBy { it.appName.lowercase() }
             )
+    }
+    val displayedKnownApps = remember(knownApps, transientAppOrder) {
+        val transientOrder = transientAppOrder ?: return@remember knownApps
+        val appsByIdentity = knownApps.associateBy { it.identity }
+        buildList {
+            transientOrder.mapNotNullTo(this) { appsByIdentity[it] }
+            knownApps.filterTo(this) { candidate -> none { it.identity == candidate.identity } }
+        }
+    }
+    val allKnownAppIdentities = remember(appOverlayOrder, appSettings, sessionState.sessions) {
+        buildList {
+            addAll(appOverlayOrder)
+            addAll(appSettings.keys)
+            addAll(sessionState.sessions.map { it.identity })
+        }.distinct()
+    }
+    val persistVisibleAppOrder: (List<AppIdentity>) -> Unit = { visibleOrder ->
+        val completeOrder = mergeVisibleAppOrder(
+            existingOrder = appOverlayOrder,
+            allKnownApps = allKnownAppIdentities,
+            reorderedVisibleApps = visibleOrder
+        )
+        transientAppOrder = visibleOrder
+        scope.launch { preferences.setAppOverlayOrder(completeOrder) }
+    }
+    fun updateDraggedAppPosition() {
+        val draggedIdentity = draggedAppIdentity ?: return
+        val layoutInfo = appsListState.layoutInfo
+        val draggedInfo = layoutInfo.visibleItemsInfo.firstOrNull {
+            it.key == "app-${draggedIdentity.storageKey}"
+        } ?: return
+        if (
+            reorderMotion.expectedLazyIndex != null &&
+            draggedInfo.index != reorderMotion.expectedLazyIndex
+        ) return
+
+        val currentOrder = transientAppOrder ?: knownApps.map { it.identity }
+        val fromIndex = currentOrder.indexOf(draggedIdentity)
+        if (fromIndex < 0) return
+        val visualTop = clampDraggedAppTop(
+            rawTop = reorderMotion.initialOffset + reorderMotion.distance,
+            itemSize = draggedInfo.size,
+            viewportStart = layoutInfo.viewportStartOffset,
+            viewportEnd = layoutInfo.viewportEndOffset
+        )
+        val visualCenter = visualTop + draggedInfo.size / 2f
+        val targetInfo = layoutInfo.visibleItemsInfo
+            .asSequence()
+            .filter { it.key is String && (it.key as String).startsWith("app-") }
+            .minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - visualCenter) }
+            ?: return
+        val targetIdentity = (targetInfo.key as? String)
+            ?.removePrefix("app-")
+            ?.let(AppIdentity::fromStorageKey)
+            ?: return
+        val toIndex = currentOrder.indexOf(targetIdentity)
+        if (toIndex >= 0 && toIndex != fromIndex) {
+            transientAppOrder = moveAppIdentity(currentOrder, fromIndex, toIndex)
+            reorderMotion.expectedLazyIndex = targetInfo.index
+            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+    fun updateDraggedOverlayPosition() {
+        val draggedIdentity = draggedAppIdentity ?: return
+        val layoutInfo = appsListState.layoutInfo
+        val draggedInfo = layoutInfo.visibleItemsInfo.firstOrNull {
+            it.key == "app-${draggedIdentity.storageKey}"
+        }
+        val itemSize = draggedInfo?.size
+            ?: reorderMotion.itemSize.takeIf { it > 0 }
+            ?: draggedRowBounds?.height?.roundToInt()
+            ?: return
+        val visualTop = clampDraggedAppTop(
+            rawTop = reorderMotion.initialOffset + reorderMotion.distance,
+            itemSize = itemSize,
+            viewportStart = layoutInfo.viewportStartOffset,
+            viewportEnd = layoutInfo.viewportEndOffset
+        )
+        draggedOverlayTopWindow = reorderGestureHost.listCoordinates
+            ?.localToWindow(androidx.compose.ui.geometry.Offset(0f, visualTop))
+            ?.y
+            ?: draggedOverlayTopWindow
     }
     val standDownApps = remember(installedApps, passThroughPackages, standDownSearch) {
         val query = standDownSearch.trim().lowercase()
@@ -448,6 +687,22 @@ fun SettingsDashboard(
     }
 
     LaunchedEffect(Unit) { shizukuRepository.checkPermissionState() }
+    LaunchedEffect(pagerState) {
+        // Exercise the programmatic pager path after all pages have been precomposed. The offset is
+        // roughly one physical pixel, avoiding a visible transition while removing first-use JIT
+        // and measure work from the user's first tab press.
+        withFrameNanos { _ -> }
+        withFrameNanos { _ -> }
+        if (!pagerState.isScrollInProgress && tabNavigation.job?.isActive != true) {
+            val page = pagerState.currentPage
+            pagerState.animateScrollToPage(
+                page = page,
+                pageOffsetFraction = 0.001f,
+                animationSpec = tween(durationMillis = 32, easing = LinearEasing)
+            )
+            pagerState.scrollToPage(page)
+        }
+    }
     LaunchedEffect(pagerState.settledPage) {
         val page = pagerState.settledPage.coerceIn(SettingsTab.entries.indices)
         selectedTabName = SettingsTab.entries[page].name
@@ -493,10 +748,15 @@ fun SettingsDashboard(
     LaunchedEffect(appSettings) {
         staleAppCount = withContext(Dispatchers.IO) { preferences.findStaleApps().size }
     }
+    LaunchedEffect(appOverlayOrder) {
+        if (draggedAppIdentity == null) transientAppOrder = null
+    }
     DisposableEffect(Unit) {
         onDispose {
             inactiveVolumeSaveJobs.values.forEach(Job::cancel)
             positionSaveJob?.cancel()
+            reorderAutoScroll.job?.cancel()
+            tabNavigation.job?.cancel()
         }
     }
 
@@ -509,7 +769,17 @@ fun SettingsDashboard(
                 if (tutorialStage.isAppTour && index == tutorialStage.settingsTabIndex) {
                     runtime.tutorialCoordinator.advanceAppTour()
                 } else {
-                    scope.launch { pagerState.animateScrollToPage(index) }
+                    tabNavigation.job?.cancel()
+                    tabNavigation.job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        val pageDistance = kotlin.math.abs(index - pagerState.currentPage)
+                        pagerState.animateScrollToPage(
+                            page = index,
+                            animationSpec = tween(
+                                durationMillis = 330 + (pageDistance - 1).coerceAtLeast(0) * 45,
+                                easing = FastOutSlowInEasing
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -521,7 +791,7 @@ fun SettingsDashboard(
                 .padding(scaffoldPadding)
                 .background(NothingColors.Black),
             key = { SettingsTab.entries[it].name },
-            beyondViewportPageCount = 1
+            beyondViewportPageCount = SettingsTab.entries.lastIndex
         ) { page ->
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 12.dp)) {
@@ -530,7 +800,10 @@ fun SettingsDashboard(
 
             when (SettingsTab.entries[page]) {
                 SettingsTab.APPS -> LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.APPS))
+                        .appReorderGestures(reorderGestureHost),
                     state = listStates.getValue(SettingsTab.APPS),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -563,7 +836,7 @@ fun SettingsDashboard(
                         Spacer(Modifier.height(10.dp))
                         AppListModeSelector(appListMode) { appListMode = it }
                     }
-                    if (knownApps.isEmpty()) {
+                    if (displayedKnownApps.isEmpty()) {
                         item {
                             SettingsPanel {
                                 Text(
@@ -573,11 +846,220 @@ fun SettingsDashboard(
                             }
                         }
                     } else {
-                        items(knownApps, key = { "app-${it.identity.storageKey}" }) { app ->
-                            AppSettingsRow(
+                        itemsIndexed(
+                            items = displayedKnownApps,
+                            key = { _, app -> "app-${app.identity.storageKey}" },
+                            contentType = { _, _ -> "app-settings-row" }
+                        ) { index, app ->
+                            val isDragged = draggedAppIdentity == app.identity
+                            val startReorder: () -> Unit = {
+                                val itemInfo = appsListState.layoutInfo.visibleItemsInfo
+                                    .firstOrNull { it.key == "app-${app.identity.storageKey}" }
+                                draggedAppIdentity = app.identity
+                                reorderMotion.distance = 0f
+                                reorderMotion.initialOffset = itemInfo?.offset ?: 0
+                                reorderMotion.itemSize = itemInfo?.size
+                                    ?: reorderGestureHost.rowBounds[app.identity]?.height?.roundToInt()
+                                    ?: with(dashboardDensity) { 220.dp.roundToPx() }
+                                reorderMotion.expectedLazyIndex = itemInfo?.index
+                                draggedRowBounds = reorderGestureHost.rowBounds[app.identity]
+                                draggedOverlayTopWindow = draggedRowBounds?.top ?: 0f
+                                transientAppOrder = displayedKnownApps.map { it.identity }
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                            val dragReorder: (Float) -> Unit = { dragAmount ->
+                                if (draggedAppIdentity == app.identity) {
+                                    reorderMotion.distance += dragAmount
+                                    val itemInfo = appsListState.layoutInfo.visibleItemsInfo
+                                        .firstOrNull { it.key == "app-${app.identity.storageKey}" }
+                                    val layoutInfo = appsListState.layoutInfo
+                                    updateDraggedAppPosition()
+                                    updateDraggedOverlayPosition()
+                                    val rawVisualTop = reorderMotion.initialOffset + reorderMotion.distance
+                                    val edge = with(dashboardDensity) { 72.dp.toPx() }
+                                    val itemSize = itemInfo?.size ?: reorderMotion.itemSize
+                                    val topEdgeDepth = (
+                                        layoutInfo.viewportStartOffset + edge - rawVisualTop
+                                        ).coerceAtLeast(0f)
+                                    val bottomEdgeDepth = (
+                                        rawVisualTop + itemSize -
+                                            (layoutInfo.viewportEndOffset - edge)
+                                        ).coerceAtLeast(0f)
+                                    val requestedScrollDirection = when {
+                                        topEdgeDepth > 0f -> -1f
+                                        bottomEdgeDepth > 0f -> 1f
+                                        else -> 0f
+                                    }
+                                    val edgeDepth = if (requestedScrollDirection < 0f) {
+                                        topEdgeDepth
+                                    } else {
+                                        bottomEdgeDepth
+                                    }
+                                    val edgeIntensity = (edgeDepth / edge).coerceIn(0f, 1f)
+                                    val speedDpPerSecond =
+                                        180f + 720f * edgeIntensity * edgeIntensity
+                                    val currentOrder = transientAppOrder ?: knownApps.map { it.identity }
+                                    val draggedIndex = currentOrder.indexOf(app.identity)
+                                    reorderAutoScroll.direction = when {
+                                        requestedScrollDirection < 0f -> -1f
+                                        requestedScrollDirection > 0f &&
+                                            draggedIndex in 0 until currentOrder.lastIndex -> 1f
+                                        else -> 0f
+                                    }
+                                    reorderAutoScroll.velocityPxPerSecond =
+                                        reorderAutoScroll.direction *
+                                            with(dashboardDensity) { speedDpPerSecond.dp.toPx() }
+                                    if (
+                                        reorderAutoScroll.direction != 0f &&
+                                        reorderAutoScroll.job?.isActive != true
+                                    ) {
+                                        reorderAutoScroll.job = scope.launch {
+                                            appsListState.scroll(MutatePriority.PreventUserInput) {
+                                                var previousFrameNanos = withFrameNanos { it }
+                                                while (
+                                                    draggedAppIdentity == app.identity &&
+                                                    reorderAutoScroll.direction != 0f
+                                                ) {
+                                                    val frameNanos = withFrameNanos { it }
+                                                    val elapsedSeconds = (
+                                                        (frameNanos - previousFrameNanos) /
+                                                            1_000_000_000f
+                                                        ).coerceIn(1f / 240f, 1f / 30f)
+                                                    previousFrameNanos = frameNanos
+                                                    val consumed = scrollBy(
+                                                        reorderAutoScroll.velocityPxPerSecond *
+                                                            elapsedSeconds
+                                                    )
+                                                    updateDraggedAppPosition()
+                                                    updateDraggedOverlayPosition()
+                                                    val latestOrder = transientAppOrder
+                                                        ?: knownApps.map { it.identity }
+                                                    val latestIndex = latestOrder.indexOf(app.identity)
+                                                    if (
+                                                        reorderAutoScroll.direction > 0f &&
+                                                        latestIndex >= latestOrder.lastIndex
+                                                    ) {
+                                                        reorderAutoScroll.direction = 0f
+                                                        break
+                                                    }
+                                                    if (kotlin.math.abs(consumed) < 0.5f) break
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            val endReorder: () -> Unit = {
+                                if (draggedAppIdentity == app.identity) {
+                                    val reordered = transientAppOrder
+                                        ?: displayedKnownApps.map { it.identity }
+                                    reorderAutoScroll.job?.cancel()
+                                    reorderAutoScroll.job = null
+                                    reorderAutoScroll.direction = 0f
+                                    reorderAutoScroll.velocityPxPerSecond = 0f
+                                    persistVisibleAppOrder(reordered)
+                                    scope.launch {
+                                        withFrameNanos { _ -> }
+                                        withFrameNanos { _ -> }
+                                        val targetInfo = appsListState.layoutInfo.visibleItemsInfo
+                                            .firstOrNull {
+                                                it.key == "app-${app.identity.storageKey}"
+                                            }
+                                        val targetTop = targetInfo?.let { info ->
+                                            reorderGestureHost.listCoordinates
+                                                ?.localToWindow(
+                                                    androidx.compose.ui.geometry.Offset(
+                                                        0f,
+                                                        info.offset.toFloat()
+                                                    )
+                                                )
+                                                ?.y
+                                        } ?: reorderGestureHost.rowBounds[app.identity]?.top
+                                            ?: draggedOverlayTopWindow
+                                        Animatable(draggedOverlayTopWindow).animateTo(
+                                            targetValue = targetTop,
+                                            animationSpec = tween(
+                                                durationMillis = 140,
+                                                easing = FastOutSlowInEasing
+                                            )
+                                        ) {
+                                            draggedOverlayTopWindow = value
+                                        }
+                                        draggedAppIdentity = null
+                                        reorderMotion.distance = 0f
+                                        reorderMotion.itemSize = 0
+                                        reorderMotion.expectedLazyIndex = null
+                                        draggedRowBounds = null
+                                    }
+                                }
+                            }
+                            SideEffect {
+                                reorderGestureHost.callbacks[app.identity] = AppReorderCallbacks(
+                                    onStart = startReorder,
+                                    onDrag = dragReorder,
+                                    onEnd = endReorder
+                                )
+                            }
+                            DisposableEffect(app.identity) {
+                                onDispose {
+                                    reorderGestureHost.handleBounds.remove(app.identity)
+                                    reorderGestureHost.rowBounds.remove(app.identity)
+                                }
+                            }
+                            if (isDragged) {
+                                val placeholderHeight = reorderMotion.itemSize
+                                    .takeIf { it > 0 }
+                                    ?: with(dashboardDensity) { 220.dp.roundToPx() }
+                                Spacer(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(with(dashboardDensity) { placeholderHeight.toDp() })
+                                )
+                            } else AppSettingsRow(
                                 app = app,
                                 isActive = app.identity in activeIdentities,
                                 enabled = appSettingsStoreHealth != AppSettingsStoreHealth.CORRUPT,
+                                modifier = Modifier
+                                    .animateItem(
+                                        fadeInSpec = null,
+                                        placementSpec = tween(
+                                            durationMillis = 110,
+                                            easing = FastOutSlowInEasing
+                                        ),
+                                        fadeOutSpec = null
+                                    )
+                                    .graphicsLayer {
+                                        shape = RoundedCornerShape(27.dp)
+                                        alpha = if (isDragged) 0f else 1f
+                                    }
+                                    .onGloballyPositioned { coordinates ->
+                                        reorderGestureHost.rowBounds[app.identity] =
+                                            coordinates.boundsInWindow()
+                                    },
+                                reorderEnabled = displayedKnownApps.size > 1,
+                                canMoveUp = index > 0,
+                                canMoveDown = index < displayedKnownApps.lastIndex,
+                                onMoveUp = {
+                                    val reordered = moveAppIdentity(
+                                        displayedKnownApps.map { it.identity },
+                                        index,
+                                        index - 1
+                                    )
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    persistVisibleAppOrder(reordered)
+                                },
+                                onMoveDown = {
+                                    val reordered = moveAppIdentity(
+                                        displayedKnownApps.map { it.identity },
+                                        index,
+                                        index + 1
+                                    )
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    persistVisibleAppOrder(reordered)
+                                },
+                                onReorderHandleBoundsChanged = { bounds ->
+                                    reorderGestureHost.handleBounds[app.identity] = bounds
+                                },
                                 onReset = { scope.launch { preferences.resetApp(app.identity) } },
                                 onOverlayModeChange = { mode ->
                                     scope.launch { preferences.setAppOverlayMode(app.packageName, mode, app.uid) }
@@ -615,7 +1097,9 @@ fun SettingsDashboard(
                 }
 
                 SettingsTab.PILL -> LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.PILL)),
                     state = listStates.getValue(SettingsTab.PILL),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -690,7 +1174,9 @@ fun SettingsDashboard(
                 }
 
                 SettingsTab.STAND_DOWN -> LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.STAND_DOWN)),
                     state = listStates.getValue(SettingsTab.STAND_DOWN),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -718,7 +1204,11 @@ fun SettingsDashboard(
                                 singleLine = true
                             )
                         }
-                        items(standDownApps, key = { "stand-down-${it.packageName}" }) { app ->
+                        items(
+                            items = standDownApps,
+                            key = { "stand-down-${it.packageName}" },
+                            contentType = { "stand-down-app-row" }
+                        ) { app ->
                             StandDownAppRow(
                                 app,
                                 app.packageName in passThroughPackages
@@ -732,7 +1222,9 @@ fun SettingsDashboard(
                 }
 
                 SettingsTab.ACCESS -> LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.ACCESS)),
                     state = listStates.getValue(SettingsTab.ACCESS),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -798,7 +1290,9 @@ fun SettingsDashboard(
                 }
 
                 SettingsTab.DIAGNOSTICS -> LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.DIAGNOSTICS)),
                     state = listStates.getValue(SettingsTab.DIAGNOSTICS),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -893,6 +1387,37 @@ fun SettingsDashboard(
         }
     }
     }
+
+        val draggedPreviewApp = draggedAppIdentity?.let { identity ->
+            displayedKnownApps.firstOrNull { it.identity == identity }
+                ?: knownApps.firstOrNull { it.identity == identity }
+        }
+        val previewBounds = draggedRowBounds
+        if (draggedPreviewApp != null && previewBounds != null) {
+            AppSettingsRow(
+                app = draggedPreviewApp,
+                isActive = draggedPreviewApp.identity in activeIdentities,
+                enabled = appSettingsStoreHealth != AppSettingsStoreHealth.CORRUPT,
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            x = previewBounds.left.roundToInt(),
+                            y = draggedOverlayTopWindow.roundToInt()
+                        )
+                    }
+                    .width(with(dashboardDensity) { previewBounds.width.toDp() })
+                    .graphicsLayer {
+                        scaleX = 1.015f
+                        scaleY = 1.015f
+                        shadowElevation = with(dashboardDensity) { 10.dp.toPx() }
+                        shape = RoundedCornerShape(27.dp)
+                    },
+                reorderEnabled = true,
+                onReset = {},
+                onOverlayModeChange = {},
+                onVolumeChange = {}
+            )
+        }
 
         if (tutorialStage.isAppTour) {
             AppTabTourOverlay(

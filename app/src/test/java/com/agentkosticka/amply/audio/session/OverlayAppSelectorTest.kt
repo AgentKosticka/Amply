@@ -80,4 +80,21 @@ class OverlayAppSelectorTest {
             ).map { it.packageName }
         )
     }
+
+    @Test fun savedAppOrderOverridesDiscoveryOrder() {
+        val first = setting("first", OverlayAppMode.PINNED)
+        val second = setting("second", OverlayAppMode.PINNED)
+        val third = setting("third")
+
+        assertEquals(
+            listOf("third", "second", "first"),
+            selectOverlayPackages(
+                activeSessions = listOf(session("first"), session("third")),
+                appSettings = listOf(first, second, third).associateBy { it.identity },
+                foregroundVisitSession = session("first"),
+                shizukuConnected = true,
+                appOrder = listOf(third.identity, second.identity, first.identity)
+            ).map { it.packageName }
+        )
+    }
 }
