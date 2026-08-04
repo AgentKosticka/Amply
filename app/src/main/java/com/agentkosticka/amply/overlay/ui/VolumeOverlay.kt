@@ -98,6 +98,8 @@ fun VolumeOverlay(
 ) {
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
     val isExpanded = expanded ?: internalExpanded
+    val showCollapsedDnd = selectedTarget == VolumeTarget.RING ||
+        selectedTarget == VolumeTarget.NOTIFICATION
     fun updateExpanded(value: Boolean) {
         internalExpanded = value
         onExpandedChange(value)
@@ -170,7 +172,7 @@ fun VolumeOverlay(
                 Box(
                     modifier = Modifier
                         .width(
-                            if (isExpanded && showStandDownButton && showDndButton) {
+                            if (showStandDownButton && showDndButton) {
                                 CollapsedPillWidth * 2
                             } else {
                                 CollapsedPillWidth
@@ -179,13 +181,14 @@ fun VolumeOverlay(
                         .height(PauseControlSlotHeight),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = isExpanded,
-                        enter = fadeIn(tween(180)) + slideInVertically { it },
-                        exit = fadeOut(tween(120)) + slideOutVertically { it }
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (showDndButton) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (showDndButton) {
+                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = isExpanded || showCollapsedDnd,
+                                    enter = fadeIn(tween(180)) + slideInVertically { it },
+                                    exit = fadeOut(tween(120)) + slideOutVertically { it }
+                                ) {
                                 val dndBackground by animateColorAsState(
                                     targetValue = if (dndActive) NothingColors.Red else Color(0xFF2A2A2A),
                                     animationSpec = tween(180),
@@ -219,7 +222,15 @@ fun VolumeOverlay(
                                     )
                                 }
                             }
-                            if (showStandDownButton) {
+                            }
+                        }
+                        if (showStandDownButton) {
+                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = isExpanded,
+                                    enter = fadeIn(tween(180)) + slideInVertically { it },
+                                    exit = fadeOut(tween(120)) + slideOutVertically { it }
+                                ) {
                                 Box(
                                     modifier = Modifier
                                         .size(48.dp)
@@ -238,6 +249,7 @@ fun VolumeOverlay(
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }
+                            }
                             }
                         }
                     }
@@ -302,7 +314,14 @@ fun VolumeOverlay(
             animationSpec = tween(200, easing = FastOutSlowInEasing)
         ) + fadeOut(animationSpec = tween(150))
     ) {
-        val collapsedHitTestModifier = Modifier.pointerInput(isExpanded, expandToStart, isLandscape) {
+        val collapsedHitTestModifier = Modifier.pointerInput(
+            isExpanded,
+            expandToStart,
+            isLandscape,
+            showDndButton,
+            showStandDownButton,
+            showCollapsedDnd
+        ) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 if (!isExpanded) {
@@ -312,8 +331,20 @@ fun VolumeOverlay(
                     } else {
                         down.position.x <= collapsedWidth
                     }
+                    val dndRowWidth = if (showStandDownButton) {
+                        collapsedWidth * 2f
+                    } else {
+                        collapsedWidth
+                    }
+                    val isInsideVisibleDnd = showDndButton && showCollapsedDnd &&
+                        down.position.y <= PauseControlSlotHeight.toPx() &&
+                        if (expandToStart) {
+                            down.position.x >= size.width - dndRowWidth
+                        } else {
+                            down.position.x <= collapsedWidth
+                        }
 
-                    if (!isInsideVisiblePill) {
+                    if (!isInsideVisiblePill && !isInsideVisibleDnd) {
                         down.consume()
                         onDismissRequest()
                     }

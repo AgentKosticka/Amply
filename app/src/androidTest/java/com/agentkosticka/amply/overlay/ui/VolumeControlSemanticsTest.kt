@@ -81,4 +81,33 @@ class VolumeControlSemanticsTest {
 
         compose.onAllNodesWithContentDescription("Pause Amply temporarily").assertCountEquals(0)
     }
+
+    @Test fun collapsedRingerPillKeepsDndButtonVisible() {
+        compose.setContent {
+            AmplyTheme {
+                VolumeOverlay(
+                    volumeBars = listOf(
+                        VolumeBarModel(
+                            target = VolumeTarget.RING,
+                            aliases = setOf(VolumeTarget.RING.streamType),
+                            label = "Ring",
+                            currentVolume = 0,
+                            minVolume = 0,
+                            maxVolume = 7,
+                            active = true,
+                            enabled = true
+                        )
+                    ),
+                    selectedTarget = VolumeTarget.RING,
+                    expanded = false,
+                    showDndButton = true,
+                    dndActive = false,
+                    showShizukuDisconnectedWarning = false,
+                    shizukuConnectionState = VolumeServiceConnectionState.CONNECTED
+                )
+            }
+        }
+
+        compose.onAllNodesWithContentDescription("Turn Do Not Disturb on").assertCountEquals(1)
+    }
 }

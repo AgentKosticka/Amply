@@ -45,6 +45,8 @@ import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeControlState
 import com.agentkosticka.amply.ui.theme.NothingColors
+import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 private val CollapsedPillWidth = 54.dp
 private val ExpandControlHeight = 48.dp
@@ -180,11 +182,28 @@ private fun AppVolumeRow(
 ) {
     val haptic = LocalHapticFeedback.current
     var localVolume by remember(app.identity) { mutableFloatStateOf(app.volume) }
+    var isDragging by remember(app.identity) { mutableStateOf(false) }
+    var pendingCommittedVolume by remember(app.identity) { mutableStateOf<Float?>(null) }
+    val latestBackendVolume by rememberUpdatedState(app.volume)
     var lastHapticStep by remember(app.identity) {
         mutableIntStateOf((app.volume.coerceIn(0f, 1f) * 20f).toInt())
     }
     LaunchedEffect(app.volume) {
-        localVolume = app.volume
+        if (!isDragging) {
+            val pending = pendingCommittedVolume
+            if (pending == null || abs(app.volume - pending) < 0.002f) {
+                localVolume = app.volume
+                pendingCommittedVolume = null
+            }
+        }
+    }
+    LaunchedEffect(pendingCommittedVolume) {
+        val pending = pendingCommittedVolume ?: return@LaunchedEffect
+        delay(600L)
+        if (pendingCommittedVolume == pending && !isDragging) {
+            pendingCommittedVolume = null
+            localVolume = latestBackendVolume
+        }
     }
     val volumePercent = (localVolume * 100).toInt()
 
@@ -291,6 +310,10 @@ private fun AppVolumeRow(
             volume = localVolume,
             accessibilityLabel = "${app.target.appName} volume",
             enabled = app.controlState != AppVolumeControlState.UNAVAILABLE,
+            onDragStart = {
+                pendingCommittedVolume = null
+                isDragging = true
+            },
             onVolumeChange = { newVolume ->
                 localVolume = newVolume
                 val hapticStep = (newVolume.coerceIn(0f, 1f) * 20f).toInt()
@@ -302,6 +325,8 @@ private fun AppVolumeRow(
             },
             onValueCommitted = { finalVolume ->
                 localVolume = finalVolume
+                pendingCommittedVolume = finalVolume
+                isDragging = false
                 onVolumeChange(finalVolume)
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             },
@@ -316,6 +341,7 @@ private fun AppVolumeRow(
 @Composable
 private fun HorizontalVolumeRail(
     volume: Float,
+    onDragStart: () -> Unit,
     onVolumeChange: (Float) -> Unit,
     onValueCommitted: (Float) -> Unit,
     accessibilityLabel: String,
@@ -343,7 +369,10 @@ private fun HorizontalVolumeRail(
             .then(if (enabled) Modifier.pointerInput(Unit) {
                 var latestVolume = volume
                 detectHorizontalDragGestures(
-                    onDragStart = { latestVolume = volume },
+                    onDragStart = {
+                        latestVolume = volume
+                        onDragStart()
+                    },
                     onDragEnd = { onValueCommitted(latestVolume) },
                     onDragCancel = { onValueCommitted(latestVolume) }
                 ) { change, _ ->
