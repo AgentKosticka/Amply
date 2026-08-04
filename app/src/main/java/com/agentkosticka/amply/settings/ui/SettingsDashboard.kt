@@ -1512,47 +1512,59 @@ fun SettingsDashboard(
                 )
             },
             confirmButton = {
-                if (preview.valid) TextButton(onClick = {
-                    val raw = pendingImportRaw ?: return@TextButton
-                    scope.launch {
-                        when (val result = preferences.importSettings(raw, ImportMode.MERGE)) {
-                            SettingsOperationResult.Success ->
-                                Toast.makeText(context, "Settings merged", Toast.LENGTH_SHORT).show()
-                            SettingsOperationResult.StoreCorrupt ->
-                                Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
-                            is SettingsOperationResult.ValidationFailed ->
-                                Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
-                            is SettingsOperationResult.IoFailed ->
-                                Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (preview.valid) Arrangement.SpaceBetween else Arrangement.End
+                ) {
+                    if (preview.valid) {
+                        TextButton(
+                            onClick = {
+                                val raw = pendingImportRaw ?: return@TextButton
+                                scope.launch {
+                                    when (val result = preferences.importSettings(raw, ImportMode.MERGE)) {
+                                        SettingsOperationResult.Success ->
+                                            Toast.makeText(context, "Settings merged", Toast.LENGTH_SHORT).show()
+                                        SettingsOperationResult.StoreCorrupt ->
+                                            Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
+                                        is SettingsOperationResult.ValidationFailed ->
+                                            Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                                        is SettingsOperationResult.IoFailed ->
+                                            Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                pendingImportRaw = null
+                                pendingImportPreview = null
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp)
+                        ) { Text("MERGE", color = NothingColors.White, maxLines = 1, softWrap = false) }
+                        TextButton(
+                            onClick = {
+                                val raw = pendingImportRaw ?: return@TextButton
+                                scope.launch {
+                                    when (val result = preferences.importSettings(raw, ImportMode.REPLACE)) {
+                                        SettingsOperationResult.Success ->
+                                            Toast.makeText(context, "Settings replaced", Toast.LENGTH_SHORT).show()
+                                        SettingsOperationResult.StoreCorrupt ->
+                                            Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
+                                        is SettingsOperationResult.ValidationFailed ->
+                                            Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                                        is SettingsOperationResult.IoFailed ->
+                                            Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                pendingImportRaw = null
+                                pendingImportPreview = null
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp)
+                        ) { Text("REPLACE", color = NothingColors.Red, maxLines = 1, softWrap = false) }
                     }
-                    pendingImportRaw = null
-                    pendingImportPreview = null
-                }) { Text("MERGE", color = NothingColors.White) }
-            },
-            dismissButton = {
-                Row {
-                    if (preview.valid) TextButton(onClick = {
-                        val raw = pendingImportRaw ?: return@TextButton
-                        scope.launch {
-                            when (val result = preferences.importSettings(raw, ImportMode.REPLACE)) {
-                                SettingsOperationResult.Success ->
-                                    Toast.makeText(context, "Settings replaced", Toast.LENGTH_SHORT).show()
-                                SettingsOperationResult.StoreCorrupt ->
-                                    Toast.makeText(context, "Import blocked: current settings are corrupt", Toast.LENGTH_LONG).show()
-                                is SettingsOperationResult.ValidationFailed ->
-                                    Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
-                                is SettingsOperationResult.IoFailed ->
-                                    Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                        pendingImportRaw = null
-                        pendingImportPreview = null
-                    }) { Text("REPLACE", color = NothingColors.Red) }
-                    TextButton(onClick = {
-                        pendingImportRaw = null
-                        pendingImportPreview = null
-                    }) { Text("CANCEL", color = NothingColors.GreyMedium) }
+                    TextButton(
+                        onClick = {
+                            pendingImportRaw = null
+                            pendingImportPreview = null
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp)
+                    ) { Text("CANCEL", color = NothingColors.GreyMedium, maxLines = 1, softWrap = false) }
                 }
             },
             containerColor = Color(0xFF1C1C1C),
