@@ -93,8 +93,8 @@ class AppUpdateCheckerTest {
         source: suspend () -> SemanticVersion
     ) = AppUpdateChecker(
         store = store,
-        onlineStatus = OnlineStatus { online },
-        releaseSource = LatestReleaseSource { source() },
+        onlineStatus = { online },
+        releaseSource = { source() },
         currentVersion = { SemanticVersion(1, 0, 1) },
         nowEpochMs = { now }
     )

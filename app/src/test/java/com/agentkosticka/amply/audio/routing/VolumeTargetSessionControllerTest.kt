@@ -61,7 +61,7 @@ class VolumeTargetSessionControllerTest {
 
     @Test
     fun incomingRingerAlwaysPassesThroughEvenWithManualTarget() {
-        var now = 1_000L
+        val now = 1_000L
         val controller = VolumeTargetSessionController { now }
         controller.onOverlayShown()
         controller.onUserSelected(VolumeTarget.ALARM)

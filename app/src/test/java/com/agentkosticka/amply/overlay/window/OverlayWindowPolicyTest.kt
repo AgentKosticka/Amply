@@ -11,21 +11,21 @@ class OverlayWindowPolicyTest {
     fun overlayAcceptsTouchesWithoutTakingKeyboardFocus() {
         assertNotEquals(
             0,
-            OverlayWindowPolicy.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            OverlayWindowPolicy.FLAGS and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         )
         assertEquals(
             0,
-            OverlayWindowPolicy.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            OverlayWindowPolicy.FLAGS and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         )
     }
 
     @Test
     fun parkedOverlayCannotReceiveTouches() {
         assertTrue(
-            OverlayWindowPolicy.parkedFlags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+            OverlayWindowPolicy.PARKED_FLAGS and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
         )
         assertTrue(
-            OverlayWindowPolicy.parkedFlags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0
+            OverlayWindowPolicy.PARKED_FLAGS and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0
         )
     }
 }

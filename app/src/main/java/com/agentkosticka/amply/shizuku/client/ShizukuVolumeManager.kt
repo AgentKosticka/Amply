@@ -42,9 +42,8 @@ class ShizukuVolumeManager(
         _connectionState.asStateFlow()
 
     val isConnected: StateFlow<Boolean>
-        get() = _isConnected
+        field = MutableStateFlow(false)
 
-    private val _isConnected = MutableStateFlow(false)
     private val appContext = context.applicationContext
     private val userServiceDebuggable =
         appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -87,7 +86,7 @@ class ShizukuVolumeManager(
             connection = createServiceConnection(generation)
             activeConnection = connection
             _connectionState.value = VolumeServiceConnectionState.BINDING
-            _isConnected.value = false
+            isConnected.value = false
         }
 
         try {
@@ -158,7 +157,7 @@ class ShizukuVolumeManager(
                     serviceBinder = binder
                     deathRecipient = recipient
                     _connectionState.value = VolumeServiceConnectionState.CONNECTED
-                    _isConnected.value = true
+                    isConnected.value = true
                 }
                 Log.i(TAG, "UserService connected generation=$generation name=$name")
             }
@@ -184,7 +183,7 @@ class ShizukuVolumeManager(
             clearServiceLocked()
             activeConnection = null
             _connectionState.value = nextState
-            _isConnected.value = false
+            isConnected.value = false
         }
         connection?.let(::unbindConnection)
         Log.w(TAG, "UserService disconnected generation=$generation cause=$cause")
@@ -201,7 +200,7 @@ class ShizukuVolumeManager(
             activeConnection = null
             clearServiceLocked()
             _connectionState.value = nextState
-            _isConnected.value = false
+            isConnected.value = false
         }
         connection?.let(::unbindConnection)
         Log.d(TAG, "Connection cleared cause=$cause nextState=$nextState")

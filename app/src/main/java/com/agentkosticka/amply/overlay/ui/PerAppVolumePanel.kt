@@ -47,9 +47,8 @@ import com.agentkosticka.amply.audio.session.AppVolumeControlState
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+import kotlin.time.Duration.Companion.milliseconds
 
-private val CollapsedPillWidth = 54.dp
-private val ExpandControlHeight = 48.dp
 private val OverlayCornerRadius = 27.dp
 
 /**
@@ -63,7 +62,6 @@ internal fun AmplyPanel(
     maxHeight: Dp,
     apps: List<OverlayAppPresentation>,
     onAppVolumeChange: (AppVolumeTarget, Float) -> Unit,
-    onClose: () -> Unit,
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
 ) {
@@ -199,7 +197,7 @@ private fun AppVolumeRow(
     }
     LaunchedEffect(pendingCommittedVolume) {
         val pending = pendingCommittedVolume ?: return@LaunchedEffect
-        delay(600L)
+        delay(600L.milliseconds)
         if (pendingCommittedVolume == pending && !isDragging) {
             pendingCommittedVolume = null
             localVolume = latestBackendVolume

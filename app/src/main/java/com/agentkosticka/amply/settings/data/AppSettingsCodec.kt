@@ -22,7 +22,7 @@ internal object AppSettingsCodec {
             val schema = root.optInt("_schemaVersion", 1)
             require(schema in 1..SCHEMA_VERSION) { "Unsupported app-settings schema $schema" }
             val apps = root.optJSONObject("apps") ?: root
-            val decoded = buildMap<AppIdentity, AppSettings> {
+            val decoded = buildMap {
                 val keys = apps.keys()
                 while (keys.hasNext()) {
                     require(size < MAX_APP_RECORDS) { "Too many app records" }

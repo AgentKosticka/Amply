@@ -19,11 +19,11 @@ import androidx.savedstate.SavedStateRegistryOwner
  */
 
 internal class ComposeLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
-    private val lifecycleRegistry: LifecycleRegistry = LifecycleRegistry(this)
     private val store: ViewModelStore = ViewModelStore()
     private val savedStateRegistryController: SavedStateRegistryController = SavedStateRegistryController.create(this)
 
-    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val lifecycle: Lifecycle
+        field: LifecycleRegistry = LifecycleRegistry(this)
     override val viewModelStore: ViewModelStore get() = store
     override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
 
@@ -32,11 +32,11 @@ internal class ComposeLifecycleOwner : LifecycleOwner, ViewModelStoreOwner, Save
     }
 
     fun handleLifecycleEvent(event: Lifecycle.Event) {
-        lifecycleRegistry.handleLifecycleEvent(event)
+        lifecycle.handleLifecycleEvent(event)
     }
 
     fun destroy() {
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
     }
 }

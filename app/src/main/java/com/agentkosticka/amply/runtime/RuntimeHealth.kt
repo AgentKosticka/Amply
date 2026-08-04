@@ -35,11 +35,4 @@ data class RuntimeHealth(
     val isPaused: Boolean
         get() = pausedUntilEpochMs > System.currentTimeMillis()
 
-    val isOperational: Boolean
-        get() = accessibilityConnected &&
-            foregroundServiceRunning &&
-            shizukuPermission == ShizukuPermissionState.GRANTED &&
-            volumeServiceConnection == VolumeServiceConnectionState.CONNECTED &&
-            !isPaused &&
-            recoverableError == null
 }

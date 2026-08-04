@@ -18,6 +18,7 @@ import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
 import com.agentkosticka.amply.shizuku.protocol.VolumeOperationStatus
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.system.exitProcess
 
 /**
  * Shizuku UserService that runs in the privileged shell process (UID 2000).
@@ -93,7 +94,7 @@ open class VolumeUserService : IVolumeService.Stub() {
             Log.d(TAG, "Got audio binder: $audioBinder")
 
             // Get IAudioService.Stub.asInterface
-            val audioServiceStubClass = Class.forName("android.media.IAudioService\$Stub")
+            val audioServiceStubClass = Class.forName($$"android.media.IAudioService$Stub")
             val asInterfaceMethod = audioServiceStubClass.getMethod("asInterface", IBinder::class.java)
             audioService = asInterfaceMethod.invoke(null, audioBinder)
 
@@ -304,9 +305,9 @@ open class VolumeUserService : IVolumeService.Stub() {
             } else {
                 OperationResultParcel.failure(STATUS_FAILED, "stream_volume_not_applied")
             }
-        } catch (e: SecurityException) {
+        } catch (_: SecurityException) {
             OperationResultParcel.failure(STATUS_DENIED, "stream_volume_denied")
-        } catch (e: NoSuchMethodException) {
+        } catch (_: NoSuchMethodException) {
             OperationResultParcel.failure(STATUS_UNSUPPORTED, "stream_volume_unsupported")
         } catch (e: Exception) {
             Log.e(TAG, "System stream update failed", e)
@@ -483,7 +484,7 @@ open class VolumeUserService : IVolumeService.Stub() {
                 type == java.lang.Boolean.TYPE -> argument is Boolean
                 type == java.lang.Byte.TYPE -> argument is Byte
                 type == java.lang.Short.TYPE -> argument is Short
-                type == java.lang.Character.TYPE -> argument is Char
+                type == Character.TYPE -> argument is Char
                 else -> false
             }
         }
@@ -519,7 +520,7 @@ open class VolumeUserService : IVolumeService.Stub() {
     override fun destroy() {
         Log.d(TAG, "destroy called")
         clearAudioService()
-        System.exit(0)
+        exitProcess(0)
     }
 
 

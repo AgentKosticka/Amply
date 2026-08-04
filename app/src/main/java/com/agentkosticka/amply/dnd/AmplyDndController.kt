@@ -11,6 +11,8 @@ import android.service.notification.Condition
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import androidx.core.net.toUri
+import androidx.core.content.edit
 
 enum class DndOperationResult {
     APPLIED,
@@ -25,7 +27,7 @@ class AmplyDndController(context: Context) {
         internal const val STORAGE_NAME = "amply_dnd_state"
         private const val RULE_ID_KEY = "automatic_rule_id"
         internal const val ACTIVE_KEY = "active"
-        internal val CONDITION_ID: Uri = Uri.parse("condition://com.agentkosticka.amply/manual_dnd")
+        internal val CONDITION_ID: Uri = "condition://com.agentkosticka.amply/manual_dnd".toUri()
     }
 
     private val appContext = context.applicationContext
@@ -41,8 +43,6 @@ class AmplyDndController(context: Context) {
         featureEnabled = enabled
         if (!enabled && _active.value) setActive(false)
     }
-
-    fun isFeatureEnabled(): Boolean = featureEnabled
 
     fun hasPolicyAccess(): Boolean = notificationManager.isNotificationPolicyAccessGranted
 
@@ -73,7 +73,7 @@ class AmplyDndController(context: Context) {
         return runCatching {
             val ruleId = ensureRuleId()
             val previousActive = _active.value
-            storage.edit().putBoolean(ACTIVE_KEY, active).commit()
+            storage.edit { putBoolean(ACTIVE_KEY, active) }
             val condition = Condition(
                 CONDITION_ID,
                 if (active) "Amply Do Not Disturb is on" else "Amply Do Not Disturb is off",
@@ -81,7 +81,7 @@ class AmplyDndController(context: Context) {
             )
             runCatching { notificationManager.setAutomaticZenRuleState(ruleId, condition) }
                 .getOrElse {
-                    storage.edit().putBoolean(ACTIVE_KEY, previousActive).commit()
+                    storage.edit(commit = true) { putBoolean(ACTIVE_KEY, previousActive)}
                     throw it
                 }
             _active.value = active
@@ -104,7 +104,7 @@ class AmplyDndController(context: Context) {
             true
         )
         return notificationManager.addAutomaticZenRule(rule).also { id ->
-            storage.edit().putString(RULE_ID_KEY, id).apply()
+            storage.edit {putString(RULE_ID_KEY, id)}
         }
     }
 }

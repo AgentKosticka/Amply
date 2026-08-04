@@ -8,7 +8,7 @@ enum class NotificationAlertMode {
     MUTED;
 
     companion object {
-        fun resolve(ringerMode: Int, currentVolume: Int, minVolume: Int): NotificationAlertMode =
+        fun resolve(ringerMode: Int): NotificationAlertMode =
             when (ringerMode) {
                 AudioManager.RINGER_MODE_SILENT -> MUTED
                 AudioManager.RINGER_MODE_VIBRATE -> VIBRATIONS

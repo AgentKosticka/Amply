@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
+import kotlin.time.Duration.Companion.milliseconds
 
 private data class OverlayProjectionInput(
     val sessionState: AudioSessionState,
@@ -374,7 +375,7 @@ open class OverlayForegroundService : Service() {
             foregroundPackage = request.foregroundPackage
         )
         serviceScope.launch {
-            delay(PENDING_SHOW_TTL_MS)
+            delay(PENDING_SHOW_TTL_MS.milliseconds)
             runtime.clearRuntimeError(RuntimeErrorCode.OVERLAY_HOST_UNAVAILABLE)
         }
     }

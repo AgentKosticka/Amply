@@ -119,8 +119,6 @@ data class AppSettings(
     val lastSeenTimestamp: Long = 0L
 ) {
     val identity: AppIdentity get() = AppIdentity(userId, packageName)
-    val hiddenInOverlay: Boolean
-        get() = overlayMode == OverlayAppMode.HIDDEN
 
     val isCustomized: Boolean
         get() = overlayMode != OverlayAppMode.AUTO ||

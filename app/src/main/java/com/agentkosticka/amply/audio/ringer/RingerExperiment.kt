@@ -49,7 +49,12 @@ data class RingerExperimentSnapshot(
     val interruptionFilter: Int
 ) {
     companion object {
-        val EMPTY = RingerExperimentSnapshot(NotificationAlertMode.LOUD, 2, 0, 0, false, false, false, NotificationManager.INTERRUPTION_FILTER_ALL)
+        val EMPTY = RingerExperimentSnapshot(NotificationAlertMode.LOUD, 2, 0, 0,
+            notificationMuted = false,
+            ringMuted = false,
+            policyAccess = false,
+            interruptionFilter = NotificationManager.INTERRUPTION_FILTER_ALL
+        )
     }
 }
 
@@ -119,7 +124,6 @@ class RingerExperimentExecutor(
     val methodTestProgress = _methodTestProgress.asStateFlow()
     private val _runningMethod = MutableStateFlow<RingerExperimentMethod?>(null)
     val runningMethod = _runningMethod.asStateFlow()
-    private val overlayToggleMutex = Mutex()
     private val experimentMutex = Mutex()
 
     init { refresh() }
@@ -131,9 +135,6 @@ class RingerExperimentExecutor(
     fun onPlaybackUsagesChanged(usages: Set<Int>) {
         activePlaybackUsages = usages
     }
-
-    fun setNotificationVolumeFromControl(volume: Int): Boolean =
-        setAlertVolumeFromControl(AudioManager.STREAM_NOTIFICATION, volume)
 
     fun setAlertVolumeFromControl(streamType: Int, volume: Int): Boolean {
         require(streamType == AudioManager.STREAM_NOTIFICATION || streamType == AudioManager.STREAM_RING)
@@ -149,7 +150,7 @@ class RingerExperimentExecutor(
         audioManager.setStreamVolume(streamType, clamped, 0)
         refresh()
         return audioManager.getStreamVolume(streamType) == clamped &&
-            NotificationAlertMode.resolve(audioManager.ringerMode, clamped, min) == target
+            NotificationAlertMode.resolve(audioManager.ringerMode) == target
     }
 
     /** Fixed production controller used by the overlay and hardware-key state ladder. */
@@ -270,19 +271,6 @@ class RingerExperimentExecutor(
         }
     }
 
-    suspend fun toggleSelected(onApplied: () -> Unit = {}): RingerExperimentResult =
-        overlayToggleMutex.withLock {
-            // Re-read after earlier queued taps complete so every tap toggles the
-            // state produced by the one before it instead of being discarded.
-            val target = NotificationModePolicy.iconTarget(refresh().mode)
-            execute(
-                method = overlayToggleMethod(selectedMethod.value),
-                target = target,
-                onApplied = onApplied,
-                settleForDiagnostics = false
-            )
-        }
-
     suspend fun execute(
         method: RingerExperimentMethod,
         target: NotificationAlertMode,
@@ -341,7 +329,7 @@ class RingerExperimentExecutor(
     private fun snapshotNow(): RingerExperimentSnapshot {
         val mode = audioManager.ringerMode
         return RingerExperimentSnapshot(
-            mode = NotificationAlertMode.resolve(mode, 0, 0),
+            mode = NotificationAlertMode.resolve(mode),
             rawRingerMode = mode,
             notificationVolume = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION),
             ringVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING),
@@ -407,7 +395,7 @@ class RingerExperimentExecutor(
     private fun adjustLocal(stream: Int, target: NotificationAlertMode) {
         repeat(audioManager.getStreamMaxVolume(stream) + 3) {
             val mode = audioManager.ringerMode
-            if (NotificationAlertMode.resolve(mode, 0, 0) == target) return
+            if (NotificationAlertMode.resolve(mode) == target) return
             val direction = if (target == NotificationAlertMode.LOUD) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
             audioManager.adjustStreamVolume(stream, direction, AudioManager.FLAG_ALLOW_RINGER_MODES)
         }
@@ -416,7 +404,7 @@ class RingerExperimentExecutor(
     private suspend fun injectKeys(target: NotificationAlertMode) {
         VolumeKeyService.suppressInjectedKeysFor(4_000L)
         repeat(audioManager.getStreamMaxVolume(AudioManager.STREAM_RING) + 3) {
-            if (NotificationAlertMode.resolve(audioManager.ringerMode, 0, 0) == target) return
+            if (NotificationAlertMode.resolve(audioManager.ringerMode) == target) return
             val keyCode = if (target == NotificationAlertMode.LOUD) 24 else 25
             if (!shizukuRepository.injectVolumeKey(keyCode)) error("Key injection failed")
             delay(80L.milliseconds)

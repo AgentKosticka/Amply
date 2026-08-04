@@ -530,7 +530,7 @@ object OverlayManager {
             windowWidthForCurrentOrientation(context),
             WindowManager.LayoutParams.WRAP_CONTENT,
             windowType,
-            OverlayWindowPolicy.flags,
+            OverlayWindowPolicy.FLAGS,
             PixelFormat.TRANSLUCENT
         ).applyPosition(context)
 
@@ -590,7 +590,7 @@ object OverlayManager {
     private fun parkOverlay() {
         val container = overlayContainer ?: return
         val params = container.layoutParams as? WindowManager.LayoutParams ?: return
-        params.flags = OverlayWindowPolicy.parkedFlags
+        params.flags = OverlayWindowPolicy.PARKED_FLAGS
         runCatching { windowManager?.updateViewLayout(container, params) }
             .onFailure { Log.w("OverlayManager", "Failed to park overlay input window", it) }
         container.visibility = View.INVISIBLE
@@ -602,8 +602,8 @@ object OverlayManager {
         val container = overlayContainer ?: return
         val params = container.layoutParams as? WindowManager.LayoutParams ?: return
         container.visibility = View.VISIBLE
-        if (params.flags == OverlayWindowPolicy.flags) return
-        params.flags = OverlayWindowPolicy.flags
+        if (params.flags == OverlayWindowPolicy.FLAGS) return
+        params.flags = OverlayWindowPolicy.FLAGS
         runCatching { windowManager?.updateViewLayout(container, params) }
             .onFailure { Log.w("OverlayManager", "Failed to restore overlay input window", it) }
     }
@@ -731,7 +731,7 @@ object OverlayManager {
                 dotCount = template.dotCount,
                 combinedRinger = template.combinedRinger,
                 notificationAlertMode = if (template.ringerControl) {
-                    NotificationAlertMode.resolve(ringerMode, current, template.minVolume)
+                    NotificationAlertMode.resolve(ringerMode)
                 } else null
             )
         }
@@ -805,7 +805,7 @@ object OverlayManager {
         val updated = bar.copy(
             currentVolume = current,
             notificationAlertMode = if (ringerControl) {
-                NotificationAlertMode.resolve(manager.ringerMode, current, bar.minVolume)
+                NotificationAlertMode.resolve(manager.ringerMode)
             } else {
                 null
             }
@@ -886,8 +886,6 @@ object OverlayManager {
      * Check if overlay is showing
      */
     fun isShowing(): Boolean = overlayVisible.value
-
-    fun isAttached(): Boolean = overlayContainer != null
 
     /**
      * Cleanup resources

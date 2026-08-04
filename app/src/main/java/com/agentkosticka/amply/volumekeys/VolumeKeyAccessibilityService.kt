@@ -404,7 +404,7 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Change volume by one step
+     * Change volume by one-step
      * Uses real max volume and proper mapping
      */
     private fun resolveStreamAction(): VolumeKeyStreamAction {

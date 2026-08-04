@@ -4,21 +4,17 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 /**
  * ViewModel for the Setup Wizard flow
  */
 class SetupViewModel(
     private val shizukuRepository: ShizukuRepository,
-    private val preferencesManager: PreferencesManager,
     context: Context
 ) : ViewModel() {
     private val appContext = context.applicationContext
@@ -73,13 +69,6 @@ class SetupViewModel(
      */
     fun clearExternalActionError() {
         _externalActionError.value = null
-    }
-
-    fun completeSetup(accessibilityReady: Boolean) {
-        if (!accessibilityReady) return
-        viewModelScope.launch {
-            preferencesManager.setSetupIntroductionSeen(true)
-        }
     }
 
 }

@@ -28,7 +28,7 @@ class RefreshRequestProcessorTest {
         runCurrent()
         assertEquals(1, refreshCount)
 
-        advanceTimeBy(100L)
+        advanceTimeBy(100L.milliseconds)
         runCurrent()
         assertEquals(2, refreshCount)
         job.cancel()

@@ -65,14 +65,6 @@ class PreferencesManager(private val context: Context) {
             preferences[SETUP_COMPLETED] ?: false
         }
 
-    /**
-     * Marks the setup wizard as completed
-     */
-    suspend fun setSetupIntroductionSeen(completed: Boolean): SettingsOperationResult =
-        editSettings { preferences ->
-            preferences[SETUP_COMPLETED] = completed
-        }
-
     internal val tutorialStage: Flow<TutorialStage> = context.dataStore.data.map { preferences ->
         TutorialStage.fromStored(
             value = preferences[TUTORIAL_STAGE],
@@ -325,8 +317,6 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setPassVolumeKeysToApp(
         packageName: String,
-        @Suppress("UNUSED_PARAMETER") appName: String,
-        @Suppress("UNUSED_PARAMETER") uid: Int,
         enabled: Boolean
     ): SettingsOperationResult {
         if (!AppSettingsCodec.isValidPackageName(packageName)) {

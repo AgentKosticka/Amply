@@ -35,7 +35,7 @@ import kotlin.time.Duration.Companion.milliseconds
  * only component allowed to discover and control privileged player interfaces.
  */
 class AudioSessionManager(
-    private val context: Context,
+    context: Context,
     private val preferencesManager: PreferencesManager,
     private val shizukuVolumeManager: ShizukuVolumeManager
 ) {
@@ -198,7 +198,6 @@ class AudioSessionManager(
         playbackCallback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
                 _activePlaybackUsages.value = configs.orEmpty()
-                    .asSequence()
                     .mapTo(linkedSetOf()) { it.audioAttributes.usage }
                 requestRefresh()
             }
@@ -249,7 +248,7 @@ class AudioSessionManager(
     /**
      * Update session state using the privileged Shizuku service.
      */
-    private suspend fun updateSessions() {
+    private fun updateSessions() {
         // Get current global volume
         val globalVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -439,7 +438,6 @@ class AudioSessionManager(
         if (targetSession != null) {
             val uid = targetSession.uid
             val identity = targetSession.identity
-            val targetPackage = packageName?.takeIf { it.isNotBlank() } ?: targetSession.packageName
             val packageSessions = activeSessions.filter { it.identity == identity }
             val targetSessions = packageSessions.ifEmpty {
                 activeSessions.filter { it.uid == uid }
@@ -457,12 +455,12 @@ class AudioSessionManager(
                 }
             }
             val result = AppVolumeApplyResult(identity, targetSessions.size, successfulIds.size)
-            _appVolumeControlStates.value = _appVolumeControlStates.value + (identity to result.state)
+            _appVolumeControlStates.value += (identity to result.state)
             if (successfulIds.isNotEmpty()) {
-                updateLocalSessionVolume(targetPackage, uid, volume)
+                updateLocalSessionVolume(uid, volume)
                 schedulePersistSessionVolume(targetSession, volume)
             } else {
-                updateLocalSessionVolume(targetPackage, uid, previousVolume)
+                updateLocalSessionVolume(uid, previousVolume)
                 Log.w(TAG, "No active player accepted per-app volume for $identity")
             }
         } else {
@@ -471,10 +469,6 @@ class AudioSessionManager(
                 preferencesManager.setAppDefaultVolume(packageName, volume)
             }
         }
-    }
-
-    fun setSessionVolume(sessionId: Int, volume: Float) {
-        setSessionVolume(sessionId, null, volume)
     }
 
     fun setAppVolume(packageName: String, volume: Float) {
@@ -507,7 +501,7 @@ class AudioSessionManager(
     /**
      * Update local session state with new volume
      */
-    private fun updateLocalSessionVolume(packageName: String, uid: Int, volume: Float) {
+    private fun updateLocalSessionVolume(uid: Int, volume: Float) {
         // Update persisted volume cache
         uidVolumeCache[uid] = volume
 
@@ -613,7 +607,7 @@ class AudioSessionManager(
             nextPlayerIds[it] != playerIdsByIdentity[it]
         }
         if (changedIdentities.isNotEmpty()) {
-            _appVolumeControlStates.value = _appVolumeControlStates.value - changedIdentities
+            _appVolumeControlStates.value -= changedIdentities
             playerIdsByIdentity = nextPlayerIds
         }
         val current = _sessionState.value

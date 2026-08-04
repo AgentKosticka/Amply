@@ -44,11 +44,6 @@ enum class StreamIcon {
     ASSISTANT
 }
 
-data class SystemStreamDescriptor(
-    val target: VolumeTarget,
-    val optional: Boolean = !target.permanentlyVisible
-)
-
 object SystemStreamCatalog {
     val optionalOrder = listOf(
         VolumeTarget.BLUETOOTH_SCO,

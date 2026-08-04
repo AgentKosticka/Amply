@@ -119,21 +119,22 @@ class AmplyRuntime(context: Context) {
                         shizukuPermission = permission,
                         volumeServiceConnection = connection,
                         pausedUntilEpochMs = effectivePausedUntil,
-                        recoverableError = when {
-                            connection == VolumeServiceConnectionState.PROTOCOL_MISMATCH ->
+                        recoverableError = when (connection) {
+                            VolumeServiceConnectionState.PROTOCOL_MISMATCH ->
                                 RuntimeError(RuntimeErrorCode.SHIZUKU_PROTOCOL_MISMATCH)
-                            connection == VolumeServiceConnectionState.CONNECTED &&
-                                it.recoverableError?.code in setOf(
-                                    RuntimeErrorCode.SHIZUKU_CONNECTION_FAILED,
-                                    RuntimeErrorCode.SHIZUKU_PROTOCOL_MISMATCH
-                                ) -> null
+
+                            VolumeServiceConnectionState.CONNECTED if it.recoverableError?.code in setOf(
+                                RuntimeErrorCode.SHIZUKU_CONNECTION_FAILED,
+                                RuntimeErrorCode.SHIZUKU_PROTOCOL_MISMATCH
+                            ) -> null
+
                             else -> it.recoverableError
                         }
                     )
                 }
                 if (effectivePausedUntil in (now + 1)..<Long.MAX_VALUE) {
                     pauseHealthExpiryJob = runtimeScope.launch {
-                        delay((effectivePausedUntil - System.currentTimeMillis()).coerceAtLeast(1L))
+                        delay((effectivePausedUntil - System.currentTimeMillis()).coerceAtLeast(1L).milliseconds)
                         _runtimeHealth.update { health ->
                             if (health.pausedUntilEpochMs == effectivePausedUntil) {
                                 health.copy(pausedUntilEpochMs = 0L)
@@ -299,7 +300,7 @@ class AmplyRuntime(context: Context) {
         if (target != VolumeTarget.RING && target != VolumeTarget.NOTIFICATION) {
             return RingerKeyAdjustmentResult.NOT_HANDLED
         }
-        val mode = NotificationAlertMode.resolve(audioManager.ringerMode, currentVolume, minVolume)
+        val mode = NotificationAlertMode.resolve(audioManager.ringerMode)
         return when (
             RingerKeyStepPolicy.action(
                 mode = mode,

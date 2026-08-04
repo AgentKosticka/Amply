@@ -249,8 +249,7 @@ private fun StreamVolumeColumn(
     val usesPercentageBoundaryFeedback = VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(
         isUp = limitFeedback?.isUpperBound ?: false,
         min = stream.minVolume,
-        max = stream.maxVolume,
-        referenceMax = stream.referenceMaxVolume
+        max = stream.maxVolume
     )
     val usesDotBoundaryFeedback = VolumeLimitFeedbackPolicy.usesDotBoundaryFeedback(
         isUp = limitFeedback?.isUpperBound ?: false,
@@ -266,11 +265,11 @@ private fun StreamVolumeColumn(
             animationSpec = keyframes {
                 durationMillis = 230
                 0f at 0
-                -1f at 35
+                1f at 35
                 1f at 75
-                -0.75f at 115
+                0.75f at 115
                 0.55f at 155
-                -0.25f at 195
+                0.25f at 195
                 0f at 230
             }
         )

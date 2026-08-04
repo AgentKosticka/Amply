@@ -8,12 +8,12 @@ import android.view.WindowManager
  */
 
 internal object OverlayWindowPolicy {
-    val flags: Int = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+    const val FLAGS: Int = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
         WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 
-    val parkedFlags: Int = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+    const val PARKED_FLAGS: Int = FLAGS or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
 }
 
 enum class OverlayPresentationMode {

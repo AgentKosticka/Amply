@@ -51,6 +51,7 @@ import com.agentkosticka.amply.tutorial.TutorialWaitingScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import androidx.core.net.toUri
 
 class MainActivity : ComponentActivity() {
 
@@ -113,7 +114,6 @@ class MainActivity : ComponentActivity() {
                 val viewModel = remember {
                     SetupViewModel(
                         shizukuRepository = runtime.shizukuRepository,
-                        preferencesManager = runtime.preferencesManager,
                         context = this@MainActivity
                     )
                 }
@@ -309,7 +309,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openReleasePage(url: String) {
-        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
     }
 
 }

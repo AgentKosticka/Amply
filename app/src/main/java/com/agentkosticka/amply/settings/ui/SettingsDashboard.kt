@@ -1317,7 +1317,7 @@ fun SettingsDashboard(
                                 app.packageName in passThroughPackages
                             ) { enabled ->
                                 scope.launch {
-                                    preferences.setPassVolumeKeysToApp(app.packageName, app.appName, app.uid, enabled)
+                                    preferences.setPassVolumeKeysToApp(app.packageName, enabled)
                                 }
                             }
                         }

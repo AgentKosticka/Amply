@@ -8,9 +8,6 @@ internal data class SetupReadiness(
     val shizukuPermission: ShizukuPermissionState,
     val volumeServiceConnection: VolumeServiceConnectionState
 ) {
-    val shizukuReady: Boolean
-        get() = shizukuPermission == ShizukuPermissionState.GRANTED &&
-            volumeServiceConnection == VolumeServiceConnectionState.CONNECTED
 
     val requiredServicesReady: Boolean
         get() = accessibilityEnabled

@@ -8,29 +8,49 @@ class ShizukuPermissionStateTest {
     @Test fun unavailableInstallAndBinderMapToStableStates() {
         assertEquals(
             ShizukuPermissionState.SHIZUKU_NOT_INSTALLED,
-            resolveShizukuPermissionState(false, false, { PackageManager.PERMISSION_DENIED }, { false })
+            resolveShizukuPermissionState(
+                installed = false,
+                running = false,
+                checkPermission = { PackageManager.PERMISSION_DENIED },
+                shouldShowRationale = { false })
         )
         assertEquals(
             ShizukuPermissionState.SHIZUKU_NOT_RUNNING,
-            resolveShizukuPermissionState(true, false, { PackageManager.PERMISSION_DENIED }, { false })
+            resolveShizukuPermissionState(
+                installed = true,
+                running = false,
+                checkPermission = { PackageManager.PERMISSION_DENIED },
+                shouldShowRationale = { false })
         )
     }
 
     @Test fun permissionQueryFailureBecomesNotRunning() {
         assertEquals(
             ShizukuPermissionState.SHIZUKU_NOT_RUNNING,
-            resolveShizukuPermissionState(true, true, { error("stale binder") }, { false })
+            resolveShizukuPermissionState(
+                installed = true,
+                running = true,
+                checkPermission = { error("stale binder") },
+                shouldShowRationale = { false })
         )
     }
 
     @Test fun grantedAndDeniedQueriesMapCorrectly() {
         assertEquals(
             ShizukuPermissionState.GRANTED,
-            resolveShizukuPermissionState(true, true, { PackageManager.PERMISSION_GRANTED }, { false })
+            resolveShizukuPermissionState(
+                installed = true,
+                running = true,
+                checkPermission = { PackageManager.PERMISSION_GRANTED },
+                shouldShowRationale = { false })
         )
         assertEquals(
             ShizukuPermissionState.NOT_GRANTED,
-            resolveShizukuPermissionState(true, true, { PackageManager.PERMISSION_DENIED }, { false })
+            resolveShizukuPermissionState(
+                installed = true,
+                running = true,
+                checkPermission = { PackageManager.PERMISSION_DENIED },
+                shouldShowRationale = { false })
         )
     }
 }

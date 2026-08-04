@@ -2,7 +2,6 @@
 
 package com.agentkosticka.amply.dnd
 
-import android.content.Context
 import android.net.Uri
 import android.service.notification.Condition
 import android.service.notification.ConditionProviderService
@@ -18,7 +17,7 @@ class AmplyDndConditionProvider : ConditionProviderService() {
     override fun onUnsubscribe(conditionId: Uri?) = Unit
 
     private fun publishStoredState() {
-        val active = getSharedPreferences(AmplyDndController.STORAGE_NAME, Context.MODE_PRIVATE)
+        val active = getSharedPreferences(AmplyDndController.STORAGE_NAME, MODE_PRIVATE)
             .getBoolean(AmplyDndController.ACTIVE_KEY, false)
         notifyCondition(
             Condition(

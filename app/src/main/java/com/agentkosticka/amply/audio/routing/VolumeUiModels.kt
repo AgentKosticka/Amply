@@ -71,8 +71,7 @@ object VolumeLimitFeedbackPolicy {
     fun usesPercentageBoundaryFeedback(
         isUp: Boolean,
         min: Int,
-        max: Int,
-        referenceMax: Int
+        max: Int
     ): Boolean = if (isUp) max > 0 else min == 0
 
     fun usesDotBoundaryFeedback(

@@ -31,7 +31,7 @@ internal fun rememberApplicationIconBitmap(
     val context = LocalContext.current.applicationContext
     val cacheKey = "$packageName@$bitmapSizePx"
     val cached = remember(cacheKey) { SettingsAppIconCache.get(cacheKey) }
-    return produceState<ImageBitmap?>(initialValue = cached, cacheKey) {
+    return produceState(initialValue = cached, cacheKey) {
         if (value == null) {
             value = withContext(Dispatchers.IO) {
                 runCatching {
