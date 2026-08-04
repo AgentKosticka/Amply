@@ -28,6 +28,7 @@ import com.agentkosticka.amply.audio.routing.CallPhase
 import com.agentkosticka.amply.audio.routing.VolumeKeyStreamAction
 import com.agentkosticka.amply.audio.routing.VolumeAdjustmentResult
 import com.agentkosticka.amply.audio.routing.VolumeTarget
+import com.agentkosticka.amply.audio.ringer.RingerKeyAdjustmentResult
 import com.agentkosticka.amply.overlay.window.OverlayManager
 import com.agentkosticka.amply.service.OverlayService
 import kotlinx.coroutines.*
@@ -524,6 +525,22 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
         val maxVolume = runCatching { manager.getStreamMaxVolume(streamType) }
             .getOrElse { return VolumeAdjustmentResult.Failed(target) }
 
+        val runtime = (application as AmplyApplication).runtime
+        when (runtime.adjustRingerKeyStep(target, isUp, currentVolume, minVolume)) {
+            RingerKeyAdjustmentResult.APPLIED -> {
+                showOverlay(target)
+                OverlayManager.refreshStreamVolumes()
+                return VolumeAdjustmentResult.Applied(target)
+            }
+            RingerKeyAdjustmentResult.LIMIT -> {
+                showOverlay(target)
+                OverlayManager.signalVolumeLimit(target = target, isUp = isUp)
+                return VolumeAdjustmentResult.Applied(target)
+            }
+            RingerKeyAdjustmentResult.FAILED -> return VolumeAdjustmentResult.Failed(target)
+            RingerKeyAdjustmentResult.NOT_HANDLED -> Unit
+        }
+
         val newVolume = VolumeStepPolicy.next(
             current = currentVolume,
             min = minVolume,
@@ -541,8 +558,7 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
             return VolumeAdjustmentResult.Applied(target)
         }
 
-        val applied = (application as AmplyApplication).runtime
-            .setSystemStreamVolume(target, newVolume)
+        val applied = runtime.setSystemStreamVolume(target, newVolume)
         if (!applied) return VolumeAdjustmentResult.Failed(target)
         val verified = runCatching { manager.getStreamVolume(streamType) == newVolume }
             .getOrDefault(false)

@@ -12,12 +12,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -76,6 +78,8 @@ fun VolumeOverlay(
     shizukuIcon: Bitmap? = null,
     showShizukuDisconnectedWarning: Boolean = true,
     showStandDownButton: Boolean = true,
+    showDndButton: Boolean = false,
+    dndActive: Boolean = false,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     initiallyExpanded: Boolean = false,
@@ -89,6 +93,7 @@ fun VolumeOverlay(
     onTouchEnd: () -> Unit = {},
     onExpandedChange: (Boolean) -> Unit = {},
     onPauseAmply: () -> Unit = {},
+    onDndToggle: () -> Unit = {},
     onDismissRequest: () -> Unit = {}
 ) {
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
@@ -161,10 +166,16 @@ fun VolumeOverlay(
                 androidx.compose.ui.AbsoluteAlignment.Left
             }
         ) {
-            if (showStandDownButton) {
+            if (showStandDownButton || showDndButton) {
                 Box(
                     modifier = Modifier
-                        .width(CollapsedPillWidth)
+                        .width(
+                            if (isExpanded && showStandDownButton && showDndButton) {
+                                CollapsedPillWidth * 2
+                            } else {
+                                CollapsedPillWidth
+                            }
+                        )
                         .height(PauseControlSlotHeight),
                     contentAlignment = Alignment.TopCenter
                 ) {
@@ -173,23 +184,61 @@ fun VolumeOverlay(
                         enter = fadeIn(tween(180)) + slideInVertically { it },
                         exit = fadeOut(tween(120)) + slideOutVertically { it }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(NothingColors.Red)
-                                .clickable {
-                                    onPauseAmply()
-                                    onInteraction()
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PowerSettingsNew,
-                                contentDescription = "Pause Amply temporarily",
-                                tint = NothingColors.White,
-                                modifier = Modifier.size(22.dp)
-                            )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (showDndButton) {
+                                val dndBackground by animateColorAsState(
+                                    targetValue = if (dndActive) NothingColors.Red else Color(0xFF2A2A2A),
+                                    animationSpec = tween(180),
+                                    label = "dndBackground"
+                                )
+                                val dndIconColor by animateColorAsState(
+                                    targetValue = if (dndActive) NothingColors.White else NothingColors.GreyMedium,
+                                    animationSpec = tween(180),
+                                    label = "dndIcon"
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(dndBackground)
+                                        .clickable {
+                                            onDndToggle()
+                                            onInteraction()
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DoNotDisturbOn,
+                                        contentDescription = if (dndActive) {
+                                            "Turn Do Not Disturb off"
+                                        } else {
+                                            "Turn Do Not Disturb on"
+                                        },
+                                        tint = dndIconColor,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                            if (showStandDownButton) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(NothingColors.Red)
+                                        .clickable {
+                                            onPauseAmply()
+                                            onInteraction()
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PowerSettingsNew,
+                                        contentDescription = "Pause Amply temporarily",
+                                        tint = NothingColors.White,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }

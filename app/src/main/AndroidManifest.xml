@@ -85,6 +85,16 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <service
+            android:name=".dnd.AmplyDndConditionProvider"
+            android:exported="true"
+            android:label="@string/amply_dnd_service_label"
+            android:permission="android.permission.BIND_CONDITION_PROVIDER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.ConditionProviderService" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

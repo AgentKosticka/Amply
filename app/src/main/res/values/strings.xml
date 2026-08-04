@@ -101,4 +101,7 @@
     <string name="pill_hide_per_app_control_description">Keep the expanded overlay focused on Android’s system volume streams.</string>
     <string name="pill_hide_stand_down">Hide Stand-Down button</string>
     <string name="pill_hide_stand_down_description">Remove the red temporary-pause button from the expanded overlay.</string>
+    <string name="pill_show_dnd">Show Do Not Disturb button</string>
+    <string name="pill_show_dnd_description">Add a DND shortcut to the expanded overlay and extend the ring-volume steps from silent into DND. Android will ask for Do Not Disturb access.</string>
+    <string name="amply_dnd_service_label">Amply Do Not Disturb</string>
 </resources>

@@ -214,6 +214,12 @@ open class OverlayForegroundService : Service() {
                     }
                 },
                 serviceScope.launch {
+                    preferences.showDndButton.collect(OverlayManager::updateDndButtonEnabled)
+                },
+                serviceScope.launch {
+                    runtime.dndController.active.collect(OverlayManager::updateDndActive)
+                },
+                serviceScope.launch {
                     runtime.selectedVolumeTarget.collect { target ->
                         OverlayManager.updateSelectedVolumeTarget(target)
                     }
@@ -289,11 +295,12 @@ open class OverlayForegroundService : Service() {
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
             }
+            OverlayManager.setDndToggleCallback {
+                runtime.dndController.toggleFromOverlay()
+            }
             OverlayManager.setNotificationModeToggleCallback {
                 serviceScope.launch {
-                    runtime.ringerExperimentExecutor.toggleSelected {
-                        OverlayManager.refreshStreamVolumes()
-                    }
+                    runtime.ringerExperimentExecutor.toggleProductionAlertMode()
                     OverlayManager.refreshStreamVolumes()
                 }
             }
@@ -452,6 +459,7 @@ open class OverlayForegroundService : Service() {
         OverlayManager.clearAppVolumeCallback()
         OverlayManager.clearVolumeTargetCallbacks()
         OverlayManager.clearPauseAmplyCallback()
+        OverlayManager.clearDndToggleCallback()
         OverlayManager.clearNotificationModeToggleCallback()
         OverlayManager.clearSystemStreamVolumeCallback()
     }

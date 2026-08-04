@@ -462,6 +462,7 @@ fun SettingsDashboard(
     )
     val hidePerAppVolumeControl by preferences.hidePerAppVolumeControl.collectAsState(initial = false)
     val hideStandDownButton by preferences.hideStandDownButton.collectAsState(initial = false)
+    val showDndButton by preferences.showDndButton.collectAsState(initial = false)
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
@@ -1181,6 +1182,21 @@ fun SettingsDashboard(
                                 checked = hidePerAppVolumeControl,
                                 onCheckedChange = { hidden ->
                                     scope.launch { preferences.setHidePerAppVolumeControl(hidden) }
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        SettingsPanel {
+                            OverlayPreferenceToggle(
+                                title = stringResource(com.agentkosticka.amply.R.string.pill_show_dnd),
+                                description = stringResource(com.agentkosticka.amply.R.string.pill_show_dnd_description),
+                                checked = showDndButton,
+                                onCheckedChange = { show ->
+                                    scope.launch { preferences.setShowDndButton(show) }
+                                    if (show && !runtime.dndController.hasPolicyAccess()) {
+                                        onNotificationPolicyClick()
+                                    }
                                 }
                             )
                         }

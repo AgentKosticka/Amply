@@ -8,6 +8,10 @@ import android.util.Log
 import com.agentkosticka.amply.audio.session.AudioSessionManager
 import com.agentkosticka.amply.audio.session.ForegroundVisitTracker
 import com.agentkosticka.amply.audio.ringer.RingerExperimentExecutor
+import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
+import com.agentkosticka.amply.audio.ringer.RingerKeyAdjustmentResult
+import com.agentkosticka.amply.audio.ringer.RingerKeyStepAction
+import com.agentkosticka.amply.audio.ringer.RingerKeyStepPolicy
 import com.agentkosticka.amply.audio.routing.SystemStreamSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.routing.VolumeTargetSessionController
@@ -23,6 +27,8 @@ import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.tutorial.TutorialCoordinator
 import com.agentkosticka.amply.update.AppUpdateChecker
+import com.agentkosticka.amply.dnd.AmplyDndController
+import com.agentkosticka.amply.dnd.DndOperationResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +57,7 @@ class AmplyRuntime(context: Context) {
     val runtimeHealth: StateFlow<RuntimeHealth> = _runtimeHealth.asStateFlow()
 
     val preferencesManager = PreferencesManager(appContext)
+    val dndController = AmplyDndController(appContext)
     internal val tutorialCoordinator = TutorialCoordinator(preferencesManager, runtimeScope)
     internal val updateChecker = AppUpdateChecker(appContext, preferencesManager)
     val shizukuRepository = ShizukuRepository(appContext)
@@ -87,6 +94,9 @@ class AmplyRuntime(context: Context) {
         runtimeScope.launch(Dispatchers.IO) {
             runCatching { preferencesManager.pruneStaleApps(automatic = true) }
                 .onFailure { Log.w(TAG, "Automatic stale-app cleanup failed", it) }
+        }
+        runtimeScope.launch {
+            preferencesManager.showDndButton.collect(dndController::setFeatureEnabled)
         }
         runtimeScope.launch {
             sessionState.collect { state ->
@@ -263,10 +273,10 @@ class AmplyRuntime(context: Context) {
         val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min)
         val clamped = index.coerceIn(min, max)
         val success = when {
-            canonical == VolumeTarget.NOTIFICATION -> runCatching {
-                ringerExperimentExecutor.setNotificationVolumeFromControl(clamped)
+            canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING -> runCatching {
+                ringerExperimentExecutor.setAlertVolumeFromControl(canonical.streamType, clamped)
             }.getOrDefault(false)
-            canonical.permanentlyVisible || canonical == VolumeTarget.RING -> runCatching {
+            canonical.permanentlyVisible -> runCatching {
                 audioManager.setStreamVolume(canonical.streamType, clamped, 0)
                 audioManager.getStreamVolume(canonical.streamType) == clamped
             }.getOrDefault(false)
@@ -278,5 +288,49 @@ class AmplyRuntime(context: Context) {
             disableSystemStream(canonical)
         }
         return success
+    }
+
+    fun adjustRingerKeyStep(
+        target: VolumeTarget,
+        isUp: Boolean,
+        currentVolume: Int,
+        minVolume: Int
+    ): RingerKeyAdjustmentResult {
+        if (target != VolumeTarget.RING && target != VolumeTarget.NOTIFICATION) {
+            return RingerKeyAdjustmentResult.NOT_HANDLED
+        }
+        val mode = NotificationAlertMode.resolve(audioManager.ringerMode, currentVolume, minVolume)
+        return when (
+            RingerKeyStepPolicy.action(
+                mode = mode,
+                isUp = isUp,
+                atMinimum = currentVolume <= minVolume,
+                dndActive = dndController.active.value,
+                dndAvailable = dndController.canUseVolumeKeyStep()
+            )
+        ) {
+            RingerKeyStepAction.ADJUST_VOLUME -> RingerKeyAdjustmentResult.NOT_HANDLED
+            RingerKeyStepAction.LIMIT -> RingerKeyAdjustmentResult.LIMIT
+            RingerKeyStepAction.ENABLE_DND -> dndController.setActive(true).toRingerResult()
+            RingerKeyStepAction.DISABLE_DND -> dndController.setActive(false).toRingerResult()
+            RingerKeyStepAction.TO_LOUD -> setAlertMode(target, NotificationAlertMode.LOUD)
+            RingerKeyStepAction.TO_VIBRATIONS -> setAlertMode(target, NotificationAlertMode.VIBRATIONS)
+            RingerKeyStepAction.TO_MUTED -> setAlertMode(target, NotificationAlertMode.MUTED)
+        }
+    }
+
+    private fun setAlertMode(target: VolumeTarget, mode: NotificationAlertMode): RingerKeyAdjustmentResult =
+        if (ringerExperimentExecutor.setProductionAlertMode(mode, target.streamType)) {
+            RingerKeyAdjustmentResult.APPLIED
+        } else {
+            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
+            RingerKeyAdjustmentResult.FAILED
+        }
+
+    private fun DndOperationResult.toRingerResult(): RingerKeyAdjustmentResult = when (this) {
+        DndOperationResult.APPLIED -> RingerKeyAdjustmentResult.APPLIED
+        DndOperationResult.ACCESS_REQUIRED,
+        DndOperationResult.FEATURE_DISABLED,
+        DndOperationResult.FAILED -> RingerKeyAdjustmentResult.FAILED
     }
 }

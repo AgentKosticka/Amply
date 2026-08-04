@@ -46,6 +46,7 @@ class PreferencesManager(private val context: Context) {
             booleanPreferencesKey("disable_shizuku_disconnected_warning")
         private val HIDE_PER_APP_VOLUME_CONTROL = booleanPreferencesKey("hide_per_app_volume_control")
         private val HIDE_STAND_DOWN_BUTTON = booleanPreferencesKey("hide_stand_down_button")
+        private val SHOW_DND_BUTTON = booleanPreferencesKey("show_dnd_button")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
         private val LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS =
             longPreferencesKey("last_successful_update_check_epoch_ms")
@@ -207,6 +208,13 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setHideStandDownButton(hidden: Boolean): SettingsOperationResult =
         editSettings { it[HIDE_STAND_DOWN_BUTTON] = hidden }
+
+    val showDndButton: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[SHOW_DND_BUTTON] ?: false
+    }
+
+    suspend fun setShowDndButton(show: Boolean): SettingsOperationResult =
+        editSettings { it[SHOW_DND_BUTTON] = show }
 
     suspend fun setAmplyPauseDuration(duration: AmplyPauseDuration): SettingsOperationResult =
         editSettings { it[AMPLY_PAUSE_DURATION] = duration.name }
@@ -443,6 +451,7 @@ class PreferencesManager(private val context: Context) {
             )
             .put("hidePerAppVolumeControl", preferences[HIDE_PER_APP_VOLUME_CONTROL] ?: false)
             .put("hideStandDownButton", preferences[HIDE_STAND_DOWN_BUTTON] ?: false)
+            .put("showDndButton", preferences[SHOW_DND_BUTTON] ?: false)
             .put("standDownPackages", JSONArray(passThrough.sorted()))
             .put(
                 "appOverlayOrder",
@@ -501,6 +510,7 @@ class PreferencesManager(private val context: Context) {
                     imported.disableShizukuDisconnectedWarning
                 preferences[HIDE_PER_APP_VOLUME_CONTROL] = imported.hidePerAppVolumeControl
                 preferences[HIDE_STAND_DOWN_BUTTON] = imported.hideStandDownButton
+                preferences[SHOW_DND_BUTTON] = imported.showDndButton
                 val existingPackages = decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
                     ?: AppSettingsCodec.legacyPassThroughPackages(
                         preferences[APP_SETTINGS_JSON_V2] ?: preferences[APP_SETTINGS_JSON]
@@ -533,6 +543,7 @@ class PreferencesManager(private val context: Context) {
         val disableShizukuDisconnectedWarning: Boolean,
         val hidePerAppVolumeControl: Boolean,
         val hideStandDownButton: Boolean,
+        val showDndButton: Boolean,
         val appOverlayOrder: List<AppIdentity>,
         val standDownPackages: Set<String>
     )
@@ -598,6 +609,11 @@ class PreferencesManager(private val context: Context) {
             "hideStandDownButton",
             "Invalid Stand-Down button visibility setting"
         )
+        val showDndButton = optionalBoolean(
+            root,
+            "showDndButton",
+            "Invalid Do Not Disturb button visibility setting"
+        )
         val standDown = linkedSetOf<String>()
         val appOverlayOrder = mutableListOf<AppIdentity>()
         val seenOrderedApps = mutableSetOf<AppIdentity>()
@@ -645,6 +661,7 @@ class PreferencesManager(private val context: Context) {
             disableShizukuDisconnectedWarning = warningDisabled,
             hidePerAppVolumeControl = hidePerAppVolumeControl,
             hideStandDownButton = hideStandDownButton,
+            showDndButton = showDndButton,
             appOverlayOrder = appOverlayOrder,
             standDownPackages = standDown
         )

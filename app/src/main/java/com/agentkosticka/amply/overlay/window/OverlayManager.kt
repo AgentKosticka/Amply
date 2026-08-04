@@ -113,6 +113,8 @@ object OverlayManager {
     private val showShizukuDisconnectedWarning = mutableStateOf(true)
     private val showPerAppVolumeControl = mutableStateOf(true)
     private val showStandDownButton = mutableStateOf(true)
+    private val showDndButton = mutableStateOf(false)
+    private val dndActive = mutableStateOf(false)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -121,6 +123,7 @@ object OverlayManager {
     private var onOverlayHiddenCallback: (() -> Unit)? = null
     private var onTutorialPreviewFinishedCallback: (() -> Unit)? = null
     private var onPauseAmplyCallback: (() -> Unit)? = null
+    private var onDndToggleCallback: (() -> Unit)? = null
     private var onNotificationModeToggleCallback: (() -> Unit)? = null
     private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
     private var onRemoteMediaVolumeChangeCallback: ((Long, Int) -> Boolean)? = null
@@ -211,6 +214,14 @@ object OverlayManager {
         onPauseAmplyCallback = null
     }
 
+    fun setDndToggleCallback(callback: () -> Unit) {
+        onDndToggleCallback = callback
+    }
+
+    fun clearDndToggleCallback() {
+        onDndToggleCallback = null
+    }
+
     fun setNotificationModeToggleCallback(callback: () -> Unit) {
         onNotificationModeToggleCallback = callback
     }
@@ -268,6 +279,16 @@ object OverlayManager {
         if (showStandDownButton.value == enabled) return
         showStandDownButton.value = enabled
         overlayContainer?.context?.let(::updateOverlayPosition)
+    }
+
+    fun updateDndButtonEnabled(enabled: Boolean) {
+        if (showDndButton.value == enabled) return
+        showDndButton.value = enabled
+        overlayContainer?.context?.let(::updateOverlayPosition)
+    }
+
+    fun updateDndActive(active: Boolean) {
+        dndActive.value = active
     }
 
     /**
@@ -445,6 +466,8 @@ object OverlayManager {
                     shizukuIcon = shizukuIcon.value,
                     showShizukuDisconnectedWarning = showShizukuDisconnectedWarning.value,
                     showStandDownButton = showStandDownButton.value,
+                    showDndButton = showDndButton.value,
+                    dndActive = dndActive.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
                     onStreamVolumeChange = { streamType, newVolume ->
@@ -486,6 +509,9 @@ object OverlayManager {
                     onPauseAmply = {
                         onPauseAmplyCallback?.invoke()
                         hide()
+                    },
+                    onDndToggle = {
+                        onDndToggleCallback?.invoke()
                     },
                     onDismissRequest = {
                         hide()
@@ -912,7 +938,7 @@ object OverlayManager {
     private fun WindowManager.LayoutParams.applyPosition(context: Context): WindowManager.LayoutParams {
         val margin = (16 * context.resources.displayMetrics.density).toInt()
         val baseOverlayHeight = (BASE_OVERLAY_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
-        val pauseControlSlotHeight = if (showStandDownButton.value) {
+        val pauseControlSlotHeight = if (showStandDownButton.value || showDndButton.value) {
             (PAUSE_CONTROL_SLOT_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
         } else {
             0

@@ -132,19 +132,59 @@ class RingerExperimentExecutor(
         activePlaybackUsages = usages
     }
 
-    fun setNotificationVolumeFromControl(volume: Int): Boolean {
-        val min = audioManager.getStreamMinVolume(AudioManager.STREAM_NOTIFICATION)
-        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
+    fun setNotificationVolumeFromControl(volume: Int): Boolean =
+        setAlertVolumeFromControl(AudioManager.STREAM_NOTIFICATION, volume)
+
+    fun setAlertVolumeFromControl(streamType: Int, volume: Int): Boolean {
+        require(streamType == AudioManager.STREAM_NOTIFICATION || streamType == AudioManager.STREAM_RING)
+        val min = audioManager.getStreamMinVolume(streamType)
+        val max = audioManager.getStreamMaxVolume(streamType)
         val clamped = volume.coerceIn(min, max)
-        audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, clamped, 0)
+        audioManager.setStreamVolume(streamType, clamped, 0)
         val target = NotificationModePolicy.targetForVolume(clamped, min)
         if (target == NotificationAlertMode.LOUD) {
             lastAudibleNotificationVolume = clamped
         }
-        runCatching { audioManager.ringerMode = target.toRingerMode() }
+        if (!setProductionAlertMode(target, streamType)) return false
+        audioManager.setStreamVolume(streamType, clamped, 0)
         refresh()
-        return audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION) == clamped
+        return audioManager.getStreamVolume(streamType) == clamped &&
+            NotificationAlertMode.resolve(audioManager.ringerMode, clamped, min) == target
     }
+
+    /** Fixed production controller used by the overlay and hardware-key state ladder. */
+    fun setProductionAlertMode(target: NotificationAlertMode, streamType: Int): Boolean {
+        val restoreVolume = audibleRestore()
+        val privilegedApplied = if (
+            shizukuVolumeManager.connectionState.value == VolumeServiceConnectionState.CONNECTED
+        ) {
+            shizukuVolumeManager.applyRingerExperiment(
+                RingerExperimentMethod.SHIZUKU_INTERNAL_MODE.number,
+                target.ordinal,
+                restoreVolume
+            )?.let { it > 0 } == true
+        } else {
+            false
+        }
+        if (!privilegedApplied) {
+            runCatching { audioManager.ringerMode = target.toRingerMode() }
+                .getOrElse { return false }
+        }
+        if (target == NotificationAlertMode.LOUD) {
+            val min = audioManager.getStreamMinVolume(streamType)
+            val max = audioManager.getStreamMaxVolume(streamType)
+            val restored = restoreVolume.coerceIn((min + 1).coerceAtMost(max), max)
+            runCatching { audioManager.setStreamVolume(streamType, restored, 0) }
+                .getOrElse { return false }
+        }
+        val observed = refresh().mode
+        return observed == target
+    }
+
+    fun toggleProductionAlertMode(): Boolean = setProductionAlertMode(
+        target = NotificationModePolicy.iconTarget(refresh().mode),
+        streamType = AudioManager.STREAM_NOTIFICATION
+    )
 
     fun refresh(): RingerExperimentSnapshot {
         val current = snapshotNow()
