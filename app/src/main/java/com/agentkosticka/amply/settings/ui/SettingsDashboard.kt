@@ -639,17 +639,23 @@ fun SettingsDashboard(
             viewportEnd = layoutInfo.viewportEndOffset
         )
         val visualCenter = visualTop + draggedInfo.size / 2f
-        val targetInfo = layoutInfo.visibleItemsInfo
-            .asSequence()
-            .filter { it.key is String && (it.key as String).startsWith("app-") }
-            .minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - visualCenter) }
-            ?: return
-        val targetIdentity = (targetInfo.key as? String)
-            ?.removePrefix("app-")
-            ?.let(AppIdentity::fromStorageKey)
-            ?: return
-        val toIndex = currentOrder.indexOf(targetIdentity)
-        if (toIndex >= 0 && toIndex != fromIndex) {
+        fun itemInfoAt(orderIndex: Int) = currentOrder.getOrNull(orderIndex)?.let { identity ->
+            layoutInfo.visibleItemsInfo.firstOrNull {
+                it.key == "app-${identity.storageKey}"
+            }
+        }
+        val previousInfo = itemInfoAt(fromIndex - 1)
+        val nextInfo = itemInfoAt(fromIndex + 1)
+        val toIndex = adjacentReorderTarget(
+            currentIndex = fromIndex,
+            lastIndex = currentOrder.lastIndex,
+            draggedCenter = visualCenter,
+            previousCenter = previousInfo?.let { it.offset + it.size / 2f },
+            nextCenter = nextInfo?.let { it.offset + it.size / 2f }
+        )
+        if (toIndex != fromIndex) {
+            val targetInfo = (if (toIndex < fromIndex) previousInfo else nextInfo)
+                ?: return
             transientAppOrder = moveAppIdentity(currentOrder, fromIndex, toIndex)
             reorderMotion.expectedLazyIndex = targetInfo.index
             hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -898,12 +904,9 @@ fun SettingsDashboard(
                                     val edgeIntensity = (edgeDepth / edge).coerceIn(0f, 1f)
                                     val speedDpPerSecond =
                                         180f + 720f * edgeIntensity * edgeIntensity
-                                    val currentOrder = transientAppOrder ?: knownApps.map { it.identity }
-                                    val draggedIndex = currentOrder.indexOf(app.identity)
                                     reorderAutoScroll.direction = when {
                                         requestedScrollDirection < 0f -> -1f
-                                        requestedScrollDirection > 0f &&
-                                            draggedIndex in 0 until currentOrder.lastIndex -> 1f
+                                        requestedScrollDirection > 0f -> 1f
                                         else -> 0f
                                     }
                                     reorderAutoScroll.velocityPxPerSecond =
@@ -926,23 +929,46 @@ fun SettingsDashboard(
                                                             1_000_000_000f
                                                         ).coerceIn(1f / 240f, 1f / 30f)
                                                     previousFrameNanos = frameNanos
-                                                    val consumed = scrollBy(
+                                                    val currentOrder = transientAppOrder
+                                                        ?: knownApps.map { it.identity }
+                                                    val currentIndex = currentOrder.indexOf(app.identity)
+                                                    val currentLayout = appsListState.layoutInfo
+                                                    val currentInfo = currentLayout.visibleItemsInfo
+                                                        .firstOrNull {
+                                                            it.key == "app-${app.identity.storageKey}"
+                                                        }
+                                                    var frameScroll =
                                                         reorderAutoScroll.velocityPxPerSecond *
                                                             elapsedSeconds
+                                                    frameScroll = capReorderEdgeScrollDelta(
+                                                        requestedDelta = frameScroll,
+                                                        draggedOrderIndex = currentIndex,
+                                                        lastOrderIndex = currentOrder.lastIndex,
+                                                        renderedLazyIndex = currentInfo?.index,
+                                                        expectedLazyIndex =
+                                                            reorderMotion.expectedLazyIndex,
+                                                        itemOffset = currentInfo?.offset,
+                                                        itemSize = currentInfo?.size
+                                                            ?: reorderMotion.itemSize,
+                                                        viewportStart =
+                                                            currentLayout.viewportStartOffset,
+                                                        viewportEnd =
+                                                            currentLayout.viewportEndOffset
                                                     )
-                                                    updateDraggedAppPosition()
-                                                    updateDraggedOverlayPosition()
-                                                    val latestOrder = transientAppOrder
-                                                        ?: knownApps.map { it.identity }
-                                                    val latestIndex = latestOrder.indexOf(app.identity)
-                                                    if (
-                                                        reorderAutoScroll.direction > 0f &&
-                                                        latestIndex >= latestOrder.lastIndex
-                                                    ) {
+                                                    if (frameScroll == 0f) {
                                                         reorderAutoScroll.direction = 0f
+                                                        reorderAutoScroll.velocityPxPerSecond = 0f
                                                         break
                                                     }
-                                                    if (kotlin.math.abs(consumed) < 0.5f) break
+
+                                                    val consumed = scrollBy(frameScroll)
+                                                    updateDraggedAppPosition()
+                                                    updateDraggedOverlayPosition()
+                                                    if (kotlin.math.abs(consumed) < 0.5f) {
+                                                        reorderAutoScroll.direction = 0f
+                                                        reorderAutoScroll.velocityPxPerSecond = 0f
+                                                        break
+                                                    }
                                                 }
                                             }
                                         }
