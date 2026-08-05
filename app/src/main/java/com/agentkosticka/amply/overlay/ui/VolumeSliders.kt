@@ -58,11 +58,11 @@ fun DraggableDotSlider(
             animationSpec = keyframes {
                 durationMillis = 230
                 0f at 0
-                1f at 35
+                -1f at 35
                 1f at 75
-                0.75f at 115
+                -0.75f at 115
                 0.55f at 155
-                0.25f at 195
+                -0.25f at 195
                 0f at 230
             }
         )
