@@ -275,13 +275,14 @@ private fun StreamVolumeColumn(
         percentageBoundaryShake.animateTo(
             targetValue = 0f,
             animationSpec = keyframes {
-                durationMillis = 260
+                durationMillis = 230
                 0f at 0
-                -1f at 40
-                1f at 90
-                -0.6f at 140
-                0.35f at 185
-                0f at 260
+                -1f at 35
+                1f at 75
+                -0.75f at 115
+                0.55f at 155
+                -0.25f at 195
+                0f at 230
             }
         )
     }
