@@ -293,6 +293,8 @@ open class OverlayForegroundService : Service() {
                 onTutorialPreviewFinished = runtime::onTutorialOverlayPreviewFinished
             )
             OverlayManager.setSystemStreamVolumeCallback(runtime::setSystemStreamVolume)
+            OverlayManager.setSystemStreamVolumeFloatCallback(runtime::setSystemStreamVolumeFloat)
+            OverlayManager.setGetSystemStreamVolumeFloatCallback(runtime::getSystemStreamVolumeFloat)
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
             }
@@ -463,5 +465,7 @@ open class OverlayForegroundService : Service() {
         OverlayManager.clearDndToggleCallback()
         OverlayManager.clearNotificationModeToggleCallback()
         OverlayManager.clearSystemStreamVolumeCallback()
+        OverlayManager.clearSystemStreamVolumeFloatCallback()
+        OverlayManager.clearGetSystemStreamVolumeFloatCallback()
     }
 }

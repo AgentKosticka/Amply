@@ -87,6 +87,7 @@ internal fun MainVolumePill(
     keepMediaAtEnd: Boolean,
     iconType: String,
     onStreamVolumeChange: (Int, Int) -> Unit,
+    onStreamVolumeFloatChange: ((Int, Float) -> Unit)? = null,
     onStreamSelected: (VolumeTarget) -> Unit,
     onMuteToggle: (Int) -> Unit,
     onExpandToggle: () -> Unit,
@@ -177,6 +178,16 @@ internal fun MainVolumePill(
                         onInteraction()
                         onStreamVolumeChange(stream.target.streamType, newVolume)
                     },
+                    onVolumeFloatChange = if (onStreamVolumeFloatChange != null) {
+                        { newFloat ->
+                            if (isExpanded) {
+                                onStreamSelected(stream.target)
+                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onInteraction()
+                            onStreamVolumeFloatChange(stream.target.streamType, newFloat)
+                        }
+                    } else null,
                     onMuteToggle = {
                         if (isExpanded) {
                             onStreamSelected(stream.target)
@@ -243,7 +254,8 @@ private fun StreamVolumeColumn(
     iconType: String,
     limitFeedback: VolumeLimitFeedback?,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    onVolumeFloatChange: ((Float) -> Unit)? = null
 ) {
     val percentageBoundaryShake = remember { Animatable(0f) }
     val usesPercentageBoundaryFeedback = VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(
@@ -263,19 +275,19 @@ private fun StreamVolumeColumn(
         percentageBoundaryShake.animateTo(
             targetValue = 0f,
             animationSpec = keyframes {
-                durationMillis = 230
+                durationMillis = 260
                 0f at 0
-                1f at 35
-                1f at 75
-                0.75f at 115
-                0.55f at 155
-                0.25f at 195
-                0f at 230
+                -1f at 40
+                1f at 90
+                -0.6f at 140
+                0.35f at 185
+                0f at 260
             }
         )
     }
+    val currentVolFloat = stream.currentVolumeFloat ?: stream.currentVolume.toFloat()
     val displayedPercentage = if (stream.maxVolume > 0) {
-        ((stream.currentVolume.toFloat() / stream.maxVolume.toFloat()) * 100f)
+        ((currentVolFloat / stream.maxVolume.toFloat()) * 100f)
             .roundToInt()
             .coerceIn(0, 100)
     } else {
@@ -305,7 +317,7 @@ private fun StreamVolumeColumn(
             when {
                 isMediaStream -> MediaAlertIcon(
                     route = iconType,
-                    muted = stream.currentVolume <= stream.minVolume,
+                    muted = (stream.currentVolumeFloat ?: stream.currentVolume.toFloat()) <= 0f,
                     label = stream.label
                 )
 
@@ -348,11 +360,13 @@ private fun StreamVolumeColumn(
 
         DraggableDotSlider(
             currentVolume = stream.currentVolume,
+            currentVolumeFloat = stream.currentVolumeFloat,
             minVolume = stream.minVolume,
             maxVolume = stream.maxVolume,
             referenceMaxVolume = stream.referenceMaxVolume,
             dotCount = stream.dotCount,
             onVolumeChange = onVolumeChange,
+            onVolumeFloatChange = onVolumeFloatChange,
             enabled = enabled,
             // Input stops immediately when a stream begins collapsing, but its dots
             // keep their enabled colors while the parent column fades away.

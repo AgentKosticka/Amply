@@ -17,7 +17,8 @@ data class VolumeBarModel(
     val referenceMaxVolume: Int = maxVolume.coerceAtLeast(1),
     val dotCount: Int = 16,
     val combinedRinger: Boolean = false,
-    val notificationAlertMode: NotificationAlertMode? = null
+    val notificationAlertMode: NotificationAlertMode? = null,
+    val currentVolumeFloat: Float? = null
 )
 
 /**
@@ -29,6 +30,10 @@ object VolumeDotScale {
         ((current.coerceAtLeast(0).toFloat() / referenceMax.coerceAtLeast(1)) * dotCount)
             .roundToInt()
             .coerceIn(0, dotCount)
+
+    fun displayLevelFloat(currentFloat: Float, referenceMax: Int, dotCount: Int): Float =
+        ((currentFloat.coerceAtLeast(0f) / referenceMax.coerceAtLeast(1)) * dotCount)
+            .coerceIn(0f, dotCount.toFloat())
 
     fun levelForFraction(
         fraction: Float,

@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
 class AmplyRuntime(context: Context) {
@@ -300,6 +301,53 @@ class AmplyRuntime(context: Context) {
             }
         }
         return success
+    }
+
+    fun setSystemStreamVolumeFloat(target: VolumeTarget, gain: Float): Boolean {
+        val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
+        if (!canonical.userAdjustable) {
+            disableSystemStream(canonical)
+            return false
+        }
+        val min = runCatching { audioManager.getStreamMinVolume(canonical.streamType) }.getOrDefault(0).toFloat()
+        val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min.toInt()).toFloat()
+        val clamped = gain.coerceIn(min, max)
+
+        if (canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) {
+            if (dndController.active.value) {
+                dndController.setActive(false)
+            }
+        }
+
+        val connectionState = shizukuVolumeManager.connectionState.value
+        android.util.Log.d("AmplyRuntime", "setSystemStreamVolumeFloat: stream=${canonical.streamType} gain=$clamped shizuku=$connectionState")
+
+        val success = if (connectionState == VolumeServiceConnectionState.CONNECTED) {
+            shizukuVolumeManager.setSystemStreamVolumeFloat(canonical.streamType, clamped)
+        } else {
+            val intIndex = clamped.roundToInt()
+            android.util.Log.w("AmplyRuntime", "setSystemStreamVolumeFloat: Shizuku not connected ($connectionState), falling back to integer=$intIndex")
+            runCatching {
+                audioManager.setStreamVolume(canonical.streamType, intIndex, 0)
+                true
+            }.getOrDefault(false)
+        }
+
+        reportVolumeOperation(success)
+        if (!success) {
+            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
+            if (!canonical.permanentlyVisible) {
+                disableSystemStream(canonical)
+            }
+        }
+        return success
+    }
+
+    fun getSystemStreamVolumeFloat(streamType: Int): Float? {
+        if (shizukuVolumeManager.connectionState.value == VolumeServiceConnectionState.CONNECTED) {
+            return shizukuVolumeManager.getSystemStreamVolumeFloat(streamType)
+        }
+        return null
     }
 
     fun adjustRingerKeyStep(

@@ -108,6 +108,7 @@ fun VolumeOverlay(
     initiallyExpanded: Boolean = false,
     expanded: Boolean? = null,
     onStreamVolumeChange: (Int, Int) -> Unit = { _, _ -> },
+    onStreamVolumeFloatChange: ((Int, Float) -> Unit)? = null,
     onStreamSelected: (VolumeTarget) -> Unit = {},
     onAppVolumeChange: (AppVolumeTarget, Float) -> Unit = { _, _ -> },
     onMuteToggle: (Int) -> Unit = {},
@@ -310,6 +311,7 @@ fun VolumeOverlay(
                 onStreamVolumeChange = { streamType, newVolume ->
                     onStreamVolumeChange(streamType, newVolume)
                 },
+                onStreamVolumeFloatChange = onStreamVolumeFloatChange,
                 onStreamSelected = onStreamSelected,
                 onMuteToggle = onMuteToggle,
                 onExpandToggle = {

@@ -118,6 +118,14 @@ class SystemStreamsTest {
         assertTrue(VolumeDotScale.isLevelAvailable(15, min = 1, max = 15, referenceMax = 16, dotCount = 16))
     }
 
+    @Test
+    fun floatDotScaleCalculatesPartialLevelsCorrectly() {
+        assertEquals(8.5f, VolumeDotScale.displayLevelFloat(8.5f, referenceMax = 16, dotCount = 16), 0.001f)
+        assertEquals(0.3f, VolumeDotScale.displayLevelFloat(0.3f, referenceMax = 16, dotCount = 16), 0.001f)
+        assertEquals(0f, VolumeDotScale.displayLevelFloat(0f, referenceMax = 16, dotCount = 16), 0.001f)
+        assertEquals(16f, VolumeDotScale.displayLevelFloat(16f, referenceMax = 16, dotCount = 16), 0.001f)
+    }
+
     @Test fun adaptiveDotScalePreservesNativeRangeAndProjectsBlockedEndpoints() {
         assertEquals(15, VolumeDotScale.displayLevel(current = 30, referenceMax = 30, dotCount = 15))
         assertEquals(30, VolumeDotScale.levelForFraction(1f, min = 1, max = 30, referenceMax = 30))

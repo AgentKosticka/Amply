@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.shizuku.server
 
 import android.annotation.SuppressLint
+import android.media.AudioAttributes
 import android.media.AudioPlaybackConfiguration
 import android.media.AudioManager
 import android.os.Build
@@ -18,6 +19,7 @@ import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
 import com.agentkosticka.amply.shizuku.protocol.VolumeOperationStatus
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 import kotlin.system.exitProcess
 
 /**
@@ -57,6 +59,9 @@ open class VolumeUserService : IVolumeService.Stub() {
 
     // Store active configs for volume control
     private var lastConfigs: List<AudioPlaybackConfiguration> = emptyList()
+
+    // Cached float volume per stream — used when the OS has no native float API
+    private val lastAppliedStreamFloat = ConcurrentHashMap<Int, Float>()
 
     init {
         Log.d(TAG, "VolumeUserService created in process ${Process.myPid()}, uid ${Process.myUid()}")
@@ -115,6 +120,24 @@ open class VolumeUserService : IVolumeService.Stub() {
             audioServiceBinder = audioBinder
             audioServiceDeathRecipient = deathRecipient
             Log.d(TAG, "Found getActivePlaybackConfigurations method on IAudioService")
+
+            // Enumerate ALL AudioSystem methods to see what volume-related private methods exist
+            try {
+                val audioSystemClass = Class.forName("android.media.AudioSystem")
+                val asMethods = audioSystemClass.declaredMethods.filter { m ->
+                    m.name.contains("volume", ignoreCase = true) ||
+                        m.name.contains("stream", ignoreCase = true) ||
+                        m.parameterTypes.any { it == java.lang.Float.TYPE }
+                }
+                Log.d(TAG, "AudioSystem methods (${asMethods.size}):")
+                asMethods.forEach { m ->
+                    val params = m.parameterTypes.joinToString(", ") { it.simpleName }
+                    Log.d(TAG, "  ${m.name}($params): ${m.returnType.simpleName}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to inspect AudioSystem methods", e)
+            }
+
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize AudioService", e)
@@ -313,6 +336,129 @@ open class VolumeUserService : IVolumeService.Stub() {
             Log.e(TAG, "System stream update failed", e)
             OperationResultParcel.failure(STATUS_FAILED, "stream_volume_failed")
         }
+    }
+
+    @Synchronized
+    override fun setSystemStreamVolumeFloat(streamType: Int, gain: Float): OperationResultParcel {
+        Log.d(TAG, "setSystemStreamVolumeFloat: stream=$streamType gain=$gain")
+        if (streamType !in 0..11 || !gain.isFinite() || gain < 0f) {
+            return OperationResultParcel.failure(
+                VolumeOperationStatus.INVALID_ARGUMENT, "invalid_stream_volume_float"
+            )
+        }
+        if (streamType == VolumeTarget.ENFORCED_AUDIBLE.streamType) {
+            return OperationResultParcel.failure(STATUS_DENIED, "protected_stream")
+        }
+        val service: Any = audioService ?: run {
+            if (initializeAudioService()) audioService else null
+        } ?: return OperationResultParcel.failure(STATUS_UNAVAILABLE, "audio_service_unavailable")
+
+        // Strategy 1 — android.media.AudioSystem.setStreamVolume(int, float, int)
+        // This is the internal JNI bridge AudioService itself uses; it accepts a normalized
+        // float [0,1] and applies directly to the audio HAL, giving true sub-integer precision.
+        try {
+            val maxVol = (invokeAudioService(service, "getStreamMaxVolume", streamType) as? Number)
+                ?.toFloat()?.takeIf { it > 0f } ?: 15f
+            val normalizedGain = (gain / maxVol).coerceIn(0f, 1f)
+            val audioSystemClass = Class.forName("android.media.AudioSystem")
+            val method = audioSystemClass.getDeclaredMethod(
+                "setStreamVolume", Int::class.java, Float::class.java, Int::class.java
+            )
+            val rc = method.invoke(null, streamType, normalizedGain, 0) as? Int ?: -1
+            if (rc == 0) { // AudioSystem.SUCCESS
+                lastAppliedStreamFloat[streamType] = gain
+                Log.i(TAG, "setSystemStreamVolumeFloat: AudioSystem ok normalized=$normalizedGain")
+                return OperationResultParcel.success(verified = false)
+            }
+            Log.w(TAG, "setSystemStreamVolumeFloat: AudioSystem.setStreamVolume returned rc=$rc")
+        } catch (e: Exception) {
+            Log.w(TAG, "setSystemStreamVolumeFloat: AudioSystem.setStreamVolume unavailable: ${e.message}")
+        }
+
+        // Strategy 2 — set integer index to ceil(gain), then compensate with per-player
+        // gain multiplier applied to all active tracks on this stream.
+        // This achieves audible sub-integer precision without any float stream API.
+        val targetIndex = if (gain <= 0f) 0 else kotlin.math.ceil(gain.toDouble()).toInt()
+        val playerGain = if (targetIndex == 0) 0f else (gain / targetIndex.toFloat()).coerceIn(0f, 1f)
+        Log.d(TAG, "setSystemStreamVolumeFloat: fallback index=$targetIndex playerGain=$playerGain")
+        return try {
+            invokeCompatible(
+                service,
+                listOf("setStreamVolumeWithAttribution", "setStreamVolume"),
+                streamType, targetIndex, 0, "com.android.shell", null
+            )
+            applyPlayerGainForStream(streamType, playerGain)
+            lastAppliedStreamFloat[streamType] = gain
+            OperationResultParcel.success(verified = false)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "setSystemStreamVolumeFloat: denied", e)
+            OperationResultParcel.failure(STATUS_DENIED, "stream_volume_float_denied")
+        } catch (e: Exception) {
+            Log.e(TAG, "setSystemStreamVolumeFloat: all strategies failed", e)
+            OperationResultParcel.failure(STATUS_FAILED, "stream_volume_float_failed")
+        }
+    }
+
+    /** Applies [gain] (0..1 multiplier) to every active player on [streamType]. */
+    private fun applyPlayerGainForStream(streamType: Int, gain: Float) {
+        if (!reflectionInitialized) initializeReflection()
+        if (getActivePlaybackConfigsMethod == null) return
+        val service = audioService ?: return
+        try {
+            @Suppress("UNCHECKED_CAST")
+            val configs = getActivePlaybackConfigsMethod!!.invoke(service)
+                as? List<AudioPlaybackConfiguration> ?: return
+            Log.d(TAG, "applyPlayerGainForStream: stream=$streamType gain=$gain configs=${configs.size}")
+            for (config in configs) {
+                val configStream = getStreamTypeForConfig(config)
+                Log.d(TAG, "applyPlayerGainForStream: configStream=$configStream targetStream=$streamType")
+                if (configStream != null && configStream != streamType) continue
+                try {
+                    val ok = setVolumeForConfig(config, gain)
+                    Log.d(TAG, "applyPlayerGainForStream: setVolumeForConfig result=$ok gain=$gain")
+                } catch (e: Exception) {
+                    Log.w(TAG, "applyPlayerGainForStream: setVolume failed", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "applyPlayerGainForStream: failed to list configs", e)
+        }
+    }
+
+    private fun getStreamTypeForConfig(config: AudioPlaybackConfiguration): Int? {
+        return try {
+            val aa = config.audioAttributes ?: return null
+            val method = AudioAttributes::class.java.getMethod("toLegacyStreamType", AudioAttributes::class.java)
+            method.invoke(null, aa) as? Int
+        } catch (_: Exception) {
+            try {
+                val usage = config.audioAttributes?.usage ?: return null
+                when (usage) {
+                    AudioAttributes.USAGE_MEDIA, AudioAttributes.USAGE_GAME -> AudioManager.STREAM_MUSIC
+                    AudioAttributes.USAGE_VOICE_COMMUNICATION, AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING -> AudioManager.STREAM_VOICE_CALL
+                    AudioAttributes.USAGE_ALARM -> AudioManager.STREAM_ALARM
+                    AudioAttributes.USAGE_NOTIFICATION -> AudioManager.STREAM_NOTIFICATION
+                    AudioAttributes.USAGE_NOTIFICATION_RINGTONE -> AudioManager.STREAM_RING
+                    else -> AudioManager.STREAM_MUSIC
+                }
+            } catch (_: Exception) { null }
+        }
+    }
+
+    @Synchronized
+    override fun getSystemStreamVolumeFloat(streamType: Int): Float {
+        if (streamType !in 0..11) return -1f
+        // Return the cached float we last set — preserves sub-integer precision
+        // on devices with no native getStreamVolumeFloat API.
+        val cached = lastAppliedStreamFloat[streamType]
+        if (cached != null) return cached
+        // First call: fall back to the integer stream volume.
+        val service: Any = audioService ?: run {
+            if (initializeAudioService()) audioService else null
+        } ?: return -1f
+        return try {
+            (invokeAudioService(service, "getStreamVolume", streamType) as? Number)?.toFloat() ?: -1f
+        } catch (_: Exception) { -1f }
     }
 
     @Synchronized

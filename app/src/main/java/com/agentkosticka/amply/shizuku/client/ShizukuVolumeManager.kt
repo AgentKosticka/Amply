@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 
 internal val STABLE_VOLUME_USER_SERVICE_CLASS_NAME: String = VolumeUserService::class.java.name
-internal const val VOLUME_USER_SERVICE_VERSION = 5
+internal const val VOLUME_USER_SERVICE_VERSION = 11
 
 /** Manages the single process-wide connection to the privileged volume service. */
 class ShizukuVolumeManager(
@@ -318,6 +318,40 @@ class ShizukuVolumeManager(
             Log.e(TAG, "System stream update failed stream=$streamType", e)
             invalidateConnection("system-stream RPC failed: ${e.javaClass.simpleName}")
             false
+        }
+    }
+
+    fun setSystemStreamVolumeFloat(streamType: Int, gain: Float): Boolean {
+        if (streamType !in 0..11 || !gain.isFinite() || gain < 0f) {
+            Log.w(TAG, "setSystemStreamVolumeFloat: invalid args stream=$streamType gain=$gain")
+            return false
+        }
+        val service = synchronized(lock) { volumeService }
+        if (service == null) {
+            Log.w(TAG, "setSystemStreamVolumeFloat: no service (null) stream=$streamType")
+            return false
+        }
+        Log.d(TAG, "setSystemStreamVolumeFloat: calling IPC stream=$streamType gain=$gain service=${service.javaClass.simpleName}")
+        return try {
+            val result = service.setSystemStreamVolumeFloat(streamType, gain)
+            Log.d(TAG, "setSystemStreamVolumeFloat: IPC returned succeeded=${result.succeeded} status=${result.status}")
+            result.succeeded
+        } catch (e: Exception) {
+            Log.e(TAG, "Float stream update failed stream=$streamType gain=$gain", e)
+            invalidateConnection("float-stream RPC failed: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    fun getSystemStreamVolumeFloat(streamType: Int): Float? {
+        if (streamType !in 0..11) return null
+        val service = synchronized(lock) { volumeService } ?: return null
+        return try {
+            val res = service.getSystemStreamVolumeFloat(streamType)
+            if (res < 0f) null else res
+        } catch (e: Exception) {
+            Log.e(TAG, "Float stream query failed stream=$streamType", e)
+            null
         }
     }
 

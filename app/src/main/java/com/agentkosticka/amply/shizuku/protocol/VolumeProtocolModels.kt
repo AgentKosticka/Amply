@@ -3,11 +3,12 @@ package com.agentkosticka.amply.shizuku.protocol
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
 
-const val VOLUME_PROTOCOL_VERSION = 5
+const val VOLUME_PROTOCOL_VERSION = 6
 const val CAPABILITY_TYPED_PLAYBACKS = 1L shl 0
 const val CAPABILITY_VERIFIED_STREAM_VOLUME = 1L shl 1
+const val CAPABILITY_FLOAT_STREAM_VOLUME = 1L shl 2
 const val VOLUME_PROTOCOL_CAPABILITIES =
-    CAPABILITY_TYPED_PLAYBACKS or CAPABILITY_VERIFIED_STREAM_VOLUME
+    CAPABILITY_TYPED_PLAYBACKS or CAPABILITY_VERIFIED_STREAM_VOLUME or CAPABILITY_FLOAT_STREAM_VOLUME
 
 object VolumeOperationStatus {
     const val OK = 1
