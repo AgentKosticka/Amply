@@ -93,6 +93,13 @@ object OverlayManager {
     private var tutorialPreviewJob: Job? = null
     private var removeJob: Job? = null
     private var volumeObservationJob: Job? = null
+    private data class OptimisticVolumeState(
+        val volume: Int,
+        val alertMode: NotificationAlertMode? = null,
+        val timestampMs: Long = System.currentTimeMillis()
+    )
+    private val optimisticVolumes = java.util.concurrent.ConcurrentHashMap<Int, OptimisticVolumeState>()
+    private val OPTIMISTIC_SETTLING_WINDOW_MS = 600L
 
     // State - persists across hide/show cycles
     private val volumeBars = mutableStateOf<List<VolumeBarModel>>(emptyList())
@@ -712,17 +719,40 @@ object OverlayManager {
         routeState: MediaRouteVolumeState
     ): List<VolumeBarModel> {
         val ringerMode = if (templates.any { it.ringerControl }) manager.ringerMode else AudioManager.RINGER_MODE_NORMAL
+        val now = System.currentTimeMillis()
         return templates.map { template ->
-            val current = routeState.takeIf {
+            val systemVolume = routeState.takeIf {
                 template.target == VolumeTarget.MEDIA && it.isRemote && it.maxVolume > 0
             }?.currentVolume ?: runCatching {
                 manager.getStreamVolume(template.target.streamType)
             }.getOrDefault(0)
+
+            val optState = optimisticVolumes[template.target.streamType]
+            val effectiveVolume = if (optState != null) {
+                if (systemVolume == optState.volume || (now - optState.timestampMs) > OPTIMISTIC_SETTLING_WINDOW_MS) {
+                    optimisticVolumes.remove(template.target.streamType)
+                    systemVolume
+                } else {
+                    optState.volume
+                }
+            } else {
+                systemVolume
+            }
+
+            val systemAlertMode = if (template.ringerControl) {
+                NotificationAlertMode.resolve(ringerMode)
+            } else null
+            val effectiveAlertMode = if (optState?.alertMode != null && (now - optState.timestampMs) <= OPTIMISTIC_SETTLING_WINDOW_MS) {
+                optState.alertMode
+            } else {
+                systemAlertMode
+            }
+
             VolumeBarModel(
                 target = template.target,
                 aliases = template.aliases,
                 label = template.label,
-                currentVolume = current,
+                currentVolume = effectiveVolume,
                 minVolume = template.minVolume,
                 maxVolume = template.maxVolume,
                 active = template.target in state.activeTargets,
@@ -730,9 +760,7 @@ object OverlayManager {
                 referenceMaxVolume = template.referenceMaxVolume,
                 dotCount = template.dotCount,
                 combinedRinger = template.combinedRinger,
-                notificationAlertMode = if (template.ringerControl) {
-                    NotificationAlertMode.resolve(ringerMode)
-                } else null
+                notificationAlertMode = effectiveAlertMode
             )
         }
     }
@@ -754,6 +782,20 @@ object OverlayManager {
         }
     }
 
+    private fun applyOptimisticVolume(streamType: Int, volume: Int, alertMode: NotificationAlertMode?) {
+        val bars = volumeBars.value
+        val index = bars.indexOfFirst { streamType in it.aliases }
+        if (index < 0) return
+        val bar = bars[index]
+        val updated = bar.copy(
+            currentVolume = volume,
+            notificationAlertMode = alertMode ?: bar.notificationAlertMode
+        )
+        if (updated != bar) {
+            volumeBars.value = bars.toMutableList().apply { this[index] = updated }
+        }
+    }
+
     /**
      * Update a system stream from overlay interaction.
      */
@@ -771,9 +813,14 @@ object OverlayManager {
         }
         if (remoteMedia != null) {
             val clamped = newVolume.coerceIn(0, remoteMedia.maxVolume)
-            if (onRemoteMediaVolumeChangeCallback?.invoke(remoteMedia.generation, clamped) == true) {
+            optimisticVolumes[streamType] = OptimisticVolumeState(clamped)
+            applyOptimisticVolume(streamType, clamped, null)
+            val success = onRemoteMediaVolumeChangeCallback?.invoke(remoteMedia.generation, clamped) == true
+            if (success) {
                 mediaRouteVolumeState.value = remoteMedia.copy(currentVolume = clamped)
-                refreshSystemStreamVolume(streamType)
+            } else {
+                optimisticVolumes.remove(streamType)
+                refreshSystemStreamVolume(streamType, forceActual = true)
             }
             return
         }
@@ -782,13 +829,25 @@ object OverlayManager {
             manager.getStreamMaxVolume(streamType)
         )
         val target = VolumeTarget.findByStreamType(streamType) ?: return
-        onSystemStreamVolumeChangeCallback?.invoke(target, clampedVolume)
-            ?: runCatching { manager.setStreamVolume(streamType, clampedVolume, 0) }
-        refreshSystemStreamVolume(streamType)
+        val isRingerControl = target == VolumeTarget.NOTIFICATION || target == VolumeTarget.RING
+        val optAlertMode = if (isRingerControl && NotificationAlertMode.resolve(manager.ringerMode) == NotificationAlertMode.MUTED) {
+            NotificationAlertMode.LOUD
+        } else null
+
+        optimisticVolumes[streamType] = OptimisticVolumeState(clampedVolume, optAlertMode)
+        applyOptimisticVolume(streamType, clampedVolume, optAlertMode)
+
+        val applied = onSystemStreamVolumeChangeCallback?.invoke(target, clampedVolume)
+            ?: runCatching { manager.setStreamVolume(streamType, clampedVolume, 0); true }.getOrDefault(false)
+
+        if (!applied) {
+            optimisticVolumes.remove(streamType)
+            refreshSystemStreamVolume(streamType, forceActual = true)
+        }
     }
 
     /** Refresh only the model affected by a direct slider/icon interaction. */
-    private fun refreshSystemStreamVolume(streamType: Int) {
+    private fun refreshSystemStreamVolume(streamType: Int, forceActual: Boolean = false) {
         val manager = audioManager ?: return
         val bars = volumeBars.value
         val index = bars.indexOfFirst { streamType in it.aliases }
@@ -796,19 +855,44 @@ object OverlayManager {
 
         val bar = bars[index]
         val canonicalStream = bar.target.streamType
-        val current = mediaRouteVolumeState.value.takeIf {
+        val now = System.currentTimeMillis()
+        val optState = if (forceActual) {
+            optimisticVolumes.remove(canonicalStream)
+            null
+        } else {
+            optimisticVolumes[canonicalStream]
+        }
+
+        val systemVolume = mediaRouteVolumeState.value.takeIf {
             canonicalStream == AudioManager.STREAM_MUSIC && it.isControllableRemote
         }?.currentVolume ?: runCatching { manager.getStreamVolume(canonicalStream) }
             .getOrDefault(bar.currentVolume)
+
+        val current = if (optState != null) {
+            if (systemVolume == optState.volume || (now - optState.timestampMs) > OPTIMISTIC_SETTLING_WINDOW_MS) {
+                optimisticVolumes.remove(canonicalStream)
+                systemVolume
+            } else {
+                optState.volume
+            }
+        } else {
+            systemVolume
+        }
+
         val ringerControl = VolumeTarget.NOTIFICATION.streamType in bar.aliases ||
             VolumeTarget.RING.streamType in bar.aliases
+        val systemAlertMode = if (ringerControl) {
+            NotificationAlertMode.resolve(manager.ringerMode)
+        } else null
+        val effectiveAlertMode = if (optState?.alertMode != null && (now - optState.timestampMs) <= OPTIMISTIC_SETTLING_WINDOW_MS) {
+            optState.alertMode
+        } else {
+            systemAlertMode
+        }
+
         val updated = bar.copy(
             currentVolume = current,
-            notificationAlertMode = if (ringerControl) {
-                NotificationAlertMode.resolve(manager.ringerMode)
-            } else {
-                null
-            }
+            notificationAlertMode = effectiveAlertMode
         )
         if (updated == bar) return
 
