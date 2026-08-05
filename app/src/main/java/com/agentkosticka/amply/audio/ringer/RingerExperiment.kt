@@ -96,8 +96,14 @@ object NotificationModePolicy {
         if (current == NotificationAlertMode.MUTED) NotificationAlertMode.LOUD
         else NotificationAlertMode.MUTED
 
-    fun targetForVolume(volume: Int, minVolume: Int): NotificationAlertMode =
-        if (volume <= minVolume) NotificationAlertMode.VIBRATIONS else NotificationAlertMode.LOUD
+    fun targetForVolume(
+        volume: Int,
+        minVolume: Int,
+        currentMode: NotificationAlertMode = NotificationAlertMode.LOUD
+    ): NotificationAlertMode =
+        if (currentMode == NotificationAlertMode.MUTED) NotificationAlertMode.LOUD
+        else if (volume <= minVolume) NotificationAlertMode.VIBRATIONS
+        else NotificationAlertMode.LOUD
 }
 
 class RingerExperimentExecutor(
@@ -141,16 +147,20 @@ class RingerExperimentExecutor(
         val min = audioManager.getStreamMinVolume(streamType)
         val max = audioManager.getStreamMaxVolume(streamType)
         val clamped = volume.coerceIn(min, max)
-        audioManager.setStreamVolume(streamType, clamped, 0)
-        val target = NotificationModePolicy.targetForVolume(clamped, min)
+        val currentMode = NotificationAlertMode.resolve(audioManager.ringerMode)
+        val target = NotificationModePolicy.targetForVolume(clamped, min, currentMode)
+        val effectiveVolume = if (target == NotificationAlertMode.LOUD && clamped <= min) {
+            (min + 1).coerceAtMost(max)
+        } else {
+            clamped
+        }
         if (target == NotificationAlertMode.LOUD) {
-            lastAudibleNotificationVolume = clamped
+            lastAudibleNotificationVolume = effectiveVolume
         }
         if (!setProductionAlertMode(target, streamType)) return false
-        audioManager.setStreamVolume(streamType, clamped, 0)
+        audioManager.setStreamVolume(streamType, effectiveVolume, 0)
         refresh()
-        return audioManager.getStreamVolume(streamType) == clamped &&
-            NotificationAlertMode.resolve(audioManager.ringerMode) == target
+        return NotificationAlertMode.resolve(audioManager.ringerMode) == target
     }
 
     /** Fixed production controller used by the overlay and hardware-key state ladder. */

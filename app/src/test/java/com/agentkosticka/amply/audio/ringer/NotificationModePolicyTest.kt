@@ -23,6 +23,13 @@ class NotificationModePolicyTest {
     }
 
     @Test
+    fun `volume control in muted mode transitions to loud`() {
+        assertEquals(NotificationAlertMode.LOUD, NotificationModePolicy.targetForVolume(0, 0, NotificationAlertMode.MUTED))
+        assertEquals(NotificationAlertMode.LOUD, NotificationModePolicy.targetForVolume(2, 2, NotificationAlertMode.MUTED))
+        assertEquals(NotificationAlertMode.LOUD, NotificationModePolicy.targetForVolume(5, 2, NotificationAlertMode.MUTED))
+    }
+
+    @Test
     fun `compatibility check covers every directed mode transition`() {
         val expected = NotificationAlertMode.entries.flatMap { from ->
             NotificationAlertMode.entries.filter { it != from }.map { to -> from to to }

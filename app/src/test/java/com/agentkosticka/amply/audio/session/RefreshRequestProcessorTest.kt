@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.audio.session
 
 import kotlinx.coroutines.channels.Channel
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy

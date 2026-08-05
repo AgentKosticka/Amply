@@ -256,8 +256,12 @@ class AmplyRuntime(context: Context) {
     }
 
     fun disableSystemStream(target: VolumeTarget) {
-        systemStreamSessionController.disable(target)
-        volumeTargetSessionController.onTargetUnavailable(target)
+        val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
+        if (canonical.permanentlyVisible || canonical == VolumeTarget.RING || canonical == VolumeTarget.NOTIFICATION) {
+            return
+        }
+        systemStreamSessionController.disable(canonical)
+        volumeTargetSessionController.onTargetUnavailable(canonical)
         volumeTargetSessionController.onStreamsChanged(
             audioSessionManager.activeSystemStreams.value,
             systemStreamSessionController.state.value.disabledTargets
@@ -273,6 +277,11 @@ class AmplyRuntime(context: Context) {
         val min = runCatching { audioManager.getStreamMinVolume(canonical.streamType) }.getOrDefault(0)
         val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min)
         val clamped = index.coerceIn(min, max)
+        if (canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) {
+            if (dndController.active.value) {
+                dndController.setActive(false)
+            }
+        }
         val success = when {
             canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING -> runCatching {
                 ringerExperimentExecutor.setAlertVolumeFromControl(canonical.streamType, clamped)
@@ -286,7 +295,9 @@ class AmplyRuntime(context: Context) {
         reportVolumeOperation(success)
         if (!success) {
             reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
-            disableSystemStream(canonical)
+            if (!canonical.permanentlyVisible && canonical != VolumeTarget.RING && canonical != VolumeTarget.NOTIFICATION) {
+                disableSystemStream(canonical)
+            }
         }
         return success
     }
