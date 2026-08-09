@@ -43,12 +43,22 @@ class OverlayBenchmarkHostActivity : ComponentActivity() {
                 dotCount = 16
             )
         }
+        val sampleAppNames = listOf(
+            "Music",
+            "Podcasts",
+            "Game",
+            "Video",
+            "Radio",
+            "Audiobooks",
+            "Browser",
+            "Calls"
+        )
         val apps = List(appCount) { index ->
             OverlayAppPresentation(
                 target = AppVolumeTarget(
                     packageName = "benchmark.app.$index",
                     uid = 10_000 + index,
-                    appName = "Benchmark app ${index + 1}"
+                    appName = sampleAppNames[index]
                 ),
                 icon = null,
                 volume = 0.4f + index * 0.1f,
