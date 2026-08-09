@@ -1,3 +1,6 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.parcelize)
@@ -19,6 +22,22 @@ val signingEnvironment = listOf(
 ).associateWith { providers.environmentVariable(it).orNull }
 val releaseSigningConfigured = signingEnvironment.values.none { value -> value.isNullOrBlank() }
 
+val versionedReleaseRequested = gradle.startParameter.taskNames.any { requestedTask ->
+    requestedTask.substringAfterLast(':') == "versionedRelease"
+}
+val versionCodeLine = Regex("""(?m)^(\s*versionCode\s*=\s*)(\d+)(\s*)$""")
+val versionNameLine = Regex("""(?m)^(\s*versionName\s*=\s*)"(\d+)\.(\d+)\.(\d+)"(\s*)$""")
+val declaredBuildScript = project.buildFile.readText()
+val declaredVersionCode = versionCodeLine.find(declaredBuildScript)?.groupValues?.get(2)?.toInt()
+    ?: error("Could not read versionCode from app/build.gradle.kts")
+val declaredVersionMatch = versionNameLine.find(declaredBuildScript)
+    ?: error("Could not read semantic versionName from app/build.gradle.kts")
+val declaredVersionName = declaredVersionMatch.groupValues.let { "${it[2]}.${it[3]}.${it[4]}" }
+val nextVersionCode = declaredVersionCode + 1
+val nextVersionName = declaredVersionMatch.groupValues.let {
+    "${it[2]}.${it[3]}.${it[4].toInt() + 1}"
+}
+
 android {
     namespace = "com.agentkosticka.amply"
     compileSdk = 37
@@ -27,8 +46,12 @@ android {
         applicationId = "com.agentkosticka.amply"
         minSdk = 29
         targetSdk = amplyTargetSdk
-        versionCode = 45
-        versionName = "1.2.27"
+        versionCode = 46
+        versionName = "1.2.28"
+        if (versionedReleaseRequested) {
+            versionCode = nextVersionCode
+            versionName = nextVersionName
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -82,6 +105,44 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+tasks.register("versionedRelease") {
+    group = "build"
+    description = "Builds release with the next code and patch version, then persists that version."
+    dependsOn("assembleRelease")
+    doNotTrackState("This task intentionally updates app/build.gradle.kts after a successful build.")
+    doLast {
+        val buildScriptFile = project.buildFile
+        val currentText = buildScriptFile.readText()
+        val currentCode = versionCodeLine.find(currentText)?.groupValues?.get(2)?.toInt()
+        val currentNameMatch = versionNameLine.find(currentText)
+        val currentName = currentNameMatch?.groupValues?.let { "${it[2]}.${it[3]}.${it[4]}" }
+        check(currentCode == declaredVersionCode && currentName == declaredVersionName) {
+            "Version changed while the release was building; refusing to overwrite app/build.gradle.kts."
+        }
+
+        val currentCodeMatch = checkNotNull(versionCodeLine.find(currentText))
+        val withNextCode = currentText.replaceRange(
+            currentCodeMatch.range,
+            "${currentCodeMatch.groupValues[1]}$nextVersionCode${currentCodeMatch.groupValues[3]}"
+        )
+        val currentNameRange = checkNotNull(versionNameLine.find(withNextCode))
+        val withNextVersion = withNextCode.replaceRange(
+            currentNameRange.range,
+            "${currentNameRange.groupValues[1]}\"$nextVersionName\"${currentNameRange.groupValues[5]}"
+        )
+        val temporaryFile = buildScriptFile.resolveSibling("${buildScriptFile.name}.version-update")
+        temporaryFile.writeText(withNextVersion)
+        Files.move(
+            temporaryFile.toPath(),
+            buildScriptFile.toPath(),
+            StandardCopyOption.REPLACE_EXISTING
+        )
+        logger.lifecycle(
+            "Built and recorded Amply version $nextVersionName (versionCode $nextVersionCode)."
+        )
     }
 }
 

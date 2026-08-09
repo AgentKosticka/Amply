@@ -176,6 +176,17 @@ Imports are validated before anything is committed. Oversized files, malformed a
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
 ```
 
+For a release build that automatically advances both `versionCode` and the patch part of
+`versionName`, use:
+
+```bash
+./gradlew :app:versionedRelease
+```
+
+For example, `45` / `1.2.27` is built as `46` / `1.2.28`. The two values in
+`app/build.gradle.kts` are updated only after the release build succeeds. Normal debug,
+test, CI, and `assembleRelease` runs never consume a version number.
+
 Production builds target Android API 36. A build-only Android 17/API 37 compatibility build can be created with:
 
 ```bash
