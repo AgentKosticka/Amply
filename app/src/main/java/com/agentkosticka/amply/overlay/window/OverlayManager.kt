@@ -119,6 +119,7 @@ object OverlayManager {
     private val shizukuIcon = mutableStateOf<Bitmap?>(null)
     private val showShizukuDisconnectedWarning = mutableStateOf(true)
     private val showPerAppVolumeControl = mutableStateOf(true)
+    private val showAppProfileIdentity = mutableStateOf(false)
     private val showStandDownButton = mutableStateOf(true)
     private val showDndButton = mutableStateOf(false)
     private val dndActive = mutableStateOf(false)
@@ -280,6 +281,10 @@ object OverlayManager {
 
     fun updatePerAppVolumeControlEnabled(enabled: Boolean) {
         showPerAppVolumeControl.value = enabled
+    }
+
+    fun updateAppProfileIdentityVisible(visible: Boolean) {
+        showAppProfileIdentity.value = visible
     }
 
     fun updateStandDownButtonEnabled(enabled: Boolean) {
@@ -472,6 +477,7 @@ object OverlayManager {
                     shizukuConnectionState = shizukuConnectionState.value,
                     shizukuIcon = shizukuIcon.value,
                     showShizukuDisconnectedWarning = showShizukuDisconnectedWarning.value,
+                    showAppProfileIdentity = showAppProfileIdentity.value,
                     showStandDownButton = showStandDownButton.value,
                     showDndButton = showDndButton.value,
                     dndActive = dndActive.value,

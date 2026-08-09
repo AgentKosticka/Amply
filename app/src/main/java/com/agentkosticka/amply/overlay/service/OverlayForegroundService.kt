@@ -210,6 +210,11 @@ open class OverlayForegroundService : Service() {
                     }
                 },
                 serviceScope.launch {
+                    preferences.hideAppProfileIdentity.collect { hidden ->
+                        OverlayManager.updateAppProfileIdentityVisible(!hidden)
+                    }
+                },
+                serviceScope.launch {
                     preferences.hideStandDownButton.collect { hidden ->
                         OverlayManager.updateStandDownButtonEnabled(!hidden)
                     }

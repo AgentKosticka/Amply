@@ -51,6 +51,8 @@ import com.agentkosticka.amply.audio.session.AudioSession
 import com.agentkosticka.amply.settings.model.AppSettings
 import com.agentkosticka.amply.settings.model.AppIdentity
 import com.agentkosticka.amply.settings.model.OverlayAppMode
+import com.agentkosticka.amply.settings.model.appDisplayName
+import com.agentkosticka.amply.settings.model.appProfileFallbackLabel
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlin.math.roundToInt
 
@@ -84,6 +86,7 @@ internal fun mergeAppSettingsWithActiveSessions(
 internal fun AppSettingsRow(
     app: AppSettings,
     isActive: Boolean,
+    hideProfileIdentity: Boolean = true,
     enabled: Boolean = true,
     modifier: Modifier = Modifier,
     reorderEnabled: Boolean = true,
@@ -102,6 +105,19 @@ internal fun AppSettingsRow(
     }
     val icon = rememberApplicationIconBitmap(app.packageName, bitmapSizePx = 72)
     val volumePercent = (displayedVolume * 100).roundToInt()
+    val personalUserId = Process.myUid() / 100_000
+    val displayName = appDisplayName(
+        appName = app.appName,
+        userId = app.userId,
+        personalUserId = personalUserId,
+        hideProfileIdentity = hideProfileIdentity
+    )
+    val profileFallbackLabel = appProfileFallbackLabel(
+        appName = app.appName,
+        userId = app.userId,
+        personalUserId = personalUserId,
+        hideProfileIdentity = hideProfileIdentity
+    )
 
     Column(
         modifier = modifier
@@ -124,12 +140,12 @@ internal fun AppSettingsRow(
                 icon?.let {
                     Image(
                         bitmap = it,
-                        contentDescription = app.appName,
+                        contentDescription = displayName,
                         modifier = Modifier.size(32.dp)
                     )
                 } ?: Icon(
                     imageVector = Icons.Default.MusicNote,
-                    contentDescription = app.appName,
+                    contentDescription = displayName,
                     tint = NothingColors.GreyMedium
                 )
             }
@@ -137,10 +153,10 @@ internal fun AppSettingsRow(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = app.appName,
+                        text = displayName,
                         color = NothingColors.White,
                         style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
@@ -153,9 +169,9 @@ internal fun AppSettingsRow(
                         )
                     }
                 }
-                if (app.userId != Process.myUid() / 100_000) {
+                profileFallbackLabel?.let { label ->
                     Text(
-                        text = "PROFILE ${app.userId}",
+                        text = label,
                         color = NothingColors.GreyMedium,
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = FontFamily.Monospace
@@ -170,7 +186,7 @@ internal fun AppSettingsRow(
                 modifier = Modifier
                     .size(48.dp)
                     .semantics {
-                        contentDescription = "Move ${app.appName}"
+                        contentDescription = "Move $displayName"
                         customActions = buildList {
                             if (canMoveUp) add(CustomAccessibilityAction("Move up") {
                                 onMoveUp()
@@ -213,7 +229,7 @@ internal fun AppSettingsRow(
         AppVolumeRail(
             volume = displayedVolume,
             enabled = enabled,
-            accessibilityLabel = "${app.appName} default volume",
+            accessibilityLabel = "$displayName default volume",
             onVolumeChange = { volume ->
                 displayedVolume = volume
                 onVolumeChange(volume)
@@ -230,6 +246,12 @@ internal fun AppSettingsRow(
         )
     }
 }
+
+internal fun shouldShowAppProfilePrivacy(
+    accessibleProfileCount: Int,
+    knownIdentities: Collection<AppIdentity>,
+    personalUserId: Int
+): Boolean = accessibleProfileCount > 1 || knownIdentities.any { it.userId != personalUserId }
 
 @Composable
 private fun OverlayModeSelector(

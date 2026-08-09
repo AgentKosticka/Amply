@@ -45,6 +45,7 @@ class PreferencesManager(private val context: Context) {
         private val DISABLE_SHIZUKU_DISCONNECTED_WARNING =
             booleanPreferencesKey("disable_shizuku_disconnected_warning")
         private val HIDE_PER_APP_VOLUME_CONTROL = booleanPreferencesKey("hide_per_app_volume_control")
+        private val HIDE_APP_PROFILE_IDENTITY = booleanPreferencesKey("hide_app_profile_identity")
         private val HIDE_STAND_DOWN_BUTTON = booleanPreferencesKey("hide_stand_down_button")
         private val SHOW_DND_BUTTON = booleanPreferencesKey("show_dnd_button")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
@@ -193,6 +194,13 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setHidePerAppVolumeControl(hidden: Boolean): SettingsOperationResult =
         editSettings { it[HIDE_PER_APP_VOLUME_CONTROL] = hidden }
+
+    val hideAppProfileIdentity: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[HIDE_APP_PROFILE_IDENTITY] ?: true
+    }
+
+    suspend fun setHideAppProfileIdentity(hidden: Boolean): SettingsOperationResult =
+        editSettings { it[HIDE_APP_PROFILE_IDENTITY] = hidden }
 
     val hideStandDownButton: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[HIDE_STAND_DOWN_BUTTON] ?: false
@@ -401,6 +409,7 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(AMPLY_PAUSED_UNTIL_EPOCH_MS)
             preferences.remove(DISABLE_SHIZUKU_DISCONNECTED_WARNING)
             preferences.remove(HIDE_PER_APP_VOLUME_CONTROL)
+            preferences.remove(HIDE_APP_PROFILE_IDENTITY)
             preferences.remove(HIDE_STAND_DOWN_BUTTON)
             preferences.remove(LAST_STALE_APP_CLEANUP_EPOCH_MS)
             preferences.remove(LEGACY_GAME_MODE_ENABLED)
@@ -440,6 +449,7 @@ class PreferencesManager(private val context: Context) {
                 preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] ?: false
             )
             .put("hidePerAppVolumeControl", preferences[HIDE_PER_APP_VOLUME_CONTROL] ?: false)
+            .put("hideAppProfileIdentity", preferences[HIDE_APP_PROFILE_IDENTITY] ?: true)
             .put("hideStandDownButton", preferences[HIDE_STAND_DOWN_BUTTON] ?: false)
             .put("showDndButton", preferences[SHOW_DND_BUTTON] ?: false)
             .put("standDownPackages", JSONArray(passThrough.sorted()))
@@ -499,6 +509,7 @@ class PreferencesManager(private val context: Context) {
                 preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] =
                     imported.disableShizukuDisconnectedWarning
                 preferences[HIDE_PER_APP_VOLUME_CONTROL] = imported.hidePerAppVolumeControl
+                preferences[HIDE_APP_PROFILE_IDENTITY] = imported.hideAppProfileIdentity
                 preferences[HIDE_STAND_DOWN_BUTTON] = imported.hideStandDownButton
                 preferences[SHOW_DND_BUTTON] = imported.showDndButton
                 val existingPackages = decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
@@ -532,6 +543,7 @@ class PreferencesManager(private val context: Context) {
         val pauseDuration: AmplyPauseDuration,
         val disableShizukuDisconnectedWarning: Boolean,
         val hidePerAppVolumeControl: Boolean,
+        val hideAppProfileIdentity: Boolean,
         val hideStandDownButton: Boolean,
         val showDndButton: Boolean,
         val appOverlayOrder: List<AppIdentity>,
@@ -594,6 +606,12 @@ class PreferencesManager(private val context: Context) {
             "hidePerAppVolumeControl",
             "Invalid per-app volume visibility setting"
         )
+        val hideAppProfileIdentity = if (root.has("hideAppProfileIdentity")) {
+            require(root.get("hideAppProfileIdentity") is Boolean) {
+                "Invalid app profile identity setting"
+            }
+            root.getBoolean("hideAppProfileIdentity")
+        } else true
         val hideStandDownButton = optionalBoolean(
             root,
             "hideStandDownButton",
@@ -650,6 +668,7 @@ class PreferencesManager(private val context: Context) {
             pauseDuration = pauseDuration,
             disableShizukuDisconnectedWarning = warningDisabled,
             hidePerAppVolumeControl = hidePerAppVolumeControl,
+            hideAppProfileIdentity = hideAppProfileIdentity,
             hideStandDownButton = hideStandDownButton,
             showDndButton = showDndButton,
             appOverlayOrder = appOverlayOrder,
@@ -773,4 +792,3 @@ class PreferencesManager(private val context: Context) {
     private fun encodeAppOverlayOrder(values: List<AppIdentity>): String =
         JSONArray(values.map { it.storageKey }).toString()
 }
-

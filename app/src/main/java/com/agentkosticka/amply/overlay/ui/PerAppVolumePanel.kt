@@ -44,6 +44,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeControlState
+import com.agentkosticka.amply.settings.model.appDisplayName
+import com.agentkosticka.amply.settings.model.appProfileFallbackLabel
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -61,6 +63,7 @@ internal fun AmplyPanel(
     panelWidth: Dp,
     maxHeight: Dp,
     apps: List<OverlayAppPresentation>,
+    showAppProfileIdentity: Boolean = false,
     onAppVolumeChange: (AppVolumeTarget, Float) -> Unit,
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
@@ -115,6 +118,7 @@ internal fun AmplyPanel(
                     }
                     AppVolumeRow(
                         app = app,
+                        showProfileIdentity = showAppProfileIdentity,
                         onVolumeChange = { newVolume -> onAppVolumeChange(app.target, newVolume) }
                     )
                 }
@@ -176,6 +180,7 @@ internal fun ShizukuDisconnectedPanel(panelWidth: Dp, shizukuIcon: Bitmap?) {
 @Composable
 private fun AppVolumeRow(
     app: OverlayAppPresentation,
+    showProfileIdentity: Boolean,
     onVolumeChange: (Float) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -204,6 +209,20 @@ private fun AppVolumeRow(
         }
     }
     val volumePercent = (localVolume * 100).toInt()
+    val personalUserId = android.os.Process.myUid() / 100_000
+    val displayName = appDisplayName(
+        appName = app.target.appName,
+        userId = app.identity.userId,
+        personalUserId = personalUserId,
+        hideProfileIdentity = !showProfileIdentity
+    )
+    val profileFallbackLabel = appProfileFallbackLabel(
+        appName = app.target.appName,
+        userId = app.identity.userId,
+        personalUserId = personalUserId,
+        hideProfileIdentity = !showProfileIdentity
+    )
+    val accessibleName = listOfNotNull(displayName, profileFallbackLabel).joinToString(" ")
 
     Column(
         modifier = Modifier
@@ -234,14 +253,14 @@ private fun AppVolumeRow(
                         app.icon?.let { icon ->
                             Image(
                                 bitmap = icon,
-                                contentDescription = app.target.appName,
+                                contentDescription = accessibleName,
                                 modifier = Modifier
                                     .size(24.dp)
                                     .clip(RoundedCornerShape(7.dp))
                             )
                         } ?: Icon(
                             imageVector = Icons.Default.MusicNote,
-                            contentDescription = app.target.appName,
+                            contentDescription = accessibleName,
                             tint = NothingColors.GreyMedium,
                             modifier = Modifier.size(15.dp)
                         )
@@ -258,22 +277,23 @@ private fun AppVolumeRow(
                     }
                 }
 
-                Text(
-                    text = app.target.appName,
-                    color = NothingColors.White,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (app.identity.userId != android.os.Process.myUid() / 100_000) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "W",
-                        color = NothingColors.GreyMedium,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace
+                        text = displayName,
+                        color = NothingColors.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
+                    profileFallbackLabel?.let { label ->
+                        Text(
+                            text = label,
+                            color = NothingColors.GreyMedium,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
             }
 
@@ -306,7 +326,7 @@ private fun AppVolumeRow(
 
         HorizontalVolumeRail(
             volume = localVolume,
-            accessibilityLabel = "${app.target.appName} volume",
+            accessibilityLabel = "$accessibleName volume",
             enabled = app.controlState != AppVolumeControlState.UNAVAILABLE,
             onDragStart = {
                 pendingCommittedVolume = null

@@ -100,6 +100,7 @@ fun VolumeOverlay(
     shizukuConnectionState: VolumeServiceConnectionState = VolumeServiceConnectionState.WAITING_FOR_PERMISSION,
     shizukuIcon: Bitmap? = null,
     showShizukuDisconnectedWarning: Boolean = true,
+    showAppProfileIdentity: Boolean = false,
     showStandDownButton: Boolean = true,
     showDndButton: Boolean = false,
     dndActive: Boolean = false,
@@ -327,6 +328,7 @@ fun VolumeOverlay(
                 panelWidth = panelWidth,
                 maxHeight = maxHeight,
                 apps = apps,
+                showAppProfileIdentity = showAppProfileIdentity,
                 onAppVolumeChange = { app, volume ->
                     onAppVolumeChange(app, volume)
                 },

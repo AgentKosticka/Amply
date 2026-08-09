@@ -104,7 +104,7 @@ class AudioSessionManager(
 
     private data class VolumeUpdate(
         val sessionId: Int,
-        val packageName: String?,
+        val target: AppVolumeTarget,
         val volume: Float
     )
 
@@ -182,7 +182,7 @@ class AudioSessionManager(
                     }
                 }
                 updates.forEach { update ->
-                    applySessionVolume(update.sessionId, update.packageName, update.volume)
+                    applySessionVolume(update.sessionId, update.target, update.volume)
                 }
             }
         }
@@ -412,28 +412,21 @@ class AudioSessionManager(
      * @param sessionId The audio session ID (piid)
      * @param volume Volume level (0.0 to 1.0)
      */
-    fun setSessionVolume(sessionId: Int, packageName: String?, volume: Float) {
-        val key = _sessionState.value.sessions.firstOrNull { it.sessionId == sessionId }
-            ?.identity
-            ?.storageKey
-            ?: packageName?.takeIf { it.isNotBlank() }
-            ?: "session:$sessionId"
+    private fun setSessionVolume(sessionId: Int, target: AppVolumeTarget, volume: Float) {
+        val key = target.pendingUpdateKey
         synchronized(pendingVolumeLock) {
             pendingVolumeUpdates[key] = VolumeUpdate(
                 sessionId = sessionId,
-                packageName = packageName,
+                target = target,
                 volume = volume.coerceIn(0f, 1f)
             )
         }
         volumeUpdateSignals.trySend(Unit)
     }
 
-    private suspend fun applySessionVolume(sessionId: Int, packageName: String?, volume: Float) {
+    private suspend fun applySessionVolume(sessionId: Int, target: AppVolumeTarget, volume: Float) {
         val activeSessions = _sessionState.value.sessions
-        val targetSession = activeSessions.find { it.sessionId == sessionId }
-            ?: packageName?.let { requestedPackage ->
-                activeSessions.find { it.packageName == requestedPackage }
-            }
+        val targetSession = resolveAppVolumeSession(activeSessions, sessionId, target)
 
         if (targetSession != null) {
             val uid = targetSession.uid
@@ -465,27 +458,19 @@ class AudioSessionManager(
             }
         } else {
             Log.w(TAG, "Playback session is no longer active; persisting its saved volume")
-            if (!packageName.isNullOrBlank()) {
-                preferencesManager.setAppDefaultVolume(packageName, volume)
-            }
-        }
-    }
-
-    fun setAppVolume(packageName: String, volume: Float) {
-        val active = _sessionState.value.sessions.firstOrNull { it.packageName == packageName }
-        if (active != null) {
-            setSessionVolume(active.sessionId, packageName, volume)
-        } else {
-            managerScope.launch {
-                preferencesManager.setAppDefaultVolume(packageName, volume, active?.uid ?: -1)
-            }
+            preferencesManager.persistAppVolume(
+                packageName = target.packageName,
+                appName = target.appName,
+                uid = target.uid,
+                volume = volume
+            )
         }
     }
 
     fun setAppVolume(target: AppVolumeTarget, volume: Float) {
         val active = _sessionState.value.sessions.firstOrNull { it.identity == target.identity }
         if (active != null) {
-            setSessionVolume(active.sessionId, target.packageName, volume)
+            setSessionVolume(active.sessionId, target, volume)
         } else {
             managerScope.launch {
                 preferencesManager.persistAppVolume(

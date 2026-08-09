@@ -3,7 +3,9 @@ package com.agentkosticka.amply.settings.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.os.Build
+import android.os.Process
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -113,6 +115,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.audio.session.AudioSessionState
+import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.settings.model.AmplyPauseDuration
@@ -482,6 +485,7 @@ fun SettingsDashboard(
         initial = false
     )
     val hidePerAppVolumeControl by preferences.hidePerAppVolumeControl.collectAsState(initial = false)
+    val hideAppProfileIdentity by preferences.hideAppProfileIdentity.collectAsState(initial = true)
     val hideStandDownButton by preferences.hideStandDownButton.collectAsState(initial = false)
     val showDndButton by preferences.showDndButton.collectAsState(initial = false)
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
@@ -532,6 +536,7 @@ fun SettingsDashboard(
     var standDownSearch by rememberSaveable { mutableStateOf("") }
     var installedApps by remember { mutableStateOf<List<InstalledAppEntry>>(emptyList()) }
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var accessibleProfileCount by remember { mutableIntStateOf(1) }
     var staleAppCount by remember { mutableIntStateOf(0) }
     var pendingImportRaw by remember { mutableStateOf<String?>(null) }
     var pendingImportPreview by remember { mutableStateOf<SettingsImportPreview?>(null) }
@@ -630,6 +635,17 @@ fun SettingsDashboard(
         sessionState.sessions.associateBy { it.identity }
     }
     val activeIdentities = remember(activeSessionsByIdentity) { activeSessionsByIdentity.keys }
+    val showProfileIdentityToggle = remember(
+        accessibleProfileCount,
+        appSettings,
+        sessionState.sessions
+    ) {
+        shouldShowAppProfilePrivacy(
+            accessibleProfileCount = accessibleProfileCount,
+            knownIdentities = appSettings.keys + sessionState.sessions.map { it.identity },
+            personalUserId = Process.myUid() / 100_000
+        )
+    }
     val knownApps = remember(
         appSettings,
         appOverlayOrder,
@@ -752,6 +768,13 @@ fun SettingsDashboard(
     }
 
     LaunchedEffect(Unit) { shizukuRepository.checkPermissionState() }
+    LaunchedEffect(context) {
+        accessibleProfileCount = withContext(Dispatchers.IO) {
+            runCatching {
+                context.getSystemService(LauncherApps::class.java).profiles.distinct().size
+            }.getOrDefault(1).coerceAtLeast(1)
+        }
+    }
     LaunchedEffect(pagerState) {
         // Exercise the programmatic pager path after all pages have been precomposed. The offset is
         // roughly one physical pixel, avoiding a visible transition while removing first-use JIT
@@ -881,6 +904,20 @@ fun SettingsDashboard(
                             color = NothingColors.GreyMedium,
                             style = MaterialTheme.typography.bodyMedium
                         )
+                    }
+                    if (showProfileIdentityToggle) {
+                        item {
+                            SettingsPanel {
+                                OverlayPreferenceToggle(
+                                    title = "Hide personal/work app identity",
+                                    description = "Show only the app name and hide profile labels such as Work or Personal.",
+                                    checked = hideAppProfileIdentity,
+                                    onCheckedChange = { hidden ->
+                                        scope.launch { preferences.setHideAppProfileIdentity(hidden) }
+                                    }
+                                )
+                            }
+                        }
                     }
                     if (connectionState != VolumeServiceConnectionState.CONNECTED) {
                         item {
@@ -1103,6 +1140,7 @@ fun SettingsDashboard(
                             } else AppSettingsRow(
                                 app = app,
                                 isActive = app.identity in activeIdentities,
+                                hideProfileIdentity = hideAppProfileIdentity,
                                 enabled = appSettingsStoreHealth != AppSettingsStoreHealth.CORRUPT,
                                 modifier = Modifier
                                     .animateItem(
@@ -1150,15 +1188,20 @@ fun SettingsDashboard(
                                     scope.launch { preferences.setAppOverlayMode(app.packageName, mode, app.uid) }
                                 },
                                 onVolumeChange = { volume ->
+                                    val target = AppVolumeTarget(
+                                        packageName = app.packageName,
+                                        uid = app.uid,
+                                        appName = app.appName
+                                    )
                                     val active = activeSessionsByIdentity[app.identity]
                                     if (active != null) {
-                                        runtime.audioSessionManager.setAppVolume(app.packageName, volume)
+                                        runtime.audioSessionManager.setAppVolume(target, volume)
                                     } else {
                                         val saveKey = app.identity.storageKey
                                         inactiveVolumeSaveJobs.remove(saveKey)?.cancel()
                                         inactiveVolumeSaveJobs[saveKey] = scope.launch {
                                             delay(300L.milliseconds)
-                                            preferences.setAppDefaultVolume(app.packageName, volume, app.uid)
+                                            runtime.audioSessionManager.setAppVolume(target, volume)
                                             inactiveVolumeSaveJobs.remove(saveKey)
                                         }
                                     }
