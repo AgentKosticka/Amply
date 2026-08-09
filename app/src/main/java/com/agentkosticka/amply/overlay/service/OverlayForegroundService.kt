@@ -235,6 +235,11 @@ open class OverlayForegroundService : Service() {
                     )
                 },
                 serviceScope.launch {
+                    runtime.mediaFractionalStreamVolumeSupported.collect(
+                        OverlayManager::updateMediaFractionalStreamVolumeSupported
+                    )
+                },
+                serviceScope.launch {
                     val settingsAndOrder = combine(
                         preferences.appSettings,
                         preferences.appOverlayOrder

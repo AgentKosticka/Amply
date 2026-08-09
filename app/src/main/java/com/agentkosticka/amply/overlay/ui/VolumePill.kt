@@ -294,12 +294,16 @@ private fun StreamVolumeColumn(
         )
     }
     val currentVolFloat = stream.currentVolumeFloat ?: stream.currentVolume.toFloat()
-    val displayedPercentage = if (stream.maxVolume > 0) {
-        ((currentVolFloat / stream.maxVolume.toFloat()) * 100f)
-            .roundToInt()
-            .coerceIn(0, 100)
+    val percentage = if (stream.maxVolume > 0) {
+        ((currentVolFloat / stream.maxVolume.toFloat()) * 100f).coerceIn(0f, 100f)
     } else {
-        0
+        0f
+    }
+    val displayedPercentage = if (stream.resolution == StreamVolumeResolution.FRACTIONAL) {
+        val tenths = (percentage * 10f).roundToInt()
+        "${tenths / 10}.${tenths % 10}"
+    } else {
+        percentage.roundToInt().toString()
     }
     val isMediaStream = stream.target == VolumeTarget.MEDIA
     val isNotificationStream = stream.target == VolumeTarget.NOTIFICATION || stream.combinedRinger
@@ -358,7 +362,7 @@ private fun StreamVolumeColumn(
             overflow = TextOverflow.Clip,
             textAlign = TextAlign.Center,
             modifier = Modifier
-                .width(40.dp)
+                .width(42.dp)
                 .graphicsLayer {
                     translationX = percentageBoundaryShake.value * 4.dp.toPx()
                 }

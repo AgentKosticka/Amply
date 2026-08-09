@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 
 internal val STABLE_VOLUME_USER_SERVICE_CLASS_NAME: String = VolumeUserService::class.java.name
-internal const val VOLUME_USER_SERVICE_VERSION = 6
+internal const val VOLUME_USER_SERVICE_VERSION = 8
 
 sealed interface FractionalVolumeOperationResult {
     data object Applied : FractionalVolumeOperationResult

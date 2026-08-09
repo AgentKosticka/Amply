@@ -228,8 +228,8 @@ fun DraggableDotSlider(
                     level == partialDotLevel && partialFraction > 0.01f -> {
                         drawCircle(color = inactiveColor, radius = dotRadius, center = Offset(x, y))
                         drawCircle(
-                            color = activeColor.copy(alpha = partialFraction),
-                            radius = dotRadius * (0.72f + 0.28f * partialFraction),
+                            color = activeColor.copy(alpha = 0.24f + 0.76f * partialFraction),
+                            radius = dotRadius * (0.82f + 0.18f * partialFraction),
                             center = Offset(x, y)
                         )
                     }

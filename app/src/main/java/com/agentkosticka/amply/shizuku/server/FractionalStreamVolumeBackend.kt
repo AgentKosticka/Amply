@@ -58,9 +58,10 @@ internal class FractionalStreamVolumeBackend(
 
         val applied = invokeSetter(candidate, probeStream, snapshot.currentIndex.toFloat(), snapshot.maxIndex)
         val readback = snapshotReader(probeStream)
-        if (!applied || readback == null || !readback.valid ||
-            readback.currentIndex != snapshot.currentIndex
-        ) {
+        // OEM float curves do not always map the same normalized gain back to the exact
+        // integer bucket we started from. A successful native return plus a readable,
+        // valid bucket is sufficient; requiring equality incorrectly rejects those devices.
+        if (!applied || readback == null || !readback.valid) {
             availability = Availability.UNAVAILABLE
             setter = null
             return false
@@ -147,7 +148,12 @@ internal class FractionalStreamVolumeBackend(
                 )
 
         private fun resolveOemSetter(): Method? {
-            val method = Class.forName("android.media.AudioSystem").declaredMethods.singleOrNull {
+            val candidates = Class.forName("android.media.AudioSystem").declaredMethods.filter {
+                it.name.contains("streamVolume", ignoreCase = true) ||
+                    (it.name.contains("volume", ignoreCase = true) &&
+                        it.parameterTypes.any { type -> type == java.lang.Float.TYPE })
+            }
+            val method = candidates.singleOrNull {
                 isCompatibleSetter(it)
             } ?: return null
             method.isAccessible = true

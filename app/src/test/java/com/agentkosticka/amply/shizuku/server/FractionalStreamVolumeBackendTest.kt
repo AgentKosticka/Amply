@@ -56,6 +56,25 @@ class FractionalStreamVolumeBackendTest {
     }
 
     @Test
+    fun probeAcceptsOemIntegerBucketRemapping() {
+        var reads = 0
+        val setter = FakeAudioSystem::class.java.getDeclaredMethod(
+            "setStreamVolume",
+            Integer.TYPE,
+            java.lang.Float.TYPE,
+            Integer.TYPE
+        )
+        val backend = FractionalStreamVolumeBackend(
+            methodResolver = { setter },
+            snapshotReader = {
+                StreamVolumeSnapshot(0, 15, if (reads++ == 0) 7 else 6)
+            }
+        )
+
+        assertTrue(backend.isAvailable(3))
+    }
+
+    @Test
     fun nativeIndexChangeInvalidatesCachedFraction() {
         var index = 7
         val backend = backend(currentIndex = { index })

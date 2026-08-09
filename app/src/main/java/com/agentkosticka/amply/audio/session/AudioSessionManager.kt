@@ -28,6 +28,12 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
 
+internal fun composePlayerGain(baseGain: Float, streamFactor: Float): Float {
+    if (!baseGain.isFinite() || !streamFactor.isFinite()) return 0f
+    return (baseGain.coerceIn(0f, 1f) * streamFactor.coerceIn(0f, 1f))
+        .coerceIn(0f, 1f)
+}
+
 /**
  * Manages audio session detection and app metadata enrichment.
  *
@@ -78,6 +84,7 @@ class AudioSessionManager(
     private val volumeUpdateSignals = Channel<Unit>(Channel.CONFLATED)
     private val refreshMutex = Mutex()
     private val pendingVolumeLock = Any()
+    private val playerGainLock = Any()
 
     // Public callback is used only to prompt privileged-session refreshes.
     private var playbackCallback: AudioManager.AudioPlaybackCallback? = null
@@ -93,6 +100,8 @@ class AudioSessionManager(
     private val pendingVolumeUpdates = ConcurrentHashMap<String, VolumeUpdate>()
     @Volatile
     private var appSettingsCache: Map<AppIdentity, AppSettings> = emptyMap()
+    @Volatile
+    private var mediaStreamGainFactor = 1f
     private var playerIdsByIdentity: Map<AppIdentity, Set<Int>> = emptyMap()
     private var appSettingsJob: Job? = null
 
@@ -168,6 +177,10 @@ class AudioSessionManager(
                         _appVolumeControlStates.value = emptyMap()
                         requestRefresh()
                     } else {
+                        synchronized(playerGainLock) {
+                            mediaStreamGainFactor = 1f
+                            appliedPlayerGains.clear()
+                        }
                         _activeSystemStreams.value = ActiveSystemStreams()
                     }
                 }
@@ -443,14 +456,13 @@ class AudioSessionManager(
                 activeSessions.filter { it.uid == uid }
             }
             val previousVolume = targetSession.volume
-            val gain = toLogarithmicGain(volume)
+            val baseGain = toLogarithmicGain(volume)
             val successfulIds = linkedSetOf<Int>()
 
             if (shizukuVolumeManager.isConnected.value) {
                 targetSessions.forEach { session ->
-                    if (shizukuVolumeManager.setPlayerVolume(session.sessionId, gain)) {
+                    if (applyPlayerGain(session, baseGain)) {
                         successfulIds += session.sessionId
-                        appliedPlayerGains[session.sessionId] = gain
                     }
                 }
             }
@@ -579,18 +591,75 @@ class AudioSessionManager(
     private fun applyPersistedVolumes(sessions: List<AudioSession>) {
         sessions.forEach { session ->
             val persisted = getPersistedVolume(session.packageName, session.uid)
-            val gain = toLogarithmicGain(persisted)
+            val baseGain = toLogarithmicGain(persisted)
+            val gain = effectivePlayerGain(session.streamType, baseGain)
             val previousGain = appliedPlayerGains[session.sessionId]
-            if (previousGain == null && persisted >= 1.0f - VOLUME_EPSILON) return@forEach
+            if (previousGain == null && gain >= 1.0f - VOLUME_EPSILON) return@forEach
             if (previousGain != null && abs(previousGain - gain) <= VOLUME_EPSILON) return@forEach
 
-            val applied = shizukuVolumeManager.isConnected.value &&
-                shizukuVolumeManager.setPlayerVolume(session.sessionId, gain)
-            if (applied) {
-                appliedPlayerGains[session.sessionId] = gain
-            }
+            applyPlayerGain(session, baseGain)
         }
     }
+
+    /**
+     * Applies a media-only fractional master without replacing Amply's per-app setting.
+     *
+     * AOSP exposes only integer stream indexes. On those devices Amply can represent the
+     * fraction between two media indexes by selecting the upper native index and composing
+     * this factor with every active player's saved gain. All writes remain centralized here,
+     * so new players and later per-app adjustments retain both controls.
+     */
+    fun setMediaStreamGainFactor(factor: Float): Boolean {
+        if (!factor.isFinite() || factor !in 0f..1f) return false
+        return synchronized(playerGainLock) {
+            mediaStreamGainFactor = factor
+            val mediaSessions = _sessionState.value.sessions.filter {
+                it.streamType == AudioManager.STREAM_MUSIC
+            }
+            var appliedCount = 0
+            mediaSessions.forEach { session ->
+                if (applyPlayerGainLocked(
+                    session = session,
+                    baseGain = toLogarithmicGain(
+                        getPersistedVolume(session.packageName, session.uid)
+                    )
+                )) {
+                    appliedCount += 1
+                }
+            }
+            mediaSessions.isEmpty() || appliedCount > 0
+        }
+    }
+
+    /** Restores ordinary per-app gains after a native index, route, or connection change. */
+    fun resetMediaStreamGainFactor() {
+        managerScope.launch {
+            setMediaStreamGainFactor(1f)
+        }
+    }
+
+    private fun applyPlayerGain(session: AudioSession, baseGain: Float): Boolean =
+        synchronized(playerGainLock) {
+            applyPlayerGainLocked(session, baseGain)
+        }
+
+    private fun applyPlayerGainLocked(session: AudioSession, baseGain: Float): Boolean {
+        if (!shizukuVolumeManager.isConnected.value) return false
+        val gain = effectivePlayerGain(session.streamType, baseGain)
+        val applied = shizukuVolumeManager.setPlayerVolume(session.sessionId, gain)
+        if (applied) appliedPlayerGains[session.sessionId] = gain
+        return applied
+    }
+
+    private fun effectivePlayerGain(streamType: Int, baseGain: Float): Float =
+        composePlayerGain(
+            baseGain = baseGain,
+            streamFactor = if (streamType == AudioManager.STREAM_MUSIC) {
+                mediaStreamGainFactor
+            } else {
+                1f
+            }
+        )
 
     private fun pruneAppliedPlayerGains(activePlayerIds: Set<Int>) {
         appliedPlayerGains.keys.removeIf { it !in activePlayerIds }

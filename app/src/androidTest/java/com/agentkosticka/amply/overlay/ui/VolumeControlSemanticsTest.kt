@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
@@ -72,6 +73,34 @@ class VolumeControlSemanticsTest {
         val progress = compose.onNodeWithContentDescription("Fractional volume")
             .fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo]
         assertEquals(4.5f, progress.current, 0.001f)
+    }
+
+    @Test fun fractionalOverlayShowsDecimalPercentage() {
+        compose.setContent {
+            AmplyTheme {
+                VolumeOverlay(
+                    volumeBars = listOf(
+                        VolumeBarModel(
+                            target = VolumeTarget.MEDIA,
+                            aliases = setOf(VolumeTarget.MEDIA.streamType),
+                            label = "Media",
+                            currentVolume = 4,
+                            minVolume = 0,
+                            maxVolume = 10,
+                            active = true,
+                            enabled = true,
+                            currentVolumeFloat = 4.5f,
+                            resolution = com.agentkosticka.amply.audio.routing.StreamVolumeResolution.FRACTIONAL
+                        )
+                    ),
+                    selectedTarget = VolumeTarget.MEDIA,
+                    expanded = false,
+                    showShizukuDisconnectedWarning = false,
+                    shizukuConnectionState = VolumeServiceConnectionState.CONNECTED
+                )
+            }
+        }
+        compose.onNodeWithText("45.0").assertExists()
     }
 
     @Test fun hiddenStandDownButtonIsRemovedFromTheOverlay() {

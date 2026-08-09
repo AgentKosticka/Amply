@@ -135,6 +135,7 @@ object OverlayManager {
     private val showDndButton = mutableStateOf(false)
     private val dndActive = mutableStateOf(false)
     private val fractionalStreamVolumeSupported = mutableStateOf(false)
+    private val mediaFractionalStreamVolumeSupported = mutableStateOf(false)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -269,7 +270,26 @@ object OverlayManager {
         if (fractionalStreamVolumeSupported.value == supported) return
         fractionalStreamVolumeSupported.value = supported
         if (!supported) {
-            optimisticVolumes.replaceAll { _, state -> state.copy(volumeFloat = null) }
+            optimisticVolumes.replaceAll { streamType, state ->
+                if (streamType == AudioManager.STREAM_MUSIC &&
+                    mediaFractionalStreamVolumeSupported.value
+                ) {
+                    state
+                } else {
+                    state.copy(volumeFloat = null)
+                }
+            }
+        }
+        refreshSystemStreamVolumes()
+    }
+
+    fun updateMediaFractionalStreamVolumeSupported(supported: Boolean) {
+        if (mediaFractionalStreamVolumeSupported.value == supported) return
+        mediaFractionalStreamVolumeSupported.value = supported
+        if (!supported) {
+            optimisticVolumes.computeIfPresent(AudioManager.STREAM_MUSIC) { _, state ->
+                state.copy(volumeFloat = null)
+            }
         }
         refreshSystemStreamVolumes()
     }
@@ -789,7 +809,7 @@ object OverlayManager {
             val systemAlertMode = if (template.ringerControl) {
                 NotificationAlertMode.resolve(ringerMode)
             } else null
-            val fractional = fractionalStreamVolumeSupported.value &&
+            val fractional = supportsFractionalVolume(template.target) &&
                 shizukuConnectionState.value == VolumeServiceConnectionState.CONNECTED &&
                 template.enabled &&
                 !(template.target == VolumeTarget.MEDIA && routeState.isRemote) &&
@@ -984,7 +1004,7 @@ object OverlayManager {
         val current = currentOptState?.volume ?: systemVolume
 
         val fractional = bar.resolution == StreamVolumeResolution.FRACTIONAL &&
-            fractionalStreamVolumeSupported.value &&
+            supportsFractionalVolume(bar.target) &&
             shizukuConnectionState.value == VolumeServiceConnectionState.CONNECTED
         val rawSystemFloat = if (fractional) {
             onGetSystemStreamVolumeFloatCallback?.invoke(canonicalStream)
@@ -1101,6 +1121,13 @@ object OverlayManager {
         windowManager = null
         audioManager = null
     }
+
+    private fun supportsFractionalVolume(target: VolumeTarget): Boolean =
+        if (target == VolumeTarget.MEDIA) {
+            mediaFractionalStreamVolumeSupported.value
+        } else {
+            fractionalStreamVolumeSupported.value
+        }
 
     private fun ensureManagerScope() {
         if (!managerScope.isActive) {
