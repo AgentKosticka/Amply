@@ -6,7 +6,9 @@
 
 Amply (1) replaces the stock volume popup with a clean, customizable volume pill. Expand it when you need more control: adjust every system stream, turn down individual apps, or temporarily hand control back to Android.
 
-[Download the latest release](https://github.com/AgentKosticka/Amply/releases/latest) · [View all releases](https://github.com/AgentKosticka/Amply/releases) · [Apache 2.0 license](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/AgentKosticka/Amply?style=for-the-badge&label=Download&color=6C63FF)](https://github.com/AgentKosticka/Amply/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/AgentKosticka/Amply/total?style=for-the-badge&color=4C9F70)](https://github.com/AgentKosticka/Amply/releases)
+[![License](https://img.shields.io/github/license/AgentKosticka/Amply?style=for-the-badge&color=3D8BCD)](LICENSE)
 
 <br>
 
