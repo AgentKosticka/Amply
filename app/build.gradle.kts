@@ -1,3 +1,4 @@
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
@@ -27,7 +28,8 @@ val versionedReleaseRequested = gradle.startParameter.taskNames.any { requestedT
 }
 val versionCodeLine = Regex("""(?m)^(\s*versionCode\s*=\s*)(\d+)(\s*)$""")
 val versionNameLine = Regex("""(?m)^(\s*versionName\s*=\s*)"(\d+)\.(\d+)\.(\d+)"(\s*)$""")
-val declaredBuildScript = project.buildFile.readText()
+val appBuildScriptFile = project.buildFile
+val declaredBuildScript = appBuildScriptFile.readText()
 val declaredVersionCode = versionCodeLine.find(declaredBuildScript)?.groupValues?.get(2)?.toInt()
     ?: error("Could not read versionCode from app/build.gradle.kts")
 val declaredVersionMatch = versionNameLine.find(declaredBuildScript)
@@ -112,26 +114,38 @@ tasks.register("versionedRelease") {
     group = "build"
     description = "Builds release with the next code and patch version, then persists that version."
     dependsOn("assembleRelease")
+    inputs.property("buildScriptPath", appBuildScriptFile.absolutePath)
+    inputs.property("declaredVersionCode", declaredVersionCode)
+    inputs.property("declaredVersionName", declaredVersionName)
+    inputs.property("nextVersionCode", nextVersionCode)
+    inputs.property("nextVersionName", nextVersionName)
     doNotTrackState("This task intentionally updates app/build.gradle.kts after a successful build.")
     doLast {
-        val buildScriptFile = project.buildFile
+        val taskInputs = inputs.properties
+        val buildScriptFile = File(checkNotNull(taskInputs["buildScriptPath"]).toString())
+        val expectedVersionCode = checkNotNull(taskInputs["declaredVersionCode"]).toString().toInt()
+        val expectedVersionName = checkNotNull(taskInputs["declaredVersionName"]).toString()
+        val releaseVersionCode = checkNotNull(taskInputs["nextVersionCode"]).toString().toInt()
+        val releaseVersionName = checkNotNull(taskInputs["nextVersionName"]).toString()
+        val codeLine = Regex("""(?m)^(\s*versionCode\s*=\s*)(\d+)(\s*)$""")
+        val nameLine = Regex("""(?m)^(\s*versionName\s*=\s*)"(\d+)\.(\d+)\.(\d+)"(\s*)$""")
         val currentText = buildScriptFile.readText()
-        val currentCode = versionCodeLine.find(currentText)?.groupValues?.get(2)?.toInt()
-        val currentNameMatch = versionNameLine.find(currentText)
+        val currentCode = codeLine.find(currentText)?.groupValues?.get(2)?.toInt()
+        val currentNameMatch = nameLine.find(currentText)
         val currentName = currentNameMatch?.groupValues?.let { "${it[2]}.${it[3]}.${it[4]}" }
-        check(currentCode == declaredVersionCode && currentName == declaredVersionName) {
+        check(currentCode == expectedVersionCode && currentName == expectedVersionName) {
             "Version changed while the release was building; refusing to overwrite app/build.gradle.kts."
         }
 
-        val currentCodeMatch = checkNotNull(versionCodeLine.find(currentText))
+        val currentCodeMatch = checkNotNull(codeLine.find(currentText))
         val withNextCode = currentText.replaceRange(
             currentCodeMatch.range,
-            "${currentCodeMatch.groupValues[1]}$nextVersionCode${currentCodeMatch.groupValues[3]}"
+            "${currentCodeMatch.groupValues[1]}$releaseVersionCode${currentCodeMatch.groupValues[3]}"
         )
-        val currentNameRange = checkNotNull(versionNameLine.find(withNextCode))
+        val currentNameRange = checkNotNull(nameLine.find(withNextCode))
         val withNextVersion = withNextCode.replaceRange(
             currentNameRange.range,
-            "${currentNameRange.groupValues[1]}\"$nextVersionName\"${currentNameRange.groupValues[5]}"
+            "${currentNameRange.groupValues[1]}\"$releaseVersionName\"${currentNameRange.groupValues[5]}"
         )
         val temporaryFile = buildScriptFile.resolveSibling("${buildScriptFile.name}.version-update")
         temporaryFile.writeText(withNextVersion)
@@ -141,7 +155,7 @@ tasks.register("versionedRelease") {
             StandardCopyOption.REPLACE_EXISTING
         )
         logger.lifecycle(
-            "Built and recorded Amply version $nextVersionName (versionCode $nextVersionCode)."
+            "Built and recorded Amply version $releaseVersionName (versionCode $releaseVersionCode)."
         )
     }
 }
