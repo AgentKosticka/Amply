@@ -134,6 +134,7 @@ open class OverlayForegroundService : Service() {
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                runtime.invalidateFractionalVolumes()
                 OverlayManager.dismissImmediatelyForScreenOff()
             }
         }
@@ -229,6 +230,11 @@ open class OverlayForegroundService : Service() {
                     runtime.dynamicStreamState.collect(OverlayManager::updateDynamicStreams)
                 },
                 serviceScope.launch {
+                    runtime.fractionalStreamVolumeSupported.collect(
+                        OverlayManager::updateFractionalStreamVolumeSupported
+                    )
+                },
+                serviceScope.launch {
                     val settingsAndOrder = combine(
                         preferences.appSettings,
                         preferences.appOverlayOrder
@@ -295,6 +301,7 @@ open class OverlayForegroundService : Service() {
             OverlayManager.setSystemStreamVolumeCallback(runtime::setSystemStreamVolume)
             OverlayManager.setSystemStreamVolumeFloatCallback(runtime::setSystemStreamVolumeFloat)
             OverlayManager.setGetSystemStreamVolumeFloatCallback(runtime::getSystemStreamVolumeFloat)
+            OverlayManager.setInvalidateFractionalVolumesCallback(runtime::invalidateFractionalVolumes)
             OverlayManager.setPauseAmplyCallback {
                 serviceScope.launch { preferences.pauseAmply() }
             }
@@ -323,6 +330,7 @@ open class OverlayForegroundService : Service() {
         initializeRuntime()
         val powerManager = getSystemService(PowerManager::class.java)
         if (!powerManager.isInteractive) {
+            runtime.invalidateFractionalVolumes()
             OverlayManager.dismissImmediatelyForScreenOff()
             return
         }
@@ -467,5 +475,6 @@ open class OverlayForegroundService : Service() {
         OverlayManager.clearSystemStreamVolumeCallback()
         OverlayManager.clearSystemStreamVolumeFloatCallback()
         OverlayManager.clearGetSystemStreamVolumeFloatCallback()
+        OverlayManager.clearInvalidateFractionalVolumesCallback()
     }
 }

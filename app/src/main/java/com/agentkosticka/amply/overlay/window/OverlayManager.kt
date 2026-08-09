@@ -32,6 +32,7 @@ import com.agentkosticka.amply.audio.ringer.StreamMuteToggleController
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedbackPolicy
+import com.agentkosticka.amply.audio.routing.StreamVolumeResolution
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.overlay.ui.VolumeOverlay
@@ -102,6 +103,7 @@ object OverlayManager {
     private var tutorialPreviewJob: Job? = null
     private var removeJob: Job? = null
     private var volumeObservationJob: Job? = null
+    private var lastObservedRingerMode: Int? = null
     private data class OptimisticVolumeState(
         val volume: Int,
         val alertMode: NotificationAlertMode? = null,
@@ -132,6 +134,7 @@ object OverlayManager {
     private val showStandDownButton = mutableStateOf(true)
     private val showDndButton = mutableStateOf(false)
     private val dndActive = mutableStateOf(false)
+    private val fractionalStreamVolumeSupported = mutableStateOf(false)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -145,6 +148,7 @@ object OverlayManager {
     private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
     private var onSystemStreamVolumeFloatChangeCallback: ((VolumeTarget, Float) -> Boolean)? = null
     private var onGetSystemStreamVolumeFloatCallback: ((Int) -> Float?)? = null
+    private var onInvalidateFractionalVolumesCallback: (() -> Unit)? = null
     private var onRemoteMediaVolumeChangeCallback: ((Long, Int) -> Boolean)? = null
     private val overlayVisible = mutableStateOf(false)
     private val overlayExpanded = mutableStateOf(false)
@@ -261,6 +265,15 @@ object OverlayManager {
         refreshSystemStreamVolumes()
     }
 
+    fun updateFractionalStreamVolumeSupported(supported: Boolean) {
+        if (fractionalStreamVolumeSupported.value == supported) return
+        fractionalStreamVolumeSupported.value = supported
+        if (!supported) {
+            optimisticVolumes.replaceAll { _, state -> state.copy(volumeFloat = null) }
+        }
+        refreshSystemStreamVolumes()
+    }
+
     fun setSystemStreamVolumeCallback(callback: (VolumeTarget, Int) -> Boolean) {
         onSystemStreamVolumeChangeCallback = callback
     }
@@ -283,6 +296,14 @@ object OverlayManager {
 
     fun clearGetSystemStreamVolumeFloatCallback() {
         onGetSystemStreamVolumeFloatCallback = null
+    }
+
+    fun setInvalidateFractionalVolumesCallback(callback: () -> Unit) {
+        onInvalidateFractionalVolumesCallback = callback
+    }
+
+    fun clearInvalidateFractionalVolumesCallback() {
+        onInvalidateFractionalVolumesCallback = null
     }
 
     fun updateApps(
@@ -343,6 +364,7 @@ object OverlayManager {
         if (mediaRouteVolumeState.value == state) return
         if (mediaRouteVolumeState.value.generation != state.generation) {
             streamMuteToggleController.onVolumeChangedOutsideToggle(AudioManager.STREAM_MUSIC)
+            onInvalidateFractionalVolumesCallback?.invoke()
         }
         mediaRouteVolumeState.value = state
         iconType.value = state.outputRoute.wireName
@@ -750,6 +772,12 @@ object OverlayManager {
         routeState: MediaRouteVolumeState
     ): List<VolumeBarModel> {
         val ringerMode = if (templates.any { it.ringerControl }) manager.ringerMode else AudioManager.RINGER_MODE_NORMAL
+        if (templates.any { it.ringerControl } &&
+            lastObservedRingerMode != null && lastObservedRingerMode != ringerMode
+        ) {
+            onInvalidateFractionalVolumesCallback?.invoke()
+        }
+        lastObservedRingerMode = ringerMode
         val now = System.currentTimeMillis()
         return templates.map { template ->
             val systemVolume = routeState.takeIf {
@@ -758,19 +786,17 @@ object OverlayManager {
                 manager.getStreamVolume(template.target.streamType)
             }.getOrDefault(0)
 
-            val rawSystemFloat = if (shizukuConnectionState.value == VolumeServiceConnectionState.CONNECTED) {
+            val systemAlertMode = if (template.ringerControl) {
+                NotificationAlertMode.resolve(ringerMode)
+            } else null
+            val fractional = fractionalStreamVolumeSupported.value &&
+                shizukuConnectionState.value == VolumeServiceConnectionState.CONNECTED &&
+                template.enabled &&
+                !(template.target == VolumeTarget.MEDIA && routeState.isRemote) &&
+                (!template.ringerControl || systemAlertMode == NotificationAlertMode.LOUD)
+            val rawSystemFloat = if (fractional) {
                 onGetSystemStreamVolumeFloatCallback?.invoke(template.target.streamType)
             } else null
-
-            // When a hardware volume key shifts the integer volume without a drag,
-            // carry the fractional part forward so the rail tracks tick-by-tick.
-            val systemVolumeFloat = if (rawSystemFloat != null && optimisticVolumes[template.target.streamType] == null) {
-                val cachedInt = rawSystemFloat.toInt()
-                if (cachedInt != systemVolume) {
-                    val fraction = rawSystemFloat - cachedInt.toFloat()
-                    (systemVolume.toFloat() + fraction).coerceAtLeast(0f)
-                } else rawSystemFloat
-            } else rawSystemFloat
 
             val optState = optimisticVolumes[template.target.streamType]
             val hasSettled = optState != null && (now - optState.timestampMs) > OPTIMISTIC_SETTLING_WINDOW_MS
@@ -780,10 +806,8 @@ object OverlayManager {
             val currentOptState = optimisticVolumes[template.target.streamType]
 
             val effectiveVolume = currentOptState?.volume ?: systemVolume
-            val effectiveVolumeFloat = currentOptState?.volumeFloat ?: systemVolumeFloat
-
-            val systemAlertMode = if (template.ringerControl) {
-                NotificationAlertMode.resolve(ringerMode)
+            val effectiveVolumeFloat = if (fractional) {
+                currentOptState?.volumeFloat ?: rawSystemFloat
             } else null
             val effectiveAlertMode = if (optState?.alertMode != null && (now - optState.timestampMs) <= OPTIMISTIC_SETTLING_WINDOW_MS) {
                 optState.alertMode
@@ -804,7 +828,12 @@ object OverlayManager {
                 dotCount = template.dotCount,
                 combinedRinger = template.combinedRinger,
                 notificationAlertMode = effectiveAlertMode,
-                currentVolumeFloat = effectiveVolumeFloat
+                currentVolumeFloat = effectiveVolumeFloat,
+                resolution = if (fractional) {
+                    StreamVolumeResolution.FRACTIONAL
+                } else {
+                    StreamVolumeResolution.DISCRETE
+                }
             )
         }
     }
@@ -838,7 +867,7 @@ object OverlayManager {
         val bar = bars[index]
         val updated = bar.copy(
             currentVolume = volume,
-            currentVolumeFloat = volumeFloat ?: bar.currentVolumeFloat,
+            currentVolumeFloat = volumeFloat,
             notificationAlertMode = alertMode ?: bar.notificationAlertMode
         )
         if (updated != bar) {
@@ -915,15 +944,8 @@ object OverlayManager {
         )
         applyOptimisticVolume(streamType, intVal, null, volumeFloat = clampedFloat)
 
-        val hasFloatCallback = onSystemStreamVolumeFloatChangeCallback != null
-        Log.d("AmplyOverlay", "setStreamVolumeFloat: stream=$streamType float=$clampedFloat hasCallback=$hasFloatCallback")
-
         val applied = onSystemStreamVolumeFloatChangeCallback?.invoke(target, clampedFloat)
-            ?: runCatching {
-                Log.d("AmplyOverlay", "setStreamVolumeFloat: no float callback, using integer index=$intVal")
-                manager.setStreamVolume(streamType, intVal, 0)
-                true
-            }.getOrDefault(false)
+            ?: false
 
         if (!applied) {
             optimisticVolumes.remove(streamType)
@@ -961,21 +983,13 @@ object OverlayManager {
 
         val current = currentOptState?.volume ?: systemVolume
 
-        val rawSystemFloat = if (shizukuConnectionState.value == VolumeServiceConnectionState.CONNECTED) {
+        val fractional = bar.resolution == StreamVolumeResolution.FRACTIONAL &&
+            fractionalStreamVolumeSupported.value &&
+            shizukuConnectionState.value == VolumeServiceConnectionState.CONNECTED
+        val rawSystemFloat = if (fractional) {
             onGetSystemStreamVolumeFloatCallback?.invoke(canonicalStream)
         } else null
-
-        // When a hardware volume key shifts the integer volume without a drag, carry
-        // the fractional part forward so the rail tracks tick-by-tick.
-        val systemVolumeFloat = if (rawSystemFloat != null && currentOptState == null) {
-            val cachedInt = rawSystemFloat.toInt()
-            if (cachedInt != systemVolume) {
-                val fraction = rawSystemFloat - cachedInt.toFloat()
-                (systemVolume.toFloat() + fraction).coerceAtLeast(0f)
-            } else rawSystemFloat
-        } else rawSystemFloat
-
-        val currentFloat = currentOptState?.volumeFloat ?: systemVolumeFloat
+        val currentFloat = if (fractional) currentOptState?.volumeFloat ?: rawSystemFloat else null
 
         val ringerControl = VolumeTarget.NOTIFICATION.streamType in bar.aliases ||
             VolumeTarget.RING.streamType in bar.aliases
@@ -1077,6 +1091,8 @@ object OverlayManager {
         hideJob?.cancel()
         removeJob?.cancel()
         volumeObservationJob?.cancel()
+        onInvalidateFractionalVolumesCallback?.invoke()
+        lastObservedRingerMode = null
         if (overlayVisible.value) {
             onOverlayHiddenCallback?.invoke()
         }

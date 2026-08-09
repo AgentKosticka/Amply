@@ -2,6 +2,7 @@ package com.agentkosticka.amply.shizuku.protocol;
 
 import com.agentkosticka.amply.shizuku.protocol.PlaybackSessionParcel;
 import com.agentkosticka.amply.shizuku.protocol.OperationResultParcel;
+import com.agentkosticka.amply.shizuku.protocol.FractionalVolumeStateParcel;
 
 interface IVolumeService {
     int getProtocolVersion();
@@ -11,7 +12,8 @@ interface IVolumeService {
     int[] getStreamTopology();
     OperationResultParcel setSystemStreamVolume(int streamType, int index);
     OperationResultParcel setSystemStreamVolumeFloat(int streamType, float gain);
-    float getSystemStreamVolumeFloat(int streamType);
+    FractionalVolumeStateParcel getSystemStreamVolumeFloatState(int streamType);
+    void invalidateSystemStreamVolumeFloat(int streamType);
     int applyRingerExperiment(int method, int target, int restoreVolume);
     void destroy();
 }

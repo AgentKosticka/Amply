@@ -7,8 +7,11 @@ const val VOLUME_PROTOCOL_VERSION = 6
 const val CAPABILITY_TYPED_PLAYBACKS = 1L shl 0
 const val CAPABILITY_VERIFIED_STREAM_VOLUME = 1L shl 1
 const val CAPABILITY_FLOAT_STREAM_VOLUME = 1L shl 2
+const val VOLUME_PROTOCOL_REQUIRED_CAPABILITIES =
+    CAPABILITY_TYPED_PLAYBACKS or CAPABILITY_VERIFIED_STREAM_VOLUME
+const val VOLUME_PROTOCOL_OPTIONAL_CAPABILITIES = CAPABILITY_FLOAT_STREAM_VOLUME
 const val VOLUME_PROTOCOL_CAPABILITIES =
-    CAPABILITY_TYPED_PLAYBACKS or CAPABILITY_VERIFIED_STREAM_VOLUME or CAPABILITY_FLOAT_STREAM_VOLUME
+    VOLUME_PROTOCOL_REQUIRED_CAPABILITIES or VOLUME_PROTOCOL_OPTIONAL_CAPABILITIES
 
 object VolumeOperationStatus {
     const val OK = 1
@@ -18,6 +21,30 @@ object VolumeOperationStatus {
     const val UNAVAILABLE = -4
     const val INVALID_ARGUMENT = -5
     const val NOT_FOUND = -6
+}
+
+object FractionalVolumeStatus {
+    const val UNAVAILABLE = 0
+    const val CACHED = 1
+}
+
+@Parcelize
+data class FractionalVolumeStateParcel(
+    val status: Int,
+    val value: Float,
+    val nativeIndex: Int
+) : Parcelable {
+    val available: Boolean
+        get() = status == FractionalVolumeStatus.CACHED &&
+            value.isFinite() && value >= 0f && nativeIndex >= 0
+
+    companion object {
+        fun unavailable(): FractionalVolumeStateParcel =
+            FractionalVolumeStateParcel(FractionalVolumeStatus.UNAVAILABLE, 0f, -1)
+
+        fun cached(value: Float, nativeIndex: Int): FractionalVolumeStateParcel =
+            FractionalVolumeStateParcel(FractionalVolumeStatus.CACHED, value, nativeIndex)
+    }
 }
 
 @Parcelize

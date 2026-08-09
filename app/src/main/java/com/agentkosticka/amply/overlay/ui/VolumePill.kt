@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.StreamIcon
+import com.agentkosticka.amply.audio.routing.StreamVolumeResolution
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedbackPolicy
@@ -178,12 +179,14 @@ internal fun MainVolumePill(
                         onInteraction()
                         onStreamVolumeChange(stream.target.streamType, newVolume)
                     },
-                    onVolumeFloatChange = if (onStreamVolumeFloatChange != null) {
+                    onVolumeFloatChange = if (
+                        onStreamVolumeFloatChange != null &&
+                        stream.resolution == StreamVolumeResolution.FRACTIONAL
+                    ) {
                         { newFloat ->
                             if (isExpanded) {
                                 onStreamSelected(stream.target)
                             }
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onInteraction()
                             onStreamVolumeFloatChange(stream.target.streamType, newFloat)
                         }
@@ -257,6 +260,10 @@ private fun StreamVolumeColumn(
     enabled: Boolean = true,
     onVolumeFloatChange: ((Float) -> Unit)? = null
 ) {
+    val haptic = LocalHapticFeedback.current
+    var lastFractionalHapticStep by remember(stream.target) {
+        mutableIntStateOf(stream.currentVolume)
+    }
     val percentageBoundaryShake = remember { Animatable(0f) }
     val usesPercentageBoundaryFeedback = VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(
         isUp = limitFeedback?.isUpperBound ?: false,
@@ -367,7 +374,16 @@ private fun StreamVolumeColumn(
             referenceMaxVolume = stream.referenceMaxVolume,
             dotCount = stream.dotCount,
             onVolumeChange = onVolumeChange,
-            onVolumeFloatChange = onVolumeFloatChange,
+            onVolumeFloatChange = onVolumeFloatChange?.let { changeVolume ->
+                { value ->
+                    val step = value.roundToInt().coerceIn(stream.minVolume, stream.maxVolume)
+                    if (step != lastFractionalHapticStep) {
+                        lastFractionalHapticStep = step
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    changeVolume(value)
+                }
+            },
             enabled = enabled,
             // Input stops immediately when a stream begins collapsing, but its dots
             // keep their enabled colors while the parent column fades away.

@@ -23,6 +23,7 @@ import com.agentkosticka.amply.runtime.RuntimeHealth
 import com.agentkosticka.amply.runtime.RuntimeOperationState
 import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
+import com.agentkosticka.amply.shizuku.client.FractionalVolumeOperationResult
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.tutorial.TutorialCoordinator
@@ -40,7 +41,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 
 class AmplyRuntime(context: Context) {
@@ -54,6 +56,11 @@ class AmplyRuntime(context: Context) {
     private var notificationExpiryJob: Job? = null
     private var pauseHealthExpiryJob: Job? = null
     private var lastObservedAudioMode: Int? = null
+    private data class FractionalVolumeWrite(val target: VolumeTarget, val value: Float)
+    private data class AcknowledgedFractionalVolume(val value: Float, val nativeIndex: Int)
+    private val fractionalVolumeWrites = Channel<FractionalVolumeWrite>(Channel.CONFLATED)
+    private val acknowledgedFractionalVolumes =
+        ConcurrentHashMap<Int, AcknowledgedFractionalVolume>()
     private val _runtimeHealth = MutableStateFlow(RuntimeHealth())
     val runtimeHealth: StateFlow<RuntimeHealth> = _runtimeHealth.asStateFlow()
 
@@ -89,6 +96,8 @@ class AmplyRuntime(context: Context) {
 
     val sessionState = audioSessionManager.sessionState
     val connectionState: StateFlow<VolumeServiceConnectionState> = shizukuVolumeManager.connectionState
+    val fractionalStreamVolumeSupported: StateFlow<Boolean> =
+        shizukuVolumeManager.fractionalStreamVolumeSupported
 
     init {
         Log.i(TAG, "Creating process-owned Amply runtime")
@@ -98,6 +107,37 @@ class AmplyRuntime(context: Context) {
         }
         runtimeScope.launch {
             preferencesManager.showDndButton.collect(dndController::setFeatureEnabled)
+        }
+        runtimeScope.launch(Dispatchers.IO) {
+            for (write in fractionalVolumeWrites) {
+                val result = shizukuVolumeManager.setSystemStreamVolumeFloat(
+                    write.target.streamType,
+                    write.value
+                )
+                when (result) {
+                    FractionalVolumeOperationResult.Applied -> {
+                        val state = shizukuVolumeManager.getSystemStreamVolumeFloatState(
+                            write.target.streamType
+                        )
+                        if (state != null) {
+                            acknowledgedFractionalVolumes[write.target.streamType] =
+                                AcknowledgedFractionalVolume(state.value, state.nativeIndex)
+                            reportVolumeOperation(true)
+                        } else {
+                            acknowledgedFractionalVolumes.remove(write.target.streamType)
+                            reportVolumeOperation(false)
+                        }
+                    }
+                    FractionalVolumeOperationResult.Unsupported -> {
+                        acknowledgedFractionalVolumes.remove(write.target.streamType)
+                    }
+                    FractionalVolumeOperationResult.Failed -> {
+                        acknowledgedFractionalVolumes.remove(write.target.streamType)
+                        reportVolumeOperation(false)
+                    }
+                }
+                delay(16L)
+            }
         }
         runtimeScope.launch {
             sessionState.collect { state ->
@@ -113,6 +153,9 @@ class AmplyRuntime(context: Context) {
                 Triple(permission, connection, pausedUntil)
             }.collect { (permission, connection, pausedUntil) ->
                 pauseHealthExpiryJob?.cancel()
+                if (connection != VolumeServiceConnectionState.CONNECTED) {
+                    acknowledgedFractionalVolumes.clear()
+                }
                 val now = System.currentTimeMillis()
                 val effectivePausedUntil = if (pausedUntil > now) pausedUntil else 0L
                 _runtimeHealth.update {
@@ -233,6 +276,7 @@ class AmplyRuntime(context: Context) {
         if (lastObservedAudioMode != mode) {
             lastObservedAudioMode = mode
             shizukuVolumeManager.invalidateStreamTopologyCache()
+            invalidateFractionalVolumes()
             audioSessionManager.requestRefresh()
         }
         volumeTargetSessionController.onAudioModeChanged(mode)
@@ -278,6 +322,8 @@ class AmplyRuntime(context: Context) {
         val min = runCatching { audioManager.getStreamMinVolume(canonical.streamType) }.getOrDefault(0)
         val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min)
         val clamped = index.coerceIn(min, max)
+        acknowledgedFractionalVolumes.remove(canonical.streamType)
+        shizukuVolumeManager.invalidateSystemStreamVolumeFloat(canonical.streamType)
         if (canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) {
             if (dndController.active.value) {
                 dndController.setActive(false)
@@ -305,49 +351,35 @@ class AmplyRuntime(context: Context) {
 
     fun setSystemStreamVolumeFloat(target: VolumeTarget, gain: Float): Boolean {
         val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
-        if (!canonical.userAdjustable) {
-            disableSystemStream(canonical)
-            return false
-        }
+        if (!canonical.userAdjustable || !fractionalStreamVolumeSupported.value) return false
         val min = runCatching { audioManager.getStreamMinVolume(canonical.streamType) }.getOrDefault(0).toFloat()
         val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min.toInt()).toFloat()
-        val clamped = gain.coerceIn(min, max)
-
-        if (canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) {
-            if (dndController.active.value) {
-                dndController.setActive(false)
-            }
+        if (!gain.isFinite() || max < min) return false
+        if ((canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) &&
+            (dndController.active.value || audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL)
+        ) {
+            return false
         }
-
-        val connectionState = shizukuVolumeManager.connectionState.value
-        android.util.Log.d("AmplyRuntime", "setSystemStreamVolumeFloat: stream=${canonical.streamType} gain=$clamped shizuku=$connectionState")
-
-        val success = if (connectionState == VolumeServiceConnectionState.CONNECTED) {
-            shizukuVolumeManager.setSystemStreamVolumeFloat(canonical.streamType, clamped)
-        } else {
-            val intIndex = clamped.roundToInt()
-            android.util.Log.w("AmplyRuntime", "setSystemStreamVolumeFloat: Shizuku not connected ($connectionState), falling back to integer=$intIndex")
-            runCatching {
-                audioManager.setStreamVolume(canonical.streamType, intIndex, 0)
-                true
-            }.getOrDefault(false)
-        }
-
-        reportVolumeOperation(success)
-        if (!success) {
-            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
-            if (!canonical.permanentlyVisible) {
-                disableSystemStream(canonical)
-            }
-        }
-        return success
+        return fractionalVolumeWrites.trySend(
+            FractionalVolumeWrite(canonical, gain.coerceIn(min, max))
+        ).isSuccess
     }
 
     fun getSystemStreamVolumeFloat(streamType: Int): Float? {
-        if (shizukuVolumeManager.connectionState.value == VolumeServiceConnectionState.CONNECTED) {
-            return shizukuVolumeManager.getSystemStreamVolumeFloat(streamType)
+        val acknowledged = acknowledgedFractionalVolumes[streamType] ?: return null
+        val currentIndex = runCatching { audioManager.getStreamVolume(streamType) }.getOrNull()
+        if (currentIndex != acknowledged.nativeIndex) {
+            acknowledgedFractionalVolumes.remove(streamType)
+            shizukuVolumeManager.invalidateSystemStreamVolumeFloat(streamType)
+            return null
         }
-        return null
+        return acknowledged.value
+    }
+
+    fun invalidateFractionalVolumes() {
+        val streams = acknowledgedFractionalVolumes.keys.toList()
+        acknowledgedFractionalVolumes.clear()
+        streams.forEach(shizukuVolumeManager::invalidateSystemStreamVolumeFloat)
     }
 
     fun adjustRingerKeyStep(

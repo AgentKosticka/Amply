@@ -37,4 +37,28 @@ class VolumeProtocolModelsTest {
                 .succeeded
         )
     }
+
+    @Test fun fractionalCapabilityIsOptionalDuringHandshake() {
+        assertTrue(
+            VOLUME_PROTOCOL_REQUIRED_CAPABILITIES and CAPABILITY_TYPED_PLAYBACKS != 0L
+        )
+        assertTrue(
+            VOLUME_PROTOCOL_REQUIRED_CAPABILITIES and CAPABILITY_VERIFIED_STREAM_VOLUME != 0L
+        )
+        assertTrue(
+            VOLUME_PROTOCOL_REQUIRED_CAPABILITIES and CAPABILITY_FLOAT_STREAM_VOLUME == 0L
+        )
+    }
+
+    @Test fun fractionalStateRejectsUnavailableAndNonFiniteValues() {
+        assertFalse(FractionalVolumeStateParcel.unavailable().available)
+        assertTrue(FractionalVolumeStateParcel.cached(7.5f, 7).available)
+        assertFalse(
+            FractionalVolumeStateParcel(
+                FractionalVolumeStatus.CACHED,
+                Float.NaN,
+                7
+            ).available
+        )
+    }
 }

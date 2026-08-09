@@ -7,9 +7,12 @@ import android.content.pm.ApplicationInfo
 import android.os.IBinder
 import android.util.Log
 import com.agentkosticka.amply.audio.routing.StreamTopology
+import com.agentkosticka.amply.shizuku.protocol.CAPABILITY_FLOAT_STREAM_VOLUME
+import com.agentkosticka.amply.shizuku.protocol.FractionalVolumeStateParcel
 import com.agentkosticka.amply.shizuku.protocol.IVolumeService
-import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_CAPABILITIES
+import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_REQUIRED_CAPABILITIES
 import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
+import com.agentkosticka.amply.shizuku.protocol.VolumeOperationStatus
 import com.agentkosticka.amply.shizuku.VolumeUserService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +20,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 
 internal val STABLE_VOLUME_USER_SERVICE_CLASS_NAME: String = VolumeUserService::class.java.name
-internal const val VOLUME_USER_SERVICE_VERSION = 11
+internal const val VOLUME_USER_SERVICE_VERSION = 6
+
+sealed interface FractionalVolumeOperationResult {
+    data object Applied : FractionalVolumeOperationResult
+    data object Unsupported : FractionalVolumeOperationResult
+    data object Failed : FractionalVolumeOperationResult
+}
 
 /** Manages the single process-wide connection to the privileged volume service. */
 class ShizukuVolumeManager(
@@ -36,12 +45,16 @@ class ShizukuVolumeManager(
     private var deathRecipient: IBinder.DeathRecipient? = null
     private var activeConnection: ServiceConnection? = null
     private var cachedStreamTopology: StreamTopology? = null
+    private var negotiatedCapabilities: Long = 0L
 
     private val _connectionState = MutableStateFlow(VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
     override val connectionState: StateFlow<VolumeServiceConnectionState> =
         _connectionState.asStateFlow()
 
     val isConnected: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    val fractionalStreamVolumeSupported: StateFlow<Boolean>
         field = MutableStateFlow(false)
 
     private val appContext = context.applicationContext
@@ -119,11 +132,11 @@ class ShizukuVolumeManager(
                     return
                 }
 
-                val compatible = runCatching {
-                    service.protocolVersion == VOLUME_PROTOCOL_VERSION &&
-                        service.capabilities and VOLUME_PROTOCOL_CAPABILITIES ==
-                        VOLUME_PROTOCOL_CAPABILITIES
-                }.getOrDefault(false)
+                val capabilities = runCatching { service.capabilities }.getOrDefault(0L)
+                val compatible = runCatching { service.protocolVersion == VOLUME_PROTOCOL_VERSION }
+                    .getOrDefault(false) &&
+                    capabilities and VOLUME_PROTOCOL_REQUIRED_CAPABILITIES ==
+                    VOLUME_PROTOCOL_REQUIRED_CAPABILITIES
                 if (!compatible) {
                     handleDisconnect(
                         generation,
@@ -156,8 +169,11 @@ class ShizukuVolumeManager(
                     volumeService = service
                     serviceBinder = binder
                     deathRecipient = recipient
+                    negotiatedCapabilities = capabilities
                     _connectionState.value = VolumeServiceConnectionState.CONNECTED
                     isConnected.value = true
+                    fractionalStreamVolumeSupported.value =
+                        capabilities and CAPABILITY_FLOAT_STREAM_VOLUME != 0L
                 }
                 Log.i(TAG, "UserService connected generation=$generation name=$name")
             }
@@ -228,6 +244,8 @@ class ShizukuVolumeManager(
         serviceBinder = null
         deathRecipient = null
         cachedStreamTopology = null
+        negotiatedCapabilities = 0L
+        fractionalStreamVolumeSupported.value = false
     }
 
     data class PrivilegedPlayback(
@@ -321,38 +339,57 @@ class ShizukuVolumeManager(
         }
     }
 
-    fun setSystemStreamVolumeFloat(streamType: Int, gain: Float): Boolean {
+    fun setSystemStreamVolumeFloat(
+        streamType: Int,
+        gain: Float
+    ): FractionalVolumeOperationResult {
         if (streamType !in 0..11 || !gain.isFinite() || gain < 0f) {
-            Log.w(TAG, "setSystemStreamVolumeFloat: invalid args stream=$streamType gain=$gain")
-            return false
+            return FractionalVolumeOperationResult.Failed
         }
-        val service = synchronized(lock) { volumeService }
-        if (service == null) {
-            Log.w(TAG, "setSystemStreamVolumeFloat: no service (null) stream=$streamType")
-            return false
+        val service = synchronized(lock) {
+            if (negotiatedCapabilities and CAPABILITY_FLOAT_STREAM_VOLUME == 0L) null
+            else volumeService
         }
-        Log.d(TAG, "setSystemStreamVolumeFloat: calling IPC stream=$streamType gain=$gain service=${service.javaClass.simpleName}")
+            ?: return FractionalVolumeOperationResult.Unsupported
         return try {
             val result = service.setSystemStreamVolumeFloat(streamType, gain)
-            Log.d(TAG, "setSystemStreamVolumeFloat: IPC returned succeeded=${result.succeeded} status=${result.status}")
-            result.succeeded
+            when (result.status) {
+                VolumeOperationStatus.OK -> FractionalVolumeOperationResult.Applied
+                VolumeOperationStatus.UNSUPPORTED -> {
+                    synchronized(lock) {
+                        negotiatedCapabilities =
+                            negotiatedCapabilities and CAPABILITY_FLOAT_STREAM_VOLUME.inv()
+                    }
+                    fractionalStreamVolumeSupported.value = false
+                    FractionalVolumeOperationResult.Unsupported
+                }
+                else -> FractionalVolumeOperationResult.Failed
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Float stream update failed stream=$streamType gain=$gain", e)
+            Log.e(TAG, "Fractional stream update failed stream=$streamType", e)
             invalidateConnection("float-stream RPC failed: ${e.javaClass.simpleName}")
-            false
+            FractionalVolumeOperationResult.Failed
         }
     }
 
-    fun getSystemStreamVolumeFloat(streamType: Int): Float? {
+    fun getSystemStreamVolumeFloatState(streamType: Int): FractionalVolumeStateParcel? {
         if (streamType !in 0..11) return null
-        val service = synchronized(lock) { volumeService } ?: return null
+        val service = synchronized(lock) {
+            if (negotiatedCapabilities and CAPABILITY_FLOAT_STREAM_VOLUME == 0L) null
+            else volumeService
+        } ?: return null
         return try {
-            val res = service.getSystemStreamVolumeFloat(streamType)
-            if (res < 0f) null else res
+            service.getSystemStreamVolumeFloatState(streamType).takeIf { it.available }
         } catch (e: Exception) {
-            Log.e(TAG, "Float stream query failed stream=$streamType", e)
+            Log.w(TAG, "Fractional stream query failed stream=$streamType", e)
             null
         }
+    }
+
+    fun invalidateSystemStreamVolumeFloat(streamType: Int) {
+        if (streamType !in 0..11) return
+        val service = synchronized(lock) { volumeService } ?: return
+        runCatching { service.invalidateSystemStreamVolumeFloat(streamType) }
     }
 
     fun applyRingerExperiment(method: Int, target: Int, restoreVolume: Int): Int? {

@@ -3,6 +3,8 @@ package com.agentkosticka.amply.audio.routing
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import kotlin.math.roundToInt
 
+enum class StreamVolumeResolution { DISCRETE, FRACTIONAL }
+
 /** Legacy Android volume streams Amply can present or route volume keys to. */
 
 data class VolumeBarModel(
@@ -18,7 +20,8 @@ data class VolumeBarModel(
     val dotCount: Int = 16,
     val combinedRinger: Boolean = false,
     val notificationAlertMode: NotificationAlertMode? = null,
-    val currentVolumeFloat: Float? = null
+    val currentVolumeFloat: Float? = null,
+    val resolution: StreamVolumeResolution = StreamVolumeResolution.DISCRETE
 )
 
 /**

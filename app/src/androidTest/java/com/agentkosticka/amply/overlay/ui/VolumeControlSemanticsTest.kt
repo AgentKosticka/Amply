@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.overlay.ui
 
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
@@ -52,6 +53,25 @@ class VolumeControlSemanticsTest {
             }
         }
         compose.onNodeWithContentDescription("Disabled volume").assertIsNotEnabled()
+    }
+
+    @Test fun fractionalSliderExposesRealFractionalProgress() {
+        compose.setContent {
+            AmplyTheme {
+                DraggableDotSlider(
+                    currentVolume = 4,
+                    currentVolumeFloat = 4.5f,
+                    maxVolume = 10,
+                    onVolumeChange = {},
+                    onVolumeFloatChange = {},
+                    accessibilityLabel = "Fractional volume"
+                )
+            }
+        }
+
+        val progress = compose.onNodeWithContentDescription("Fractional volume")
+            .fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo]
+        assertEquals(4.5f, progress.current, 0.001f)
     }
 
     @Test fun hiddenStandDownButtonIsRemovedFromTheOverlay() {

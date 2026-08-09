@@ -1,10 +1,13 @@
 package com.agentkosticka.amply.overlay.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.runtime.Composable
@@ -87,7 +90,13 @@ fun DraggableDotSlider(
 
     // During a drag we display the locally-tracked float so the dots update
     // every frame. Outside a drag we fall back to the value pushed by the model.
-    val activeVolumeFloat: Float? = if (isDragging) dragFloatValue else currentVolumeFloat
+    val modelVolume = currentVolumeFloat ?: currentVolume.toFloat()
+    val animatedModelVolume by animateFloatAsState(
+        targetValue = modelVolume,
+        animationSpec = tween(110, easing = FastOutSlowInEasing),
+        label = "streamVolumeDots"
+    )
+    val activeVolumeFloat = if (isDragging) dragFloatValue else animatedModelVolume
 
     Box(
         modifier = Modifier
@@ -96,7 +105,7 @@ fun DraggableDotSlider(
                 contentDescription = accessibilityLabel
                 stateDescription = "$currentVolume of $maxVolume"
                 progressBarRangeInfo = ProgressBarRangeInfo(
-                    current = activeVolumeFloat ?: currentVolume.toFloat(),
+                    current = activeVolumeFloat,
                     range = minVolume.toFloat()..maxVolume.toFloat(),
                     steps = (maxVolume - minVolume - 1).coerceAtLeast(0)
                 )
@@ -112,78 +121,62 @@ fun DraggableDotSlider(
             .then(
                 if (enabled) {
                     Modifier
-                        // Single pointerInput block with stable keys — callbacks are
-                        // captured via latestOnVolumeChange / latestOnVolumeFloatChange
-                        // so we never restart the gesture recogniser on recomposition.
                         .pointerInput(minVolume, maxVolume, referenceMaxVolume) {
-                            var lastEmittedVolume: Int? = null
-                            var lastEmittedFloat: Float? = null
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    isDragging = true
-                                    lastEmittedFloat = null
-                                    lastEmittedVolume = null
-                                    val percentage = 1f - (offset.y / size.height).coerceIn(0f, 1f)
+                            fun fractionFor(offset: Offset): Float {
+                                val height = size.height.coerceAtLeast(1)
+                                return 1f - (offset.y / height).coerceIn(0f, 1f)
+                            }
+
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var dragging = false
+                                var lastEmittedVolume: Int? = null
+                                var lastEmittedFloat: Float? = null
+
+                                fun emitAt(offset: Offset, force: Boolean = false) {
+                                    val fraction = fractionFor(offset)
                                     val floatFn = latestOnVolumeFloatChange
                                     if (floatFn != null) {
-                                        val v = (percentage * referenceMaxVolume.coerceAtLeast(1))
+                                        val value = (fraction * referenceMaxVolume.coerceAtLeast(1))
                                             .coerceIn(minVolume.toFloat(), maxVolume.toFloat())
-                                        dragFloatValue = v
-                                        lastEmittedFloat = v
-                                        floatFn(v)
-                                    } else {
-                                        val v = VolumeDotScale.levelForFraction(
-                                            percentage, minVolume, maxVolume, referenceMaxVolume
-                                        )
-                                        lastEmittedVolume = v
-                                        latestOnVolumeChange(v)
-                                    }
-                                },
-                                onDragEnd = { isDragging = false },
-                                onDragCancel = { isDragging = false },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val percentage = 1f - (change.position.y / size.height).coerceIn(0f, 1f)
-                                    val floatFn = latestOnVolumeFloatChange
-                                    if (floatFn != null) {
-                                        val v = (percentage * referenceMaxVolume.coerceAtLeast(1))
-                                            .coerceIn(minVolume.toFloat(), maxVolume.toFloat())
-                                        // Always update local state for instant canvas repaint
-                                        dragFloatValue = v
-                                        // Throttle IPC calls slightly to avoid overloading
-                                        if (lastEmittedFloat == null ||
-                                            kotlin.math.abs(v - lastEmittedFloat!!) > 0.001f
+                                        dragFloatValue = value
+                                        if (force || lastEmittedFloat == null ||
+                                            kotlin.math.abs(value - lastEmittedFloat!!) >= 0.01f
                                         ) {
-                                            lastEmittedFloat = v
-                                            floatFn(v)
+                                            lastEmittedFloat = value
+                                            floatFn(value)
                                         }
                                     } else {
-                                        val v = VolumeDotScale.levelForFraction(
-                                            percentage, minVolume, maxVolume, referenceMaxVolume
+                                        val value = VolumeDotScale.levelForFraction(
+                                            fraction, minVolume, maxVolume, referenceMaxVolume
                                         )
-                                        if (v != lastEmittedVolume) {
-                                            lastEmittedVolume = v
-                                            latestOnVolumeChange(v)
+                                        dragFloatValue = value.toFloat()
+                                        if (value != lastEmittedVolume) {
+                                            lastEmittedVolume = value
+                                            latestOnVolumeChange(value)
                                         }
                                     }
                                 }
-                            )
-                        }
-                        .pointerInput(minVolume, maxVolume, referenceMaxVolume) {
-                            detectTapGestures { offset ->
-                                val percentage = 1f - (offset.y / size.height).coerceIn(0f, 1f)
-                                val floatFn = latestOnVolumeFloatChange
-                                if (floatFn != null) {
-                                    val v = (percentage * referenceMaxVolume.coerceAtLeast(1))
-                                        .coerceIn(minVolume.toFloat(), maxVolume.toFloat())
-                                    floatFn(v)
-                                } else {
-                                    latestOnVolumeChange(
-                                        VolumeDotScale.levelForFraction(
-                                            percentage, minVolume, maxVolume, referenceMaxVolume
-                                        )
-                                    )
+
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) {
+                                        emitAt(change.position, force = dragging)
+                                        break
+                                    }
+                                    if (!dragging &&
+                                        (change.position - down.position).getDistance() >= viewConfiguration.touchSlop
+                                    ) {
+                                        dragging = true
+                                        isDragging = true
+                                    }
+                                    if (dragging) {
+                                        change.consume()
+                                        emitAt(change.position)
+                                    }
                                 }
+                                isDragging = false
                             }
                         }
                 } else {
@@ -197,11 +190,8 @@ fun DraggableDotSlider(
             val spacing = if (safeDotCount == 1) 0f else size.height / (safeDotCount - 1)
             val dotRadius = minOf(3.5.dp.toPx(), (spacing * 0.34f).coerceAtLeast(0.75.dp.toPx()))
 
-            val filledDotsFloat = if (activeVolumeFloat != null) {
+            val filledDotsFloat =
                 VolumeDotScale.displayLevelFloat(activeVolumeFloat, referenceMaxVolume, dotCount)
-            } else {
-                VolumeDotScale.displayLevel(currentVolume, referenceMaxVolume, dotCount).toFloat()
-            }
             val fullLitDots = filledDotsFloat.toInt()
             val partialFraction = filledDotsFloat - fullLitDots
             val partialDotLevel = fullLitDots + 1
@@ -236,15 +226,11 @@ fun DraggableDotSlider(
                         color = activeColor, radius = dotRadius, center = Offset(x, y)
                     )
                     level == partialDotLevel && partialFraction > 0.01f -> {
-                        // Draw background (inactive) circle first, then pie arc on top
                         drawCircle(color = inactiveColor, radius = dotRadius, center = Offset(x, y))
-                        drawArc(
-                            color = activeColor,
-                            startAngle = -90f,
-                            sweepAngle = partialFraction * 360f,
-                            useCenter = true,
-                            topLeft = Offset(x - dotRadius, y - dotRadius),
-                            size = androidx.compose.ui.geometry.Size(dotRadius * 2, dotRadius * 2)
+                        drawCircle(
+                            color = activeColor.copy(alpha = partialFraction),
+                            radius = dotRadius * (0.72f + 0.28f * partialFraction),
+                            center = Offset(x, y)
                         )
                     }
                     else -> drawCircle(
