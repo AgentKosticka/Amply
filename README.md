@@ -38,6 +38,29 @@ Amply (1) replaces the stock volume popup with a clean, customizable volume pill
   </tr>
 </table>
 
+## Inside Amply
+
+Amply keeps its controls in one focused dashboard. Check permissions, manage remembered audio apps, shape the overlay, and decide when Android should handle the volume buttons instead.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/assets/amply-app-dashboard.png" alt="Amply Access tab showing Shizuku status and Android permissions" width="300"></td>
+    <td align="center"><img src="docs/assets/amply-app-apps.png" alt="Amply Apps tab showing per-app volume controls and settings recovery" width="300"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Access at a glance</strong><br><sub>See what is ready and what still needs attention.</sub></td>
+    <td align="center"><strong>Your audio apps</strong><br><sub>Find, pin, organize, and recover app preferences.</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/amply-app-pill.png" alt="Amply Pill tab showing overlay position and volume dot options" width="300"></td>
+    <td align="center"><img src="docs/assets/amply-app-stand-down.png" alt="Amply Stand-Down tab showing pause duration and app routing controls" width="300"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Make the pill yours</strong><br><sub>Choose its side, dot scale, and optional controls.</sub></td>
+    <td align="center"><strong>Choose when Amply steps aside</strong><br><sub>Pause it briefly or hand selected apps back to Android.</sub></td>
+  </tr>
+</table>
+
 ## What you need
 
 | Requirement | What it is for |
