@@ -38,6 +38,30 @@ class ProfileCodecTest {
     }
 
     @Test
+    fun roundTripPreservesExplicitNoAutomaticProfileAssignment() {
+        val output = OutputDeviceDescriptor(
+            "speaker",
+            OutputKind.SPEAKER,
+            "Phone speaker",
+            OutputIdentityQuality.CATEGORY
+        )
+        val store = ProfileStore(
+            devices = mapOf(
+                output.key to KnownOutputDevice(
+                    descriptor = output,
+                    assignedProfileId = null,
+                    explicitlyUnassigned = true
+                )
+            )
+        )
+
+        val decoded = ProfileCodec.decode(ProfileCodec.encode(store))
+
+        assertNull(decoded.devices.getValue(output.key).assignedProfileId)
+        assertTrue(decoded.devices.getValue(output.key).explicitlyUnassigned)
+    }
+
+    @Test
     fun exportFormOmitsTransientActiveProfileAndDraft() {
         val profile = AudioProfile(
             "p", "Night", ProfileSaveMode.EXPLICIT, AudioProfileSnapshot(), 1L, 1L

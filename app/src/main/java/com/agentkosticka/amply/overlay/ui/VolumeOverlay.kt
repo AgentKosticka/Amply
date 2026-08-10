@@ -31,14 +31,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DoNotDisturbOn
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,7 +61,6 @@ import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.profiles.AudioProfile
-import com.agentkosticka.amply.profiles.ProfileSaveMode
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -161,7 +155,7 @@ fun VolumeOverlay(
         internalExpanded = value
         onExpandedChange(value)
     }
-    val hasPanelContent = apps.isNotEmpty() ||
+    val hasPanelContent = profileMenuExpanded || apps.isNotEmpty() ||
         (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val density = LocalDensity.current
@@ -201,6 +195,10 @@ fun VolumeOverlay(
         if (!visible) {
             updateExpanded(false)
         }
+    }
+
+    LaunchedEffect(isExpanded, profiles.isEmpty()) {
+        if (!isExpanded || profiles.isEmpty()) profileMenuExpanded = false
     }
 
     panelTransitionState.targetState = isExpanded && hasPanelContent
@@ -296,7 +294,7 @@ fun VolumeOverlay(
                                             .clip(CircleShape)
                                             .background(Color(0xFF1C1C1C))
                                             .clickable {
-                                                profileMenuExpanded = true
+                                                profileMenuExpanded = !profileMenuExpanded
                                                 onInteraction()
                                             },
                                         contentAlignment = Alignment.Center
@@ -308,40 +306,9 @@ fun VolumeOverlay(
                                             } else {
                                                 "Switch profile"
                                             },
-                                            tint = if (activeProfileId != null) NothingColors.Red else NothingColors.White,
+                                            tint = NothingColors.White,
                                             modifier = Modifier.size(24.dp)
                                         )
-                                        DropdownMenu(
-                                            expanded = profileMenuExpanded,
-                                            onDismissRequest = { profileMenuExpanded = false },
-                                            containerColor = Color(0xFF1C1C1C)
-                                        ) {
-                                            val active = profiles.firstOrNull { it.id == activeProfileId }
-                                            if (profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT) {
-                                                DropdownMenuItem(
-                                                    leadingIcon = { Icon(Icons.Default.Save, null, tint = NothingColors.Red) },
-                                                    text = { Text("Save ${active.name}", color = NothingColors.White) },
-                                                    onClick = {
-                                                        profileMenuExpanded = false
-                                                        onProfileSave()
-                                                    }
-                                                )
-                                            }
-                                            profiles.sortedBy { it.name }.forEach { profile ->
-                                                DropdownMenuItem(
-                                                    leadingIcon = {
-                                                        if (profile.id == activeProfileId) {
-                                                            Icon(Icons.Default.Check, null, tint = NothingColors.Red)
-                                                        }
-                                                    },
-                                                    text = { Text(profile.name, color = NothingColors.White) },
-                                                    onClick = {
-                                                        profileMenuExpanded = false
-                                                        onProfileActivate(profile.id)
-                                                    }
-                                                )
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -416,7 +383,24 @@ fun VolumeOverlay(
     }
 
     val panelBody: @Composable (Dp, Dp) -> Unit = { panelWidth, maxHeight ->
-        if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()) {
+        if (profileMenuExpanded) {
+            OverlayProfileSelectorPanel(
+                panelWidth = panelWidth,
+                maxHeight = maxHeight,
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                profileDirty = profileDirty,
+                autoSavingProfile = autoSavingProfile,
+                onProfileActivate = { profileId ->
+                    profileMenuExpanded = false
+                    onProfileActivate(profileId)
+                },
+                onProfileSave = {
+                    profileMenuExpanded = false
+                    onProfileSave()
+                }
+            )
+        } else if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()) {
             AmplyPanel(
                 panelWidth = panelWidth,
                 maxHeight = maxHeight,

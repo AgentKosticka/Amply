@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -100,6 +101,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -238,7 +240,7 @@ private fun Modifier.appReorderGestures(host: AppReorderGestureHost): Modifier =
             }
         }
 
-private fun Modifier.lazyScrollProgressIndicator(state: LazyListState): Modifier =
+internal fun Modifier.lazyScrollProgressIndicator(state: LazyListState): Modifier =
     drawWithContent {
         drawContent()
         if (!state.canScrollBackward && !state.canScrollForward) return@drawWithContent
@@ -273,6 +275,22 @@ private fun Modifier.lazyScrollProgressIndicator(state: LazyListState): Modifier
             cornerRadius = CornerRadius(thumbWidth)
         )
     }
+
+internal fun Modifier.moveSearchToTopOnFocus(
+    state: LazyListState,
+    itemKey: String,
+    scope: kotlinx.coroutines.CoroutineScope
+): Modifier = onFocusChanged { focus ->
+    if (focus.isFocused) {
+        scope.launch {
+            delay(120L)
+            state.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.key == itemKey }
+                ?.index
+                ?.let { state.animateScrollToItem(it) }
+        }
+    }
+}
 
 @Composable
 private fun OverlayPreferenceToggle(
@@ -483,6 +501,7 @@ fun SettingsDashboard(
             setting.copy(defaultVolume = profileAppVolumes[identity] ?: setting.defaultVolume)
         }
     }
+
     val appOverlayOrder by preferences.appOverlayOrder.collectAsState(initial = emptyList())
     val appSettingsStoreHealth by preferences.appSettingsStoreHealth.collectAsState(
         initial = AppSettingsStoreHealth.HEALTHY
@@ -910,6 +929,7 @@ fun SettingsDashboard(
                 SettingsTab.APPS -> LazyColumn(
                     modifier = Modifier
                         .weight(1f)
+                        .imePadding()
                         .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.APPS))
                         .appReorderGestures(reorderGestureHost),
                     state = listStates.getValue(SettingsTab.APPS),
@@ -947,11 +967,13 @@ fun SettingsDashboard(
                             }
                         }
                     }
-                    item {
+                    item(key = "apps-search") {
                         OutlinedTextField(
                             value = appSearch,
                             onValueChange = { appSearch = it },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .moveSearchToTopOnFocus(appsListState, "apps-search", scope),
                             label = { Text("Search known audio apps") },
                             singleLine = true
                         )
@@ -1352,6 +1374,7 @@ fun SettingsDashboard(
                 SettingsTab.STAND_DOWN -> LazyColumn(
                     modifier = Modifier
                         .weight(1f)
+                        .imePadding()
                         .lazyScrollProgressIndicator(listStates.getValue(SettingsTab.STAND_DOWN)),
                     state = listStates.getValue(SettingsTab.STAND_DOWN),
                     contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 28.dp),
@@ -1371,11 +1394,17 @@ fun SettingsDashboard(
                         )
                     }
                     if (pickerExpanded) {
-                        item {
+                        item(key = "stand-down-search") {
                             OutlinedTextField(
                                 value = standDownSearch,
                                 onValueChange = { standDownSearch = it },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .moveSearchToTopOnFocus(
+                                        listStates.getValue(SettingsTab.STAND_DOWN),
+                                        "stand-down-search",
+                                        scope
+                                    ),
                                 label = { Text("Search app or package") },
                                 singleLine = true
                             )

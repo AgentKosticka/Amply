@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -199,6 +200,143 @@ fun DraggableDotSlider(
                         end = Offset(x - crossRadius, y + crossRadius),
                         strokeWidth = 1.dp.toPx(),
                         cap = StrokeCap.Round
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Horizontal counterpart used where a full-height overlay rail would feel cramped. */
+@Composable
+fun HorizontalDraggableDotSlider(
+    currentVolume: Int,
+    maxVolume: Int,
+    onVolumeChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    minVolume: Int = 0,
+    referenceMaxVolume: Int = maxVolume,
+    dotCount: Int = 16,
+    enabled: Boolean = true,
+    visuallyEnabled: Boolean = enabled,
+    accessibilityLabel: String = "Volume"
+) {
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .semantics {
+                contentDescription = accessibilityLabel
+                stateDescription = "$currentVolume of $maxVolume"
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    current = currentVolume.toFloat(),
+                    range = minVolume.toFloat()..maxVolume.toFloat(),
+                    steps = (maxVolume - minVolume - 1).coerceAtLeast(0)
+                )
+                if (enabled) {
+                    setProgress { requested ->
+                        onVolumeChange(requested.roundToInt().coerceIn(minVolume, maxVolume))
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            }
+            .then(
+                if (enabled) {
+                    Modifier
+                        .pointerInput(minVolume, maxVolume, referenceMaxVolume) {
+                            var lastEmittedVolume: Int? = null
+                            detectDragGestures(
+                                onDragStart = { lastEmittedVolume = null },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                                    val newVolume = VolumeDotScale.levelForFraction(
+                                        fraction,
+                                        minVolume,
+                                        maxVolume,
+                                        referenceMaxVolume
+                                    )
+                                    if (newVolume != lastEmittedVolume) {
+                                        lastEmittedVolume = newVolume
+                                        onVolumeChange(newVolume)
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(minVolume, maxVolume, referenceMaxVolume) {
+                            detectTapGestures { offset ->
+                                val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                                onVolumeChange(
+                                    VolumeDotScale.levelForFraction(
+                                        fraction,
+                                        minVolume,
+                                        maxVolume,
+                                        referenceMaxVolume
+                                    )
+                                )
+                            }
+                        }
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val safeDotCount = dotCount.coerceAtLeast(1)
+            val edgeInset = 4.dp.toPx().coerceAtMost(size.width / 2f)
+            val railWidth = (size.width - edgeInset * 2f).coerceAtLeast(0f)
+            val spacing = if (safeDotCount == 1) 0f else railWidth / (safeDotCount - 1)
+            val dotRadius = minOf(3.5.dp.toPx(), (spacing * 0.34f).coerceAtLeast(0.75.dp.toPx()))
+            val filledDots = VolumeDotScale.displayLevel(currentVolume, referenceMaxVolume, dotCount)
+            val projectedMin = VolumeDotScale.projectedLevel(
+                minVolume,
+                referenceMaxVolume,
+                dotCount
+            ).coerceAtLeast(1)
+
+            for (index in 0 until safeDotCount) {
+                val x = edgeInset + index * spacing
+                val y = size.height / 2f
+                val level = index + 1
+                val dotPercentage = if (safeDotCount == 1) 0f else index.toFloat() / (safeDotCount - 1)
+                val available = VolumeDotScale.isLevelAvailable(
+                    level,
+                    minVolume,
+                    maxVolume,
+                    referenceMaxVolume,
+                    dotCount
+                )
+                val color = when {
+                    !visuallyEnabled || !available -> Color(0xFF343434)
+                    level <= filledDots -> if (dotPercentage > 0.75f) NothingColors.Red else NothingColors.White
+                    else -> Color(0xFF444444)
+                }
+                drawCircle(color, dotRadius, Offset(x, y))
+                if (visuallyEnabled && minVolume > 0 && level == projectedMin && available) {
+                    drawCircle(
+                        color = NothingColors.GreyMedium.copy(alpha = 0.7f),
+                        radius = dotRadius + 2.dp.toPx(),
+                        center = Offset(x, y),
+                        style = Stroke(width = 1.dp.toPx())
+                    )
+                }
+                if (!available) {
+                    val crossRadius = dotRadius * 0.72f
+                    val crossColor = NothingColors.GreyMedium.copy(alpha = 0.55f)
+                    drawLine(
+                        crossColor,
+                        Offset(x - crossRadius, y - crossRadius),
+                        Offset(x + crossRadius, y + crossRadius),
+                        1.dp.toPx(),
+                        StrokeCap.Round
+                    )
+                    drawLine(
+                        crossColor,
+                        Offset(x + crossRadius, y - crossRadius),
+                        Offset(x - crossRadius, y + crossRadius),
+                        1.dp.toPx(),
+                        StrokeCap.Round
                     )
                 }
             }

@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -71,6 +73,7 @@ import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.overlay.ui.DraggableDotSlider
+import com.agentkosticka.amply.overlay.ui.HorizontalDraggableDotSlider
 import com.agentkosticka.amply.profiles.AudioProfile
 import com.agentkosticka.amply.profiles.AudioProfileSnapshot
 import com.agentkosticka.amply.profiles.KnownOutputDevice
@@ -123,6 +126,7 @@ internal fun ProfilesSettingsPage(
     val dynamicStreams by runtime.dynamicStreamState.collectAsState()
     val dotConfig by runtime.preferencesManager.volumeDotScaleConfig.collectAsState(initial = VolumeDotScaleConfig())
     val scope = rememberCoroutineScope()
+    val profilesListState = rememberLazyListState()
     var creating by rememberSaveable { mutableStateOf(false) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -141,6 +145,7 @@ internal fun ProfilesSettingsPage(
             ),
             hideProfileIdentity = hideProfileIdentity,
             navigationGuard = navigationGuard,
+            modifier = modifier,
             onNotificationPolicyClick = onNotificationPolicyClick,
             onDiscard = { editingId = null },
             onSave = { name, snapshot, assignedKeys, afterSave ->
@@ -169,7 +174,10 @@ internal fun ProfilesSettingsPage(
     }
 
     LazyColumn(
-        modifier = modifier.fillMaxWidth(),
+        state = profilesListState,
+        modifier = modifier
+            .fillMaxWidth()
+            .lazyScrollProgressIndicator(profilesListState),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -403,6 +411,7 @@ private fun ProfileEditor(
     ringNotificationLinked: Boolean,
     hideProfileIdentity: Boolean,
     navigationGuard: ProfileEditorNavigationGuard,
+    modifier: Modifier = Modifier,
     onNotificationPolicyClick: () -> Unit,
     onDiscard: () -> Unit,
     onSave: (String, AudioProfileSnapshot, Set<String>, () -> Unit) -> Unit
@@ -417,6 +426,8 @@ private fun ProfileEditor(
     val dirty = name != profile.name || snapshot != profile.snapshot || assigned != originalAssigned
     var showExitPrompt by remember { mutableStateOf(false) }
     var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val editorListState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     DisposableEffect(profile.id, dirty) {
         navigationGuard.attach { afterExit ->
@@ -433,10 +444,14 @@ private fun ProfileEditor(
     BackHandler { navigationGuard.requestExit() }
 
     LazyColumn(
+        state = editorListState,
+        modifier = modifier
+            .imePadding()
+            .lazyScrollProgressIndicator(editorListState),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item {
+        item(key = "profile-editor-header") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { navigationGuard.requestExit() }) { Text("BACK", color = NothingColors.Red) }
                 Text("EDIT PROFILE", color = NothingColors.White, style = MaterialTheme.typography.titleLarge)
@@ -501,14 +516,19 @@ private fun ProfileEditor(
                 )
             }
         }
-        item {
+        item(key = "profile-app-search") {
             SectionTitle("APP VOLUMES")
             Spacer(Modifier.height(8.dp))
             NothingTextField(
                 value = search,
                 onValueChange = { search = it },
                 label = "Search apps",
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                modifier = Modifier.moveSearchToTopOnFocus(
+                    editorListState,
+                    "profile-app-search",
+                    scope
+                )
             )
             if (search.isBlank()) {
                 Text(
@@ -585,21 +605,24 @@ private fun ProfileSystemVolumeRow(
 ) {
     val current = volumeIndex(fraction, bar.minVolume, bar.maxVolume)
     SettingsPanel {
-        Row(Modifier.fillMaxWidth().height(126.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                systemIcon(target),
-                null,
-                tint = NothingColors.Red,
-                modifier = Modifier.size(34.dp)
-            )
-            Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                Text(target.label, color = NothingColors.White, fontWeight = FontWeight.Bold)
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    systemIcon(target),
+                    null,
+                    tint = NothingColors.Red,
+                    modifier = Modifier.size(30.dp)
+                )
+                Text(
+                    target.label,
+                    color = NothingColors.White,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 12.dp)
+                )
+                Spacer(Modifier.weight(1f))
                 Text("${(fraction * 100).toInt()}%", color = NothingColors.GreyMedium)
-                if (bar.minVolume > 0 || bar.maxVolume < bar.referenceMaxVolume) {
-                    Text("Unavailable limits stay dimmed", color = NothingColors.GreyMedium, style = MaterialTheme.typography.labelSmall)
-                }
             }
-            DraggableDotSlider(
+            HorizontalDraggableDotSlider(
                 currentVolume = current,
                 minVolume = bar.minVolume,
                 maxVolume = bar.maxVolume,
@@ -608,8 +631,15 @@ private fun ProfileSystemVolumeRow(
                 enabled = bar.enabled,
                 onVolumeChange = { onChange(normalizedVolume(it, bar.minVolume, bar.maxVolume)) },
                 accessibilityLabel = "${target.label} profile volume",
-                modifier = Modifier.width(42.dp).height(106.dp)
+                modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp)
             )
+            if (bar.minVolume > 0 || bar.maxVolume < bar.referenceMaxVolume) {
+                Text(
+                    "Unavailable limits stay dimmed",
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 }
@@ -652,13 +682,14 @@ private fun NothingTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
-    keyboardOptions: KeyboardOptions = KeyboardOptions.Default
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         singleLine = true,
         shape = RoundedCornerShape(16.dp),
         keyboardOptions = keyboardOptions,

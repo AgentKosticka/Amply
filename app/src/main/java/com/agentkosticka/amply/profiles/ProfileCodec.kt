@@ -84,7 +84,11 @@ internal object ProfileCodec {
             for (index in 0 until devicesArray.length()) {
                 val item = devicesArray.getJSONObject(index)
                 val key = requiredText(item, "key", 128)
-                val profileId = item.optString("profileId").takeIf(String::isNotBlank)
+                val profileId = if (!item.has("profileId") || item.isNull("profileId")) {
+                    null
+                } else {
+                    requiredText(item, "profileId", 128)
+                }
                 require(profileId == null || profileId in profiles) { "Unknown assigned profile" }
                 require(key !in this) { "Duplicate output device" }
                 put(
