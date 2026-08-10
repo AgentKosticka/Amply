@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +52,6 @@ import com.agentkosticka.amply.settings.model.appDisplayName
 import com.agentkosticka.amply.settings.model.appProfileFallbackLabel
 import com.agentkosticka.amply.ui.theme.NothingColors
 import com.agentkosticka.amply.profiles.AudioProfile
-import com.agentkosticka.amply.profiles.ProfileSaveMode
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
@@ -151,14 +149,9 @@ internal fun OverlayProfileSelectorPanel(
     maxHeight: Dp,
     profiles: List<AudioProfile>,
     activeProfileId: String?,
-    profileDirty: Boolean,
-    autoSavingProfile: Boolean,
-    onProfileActivate: (String) -> Unit,
-    onProfileSave: () -> Unit
+    onProfileActivate: (String) -> Unit
 ) {
     val shape = RoundedCornerShape(OverlayCornerRadius)
-    val active = profiles.firstOrNull { it.id == activeProfileId }
-    val showSave = profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT
     val selectorScrollState = rememberScrollState()
     val sortedProfiles = remember(profiles) { profiles.sortedBy { it.name } }
     Column(
@@ -177,33 +170,6 @@ internal fun OverlayProfileSelectorPanel(
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
         )
-        Text(
-            when {
-                active == null -> "No active profile"
-                autoSavingProfile -> "${active.name} · Auto-saving"
-                profileDirty -> "${active.name} · Unsaved changes"
-                else -> active.name
-            },
-            color = if (profileDirty) NothingColors.Red else NothingColors.GreyMedium,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-        )
-        Spacer(Modifier.height(6.dp))
-        if (showSave) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF292929))
-                    .clickable(onClick = onProfileSave)
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.Save, null, tint = NothingColors.Red, modifier = Modifier.size(20.dp))
-                Text("Save ${active.name}", color = NothingColors.White, modifier = Modifier.padding(start = 10.dp))
-            }
-        }
         sortedProfiles.forEach { profile ->
             val selected = profile.id == activeProfileId
             Row(

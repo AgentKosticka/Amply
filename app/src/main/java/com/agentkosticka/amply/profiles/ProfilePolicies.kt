@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.profiles
 
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
+import com.agentkosticka.amply.audio.routing.VolumeTarget
 
 internal sealed interface OutputProfileAction {
     data object Ignore : OutputProfileAction
@@ -50,6 +51,18 @@ internal fun profileRingerApplyPlan(mode: NotificationAlertMode): ProfileRingerA
         // saved streams would overwrite one of them. Silent/Vibrate do not.
         reapplyAfterVolumes = mode != NotificationAlertMode.LOUD
     )
+
+internal fun profileVolumeSettled(
+    target: VolumeTarget,
+    expectedRingerMode: NotificationAlertMode,
+    ringerModeMatches: Boolean,
+    observedVolume: Int,
+    expectedVolume: Int
+): Boolean {
+    val alertStream = target == VolumeTarget.RING || target == VolumeTarget.NOTIFICATION
+    return (alertStream && expectedRingerMode != NotificationAlertMode.LOUD && ringerModeMatches) ||
+        observedVolume == expectedVolume
+}
 
 internal fun normalizedVolume(current: Int, min: Int, max: Int): Float =
     if (max <= min) 0f else ((current.coerceIn(min, max) - min).toFloat() / (max - min)).coerceIn(0f, 1f)

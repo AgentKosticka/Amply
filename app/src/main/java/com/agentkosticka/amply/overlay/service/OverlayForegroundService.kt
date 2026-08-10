@@ -312,14 +312,9 @@ open class OverlayForegroundService : Service() {
             OverlayManager.setDndToggleCallback {
                 runtime.dndController.toggleFromOverlay()
             }
-            OverlayManager.setProfileCallbacks(
-                onActivate = { id ->
-                    serviceScope.launch { runtime.profileCoordinator.activateProfile(id) }
-                },
-                onSave = {
-                    serviceScope.launch { runtime.profileCoordinator.saveCurrentProfile() }
-                }
-            )
+            OverlayManager.setProfileCallback { id ->
+                serviceScope.launch { runtime.profileCoordinator.activateProfile(id) }
+            }
             OverlayManager.setNotificationModeToggleCallback {
                 serviceScope.launch {
                     runtime.ringerExperimentExecutor.toggleProductionAlertMode()
@@ -482,7 +477,7 @@ open class OverlayForegroundService : Service() {
         OverlayManager.clearVolumeTargetCallbacks()
         OverlayManager.clearPauseAmplyCallback()
         OverlayManager.clearDndToggleCallback()
-        OverlayManager.clearProfileCallbacks()
+        OverlayManager.clearProfileCallback()
         OverlayManager.clearNotificationModeToggleCallback()
         OverlayManager.clearSystemStreamVolumeCallback()
     }

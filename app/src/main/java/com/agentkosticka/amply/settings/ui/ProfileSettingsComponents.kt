@@ -2,10 +2,16 @@ package com.agentkosticka.amply.settings.ui
 
 import android.os.Process
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +56,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -72,6 +80,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -88,7 +97,6 @@ import com.agentkosticka.amply.profiles.AudioProfileSnapshot
 import com.agentkosticka.amply.profiles.KnownOutputDevice
 import com.agentkosticka.amply.profiles.OutputKind
 import com.agentkosticka.amply.profiles.PROFILE_SYSTEM_TARGETS
-import com.agentkosticka.amply.profiles.ProfileSaveMode
 import com.agentkosticka.amply.profiles.normalizedVolume
 import com.agentkosticka.amply.profiles.volumeIndex
 import com.agentkosticka.amply.settings.model.AppIdentity
@@ -133,6 +141,8 @@ internal fun ProfilesSettingsPage(
     val state by runtime.profileCoordinator.state.collectAsState()
     val appSettings by runtime.preferencesManager.appSettings.collectAsState(initial = emptyMap())
     val hideProfileIdentity by runtime.preferencesManager.hideAppProfileIdentity.collectAsState(initial = true)
+    val automaticallySaveProfileChanges by runtime.preferencesManager.automaticallySaveProfileChanges
+        .collectAsState(initial = true)
     val dynamicStreams by runtime.dynamicStreamState.collectAsState()
     val dotConfig by runtime.preferencesManager.volumeDotScaleConfig.collectAsState(initial = VolumeDotScaleConfig())
     val scope = rememberCoroutineScope()
@@ -215,7 +225,6 @@ internal fun ProfilesSettingsPage(
                     listOfNotNull(
                         state.currentOutput?.displayName,
                         when {
-                            state.activeProfile?.saveMode == ProfileSaveMode.AUTO_DEVICE -> "Auto-saving"
                             state.dirty -> "Unsaved changes"
                             state.activeProfile != null -> "Saved"
                             else -> null
@@ -223,15 +232,65 @@ internal fun ProfilesSettingsPage(
                     ).joinToString(" · "),
                     color = if (state.dirty) NothingColors.Red else NothingColors.GreyMedium
                 )
-                if (state.dirty) {
-                    Spacer(Modifier.height(10.dp))
-                    NothingButton("SAVE CURRENT SETTINGS", Icons.Default.Save) {
-                        scope.launch { runtime.profileCoordinator.saveCurrentProfile() }
-                    }
-                }
                 if (state.lastApplyWarnings.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(state.lastApplyWarnings.joinToString("\n"), color = NothingColors.Red)
+                }
+            }
+        }
+
+        item(key = "automatic-profile-saving") {
+            SettingsPanel {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .toggleable(
+                            value = automaticallySaveProfileChanges,
+                            role = Role.Switch,
+                            onValueChange = { enabled ->
+                                scope.launch {
+                                    runtime.preferencesManager
+                                        .setAutomaticallySaveProfileChanges(enabled)
+                                    if (enabled) runtime.profileCoordinator.saveCurrentProfile()
+                                }
+                            }
+                        )
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "Automatically save profile changes",
+                        color = NothingColors.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = automaticallySaveProfileChanges,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = NothingColors.White,
+                            checkedTrackColor = NothingColors.Red,
+                            uncheckedThumbColor = NothingColors.GreyMedium,
+                            uncheckedTrackColor = Color(0xFF333333)
+                        )
+                    )
+                }
+                AnimatedVisibility(
+                    visible = !automaticallySaveProfileChanges,
+                    enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+                    exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
+                ) {
+                    Column {
+                        Spacer(Modifier.height(10.dp))
+                        NothingButton(
+                            label = "Save current settings to profile",
+                            icon = Icons.Default.Save,
+                            enabled = state.activeProfile != null
+                        ) {
+                            scope.launch { runtime.profileCoordinator.saveCurrentProfile() }
+                        }
+                    }
                 }
             }
         }
@@ -330,7 +389,6 @@ internal fun ProfilesSettingsPage(
                 ProfileCard(
                     profile = profile,
                     active = profile.id == state.store.activeProfileId,
-                    assignedOutputs = assignedOutputNames[profile.id].orEmpty(),
                     onActivate = { scope.launch { runtime.profileCoordinator.activateProfile(profile.id) } },
                     onEdit = { editingId = profile.id },
                     onDelete = { deletingId = profile.id }
@@ -351,7 +409,6 @@ internal fun ProfilesSettingsPage(
                 ProfileCard(
                     profile = profile,
                     active = profile.id == state.store.activeProfileId,
-                    assignedOutputs = emptyList(),
                     onActivate = { scope.launch { runtime.profileCoordinator.activateProfile(profile.id) } },
                     onEdit = { editingId = profile.id },
                     onDelete = { deletingId = profile.id }
@@ -390,7 +447,6 @@ internal fun ProfilesSettingsPage(
 private fun ProfileCard(
     profile: AudioProfile,
     active: Boolean,
-    assignedOutputs: List<String>,
     onActivate: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -399,16 +455,8 @@ private fun ProfileCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(profile.name, color = NothingColors.White, fontWeight = FontWeight.Bold)
-                val status = buildList {
-                    if (active) add("Active")
-                    if (assignedOutputs.isNotEmpty()) {
-                        add("Default for ${assignedOutputs.joinToString()}")
-                    } else if (!active) {
-                        add("Saved profile")
-                    }
-                }.joinToString(" · ")
                 Text(
-                    status,
+                    if (active) "Active" else "Saved profile",
                     color = if (active) NothingColors.Red else NothingColors.GreyMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -925,9 +973,15 @@ private fun CheckRow(label: String, checked: Boolean, onCheckedChange: (Boolean)
 }
 
 @Composable
-private fun NothingButton(label: String, icon: ImageVector? = null, onClick: () -> Unit) {
+private fun NothingButton(
+    label: String,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         colors = ButtonDefaults.buttonColors(containerColor = NothingColors.Red),
         shape = RoundedCornerShape(18.dp)
     ) {

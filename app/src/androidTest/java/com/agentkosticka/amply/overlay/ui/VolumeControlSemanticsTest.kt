@@ -88,7 +88,7 @@ class VolumeControlSemanticsTest {
         compose.onAllNodesWithContentDescription("Pause Amply temporarily").assertCountEquals(0)
     }
 
-    @Test fun expandedOverlayMovesProfileSwitchingIntoItsOwnActionButton() {
+    @Test fun expandedOverlayOpensProfileSelectorFromItsOwnActionButton() {
         val profile = AudioProfile(
             id = "night",
             name = "Night",
@@ -103,7 +103,6 @@ class VolumeControlSemanticsTest {
                     expanded = true,
                     profiles = listOf(profile),
                     activeProfileId = profile.id,
-                    profileDirty = true,
                     showStandDownButton = false,
                     showShizukuDisconnectedWarning = false,
                     shizukuConnectionState = VolumeServiceConnectionState.CONNECTED
@@ -113,7 +112,6 @@ class VolumeControlSemanticsTest {
 
         compose.onNodeWithContentDescription("Switch profile").performClick()
         compose.onNodeWithText("Night").assertIsDisplayed()
-        compose.onNodeWithText("Save Night").assertIsDisplayed()
     }
 
     @Test fun collapsedRingerPillKeepsDndButtonVisible() {

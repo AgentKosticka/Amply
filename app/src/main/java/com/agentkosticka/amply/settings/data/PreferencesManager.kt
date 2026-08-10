@@ -50,6 +50,8 @@ class PreferencesManager(private val context: Context) {
         private val HIDE_APP_PROFILE_IDENTITY = booleanPreferencesKey("hide_app_profile_identity")
         private val HIDE_STAND_DOWN_BUTTON = booleanPreferencesKey("hide_stand_down_button")
         private val SHOW_DND_BUTTON = booleanPreferencesKey("show_dnd_button")
+        private val AUTOMATICALLY_SAVE_PROFILE_CHANGES =
+            booleanPreferencesKey("automatically_save_profile_changes")
         private val AUDIO_PROFILES_JSON = stringPreferencesKey("audio_profiles_json")
         private val AUDIO_PROFILES_JSON_BACKUP = stringPreferencesKey("audio_profiles_json_backup")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
@@ -235,6 +237,13 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setShowDndButton(show: Boolean): SettingsOperationResult =
         editSettings { it[SHOW_DND_BUTTON] = show }
+
+    val automaticallySaveProfileChanges: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] ?: true
+    }
+
+    suspend fun setAutomaticallySaveProfileChanges(enabled: Boolean): SettingsOperationResult =
+        editSettings { it[AUTOMATICALLY_SAVE_PROFILE_CHANGES] = enabled }
 
     suspend fun setAmplyPauseDuration(duration: AmplyPauseDuration): SettingsOperationResult =
         editSettings { it[AMPLY_PAUSE_DURATION] = duration.name }
@@ -475,6 +484,10 @@ class PreferencesManager(private val context: Context) {
             .put("hideAppProfileIdentity", preferences[HIDE_APP_PROFILE_IDENTITY] ?: true)
             .put("hideStandDownButton", preferences[HIDE_STAND_DOWN_BUTTON] ?: false)
             .put("showDndButton", preferences[SHOW_DND_BUTTON] ?: false)
+            .put(
+                "automaticallySaveProfileChanges",
+                preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] ?: true
+            )
             .put("standDownPackages", JSONArray(passThrough.sorted()))
             .put(
                 "appOverlayOrder",
@@ -538,6 +551,8 @@ class PreferencesManager(private val context: Context) {
                 preferences[HIDE_APP_PROFILE_IDENTITY] = imported.hideAppProfileIdentity
                 preferences[HIDE_STAND_DOWN_BUTTON] = imported.hideStandDownButton
                 preferences[SHOW_DND_BUTTON] = imported.showDndButton
+                preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] =
+                    imported.automaticallySaveProfileChanges
                 val existingPackages = decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
                     ?: AppSettingsCodec.legacyPassThroughPackages(
                         preferences[APP_SETTINGS_JSON_V2] ?: preferences[APP_SETTINGS_JSON]
@@ -578,6 +593,7 @@ class PreferencesManager(private val context: Context) {
         val hideAppProfileIdentity: Boolean,
         val hideStandDownButton: Boolean,
         val showDndButton: Boolean,
+        val automaticallySaveProfileChanges: Boolean,
         val appOverlayOrder: List<AppIdentity>,
         val standDownPackages: Set<String>,
         val profileStore: ProfileStore
@@ -659,6 +675,12 @@ class PreferencesManager(private val context: Context) {
             "showDndButton",
             "Invalid Do Not Disturb button visibility setting"
         )
+        val automaticallySaveProfileChanges = if (root.has("automaticallySaveProfileChanges")) {
+            require(root.get("automaticallySaveProfileChanges") is Boolean) {
+                "Invalid automatic profile saving setting"
+            }
+            root.getBoolean("automaticallySaveProfileChanges")
+        } else true
         val standDown = linkedSetOf<String>()
         val appOverlayOrder = mutableListOf<AppIdentity>()
         val seenOrderedApps = mutableSetOf<AppIdentity>()
@@ -708,6 +730,7 @@ class PreferencesManager(private val context: Context) {
             hideAppProfileIdentity = hideAppProfileIdentity,
             hideStandDownButton = hideStandDownButton,
             showDndButton = showDndButton,
+            automaticallySaveProfileChanges = automaticallySaveProfileChanges,
             appOverlayOrder = appOverlayOrder,
             standDownPackages = standDown,
             profileStore = profileStore

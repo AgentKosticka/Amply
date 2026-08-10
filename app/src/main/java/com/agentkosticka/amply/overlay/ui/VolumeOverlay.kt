@@ -115,8 +115,6 @@ fun VolumeOverlay(
     dndActive: Boolean = false,
     profiles: List<AudioProfile> = emptyList(),
     activeProfileId: String? = null,
-    profileDirty: Boolean = false,
-    autoSavingProfile: Boolean = false,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     initiallyExpanded: Boolean = false,
@@ -132,7 +130,6 @@ fun VolumeOverlay(
     onPauseAmply: () -> Unit = {},
     onDndToggle: () -> Unit = {},
     onProfileActivate: (String) -> Unit = {},
-    onProfileSave: () -> Unit = {},
     onDismissRequest: () -> Unit = {}
 ) {
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
@@ -346,11 +343,7 @@ fun VolumeOverlay(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.SwapHoriz,
-                                            contentDescription = if (autoSavingProfile) {
-                                                "Switch profile, current profile auto-saves"
-                                            } else {
-                                                "Switch profile"
-                                            },
+                                            contentDescription = "Switch profile",
                                             tint = NothingColors.White,
                                             modifier = Modifier.size(24.dp)
                                         )
@@ -501,18 +494,10 @@ fun VolumeOverlay(
                     maxHeight = maxHeight,
                     profiles = profiles,
                     activeProfileId = activeProfileId,
-                    profileDirty = profileDirty,
-                    autoSavingProfile = autoSavingProfile,
                     onProfileActivate = { profileId ->
                         if (profileMenuExpanded) {
                             profileMenuExpanded = false
                             onProfileActivate(profileId)
-                        }
-                    },
-                    onProfileSave = {
-                        if (profileMenuExpanded) {
-                            profileMenuExpanded = false
-                            onProfileSave()
                         }
                     }
                 )

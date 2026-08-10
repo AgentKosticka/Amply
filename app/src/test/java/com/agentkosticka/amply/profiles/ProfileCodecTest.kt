@@ -166,6 +166,32 @@ class ProfileRingerApplyPlanTest {
         assertTrue(profileRingerApplyPlan(NotificationAlertMode.MUTED).reapplyAfterVolumes)
         assertTrue(profileRingerApplyPlan(NotificationAlertMode.VIBRATIONS).reapplyAfterVolumes)
     }
+
+    @Test
+    fun mutedAlertVolumesAreSettledWhenAndroidMasksTheirReadback() {
+        assertTrue(
+            profileVolumeSettled(
+                target = VolumeTarget.RING,
+                expectedRingerMode = NotificationAlertMode.MUTED,
+                ringerModeMatches = true,
+                observedVolume = 0,
+                expectedVolume = 5
+            )
+        )
+    }
+
+    @Test
+    fun loudAlertVolumesStillRequireTheExpectedLevel() {
+        assertFalse(
+            profileVolumeSettled(
+                target = VolumeTarget.NOTIFICATION,
+                expectedRingerMode = NotificationAlertMode.LOUD,
+                ringerModeMatches = true,
+                observedVolume = 2,
+                expectedVolume = 5
+            )
+        )
+    }
 }
 
 class ProfileDirtyStateTest {

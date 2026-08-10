@@ -228,9 +228,10 @@ class ProfileCoordinator(
         val profile = store.activeProfile ?: return false
         val base = store.activeSnapshot ?: profile.snapshot
         val snapshot = base.copy(appVolumes = base.appVolumes + (identity to volume.coerceIn(0f, 1f)))
+        val saveAutomatically = preferences.automaticallySaveProfileChanges.first()
         preferences.updateProfileStore {
             val latest = it.profiles[profile.id] ?: return@updateProfileStore it
-            if (latest.saveMode == ProfileSaveMode.AUTO_DEVICE) {
+            if (saveAutomatically) {
                 val saved = latest.copy(snapshot = snapshot, updatedAtEpochMs = System.currentTimeMillis())
                 it.copy(profiles = it.profiles + (profile.id to saved), activeDraft = snapshot)
             } else {
@@ -354,19 +355,18 @@ class ProfileCoordinator(
         )
     }
 
-    private fun applySnapshot(snapshot: AudioProfileSnapshot): List<String> {
+    private suspend fun applySnapshot(snapshot: AudioProfileSnapshot): List<String> {
         val warnings = mutableListOf<String>()
         val topology = shizukuVolumeManager.getStreamTopology()
         val seenCanonical = mutableSetOf<Int>()
         val ringerPlan = profileRingerApplyPlan(snapshot.ringerMode)
+        val localVolumesNeedingVerification = mutableListOf<Pair<VolumeTarget, Float>>()
 
         // Setting Loud can restore a remembered alert volume. Do it before applying
         // the saved Ring/Notifications levels so independently routed streams are
         // not collapsed back onto that remembered value.
-        if (ringerPlan.applyBeforeVolumes &&
-            !ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)
-        ) {
-            warnings += "Ringer mode could not be changed"
+        if (ringerPlan.applyBeforeVolumes) {
+            ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)
         }
         snapshot.systemVolumes.forEach { (target, fraction) ->
             val canonical = topology?.canonicalStream(target.streamType) ?: target.streamType
@@ -377,16 +377,18 @@ class ProfileCoordinator(
                     outputMonitor.setRemoteVolume((fraction * route.remoteMaxVolume).toInt())
                 } else false
             } else applyLocalStream(target, fraction)
-            if (!applied) warnings += "${target.label} volume could not be changed"
+            if (!applied && !(target == VolumeTarget.MEDIA && route.descriptor.kind == OutputKind.CAST)) {
+                localVolumesNeedingVerification += target to fraction
+            } else if (!applied) {
+                warnings += "${target.label} volume could not be changed"
+            }
         }
 
         // Alert-volume controls can promote the phone to Loud. Reassert non-Loud
         // modes after the levels are in place; unlike Loud, these modes do not
         // restore and overwrite an independently saved stream volume.
-        if (ringerPlan.reapplyAfterVolumes &&
-            !ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)
-        ) {
-            warnings += "Ringer mode could not be restored"
+        if (ringerPlan.reapplyAfterVolumes) {
+            ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)
         }
         snapshot.dndEnabled?.let { enabled ->
             when (dndController.setActive(enabled)) {
@@ -395,7 +397,48 @@ class ProfileCoordinator(
                 else -> warnings += "Do Not Disturb could not be changed"
             }
         }
+        warnings += settledAudioWarnings(
+            expectedRingerMode = snapshot.ringerMode,
+            requestedVolumes = localVolumesNeedingVerification
+        )
         return warnings
+    }
+
+    private suspend fun settledAudioWarnings(
+        expectedRingerMode: NotificationAlertMode,
+        requestedVolumes: List<Pair<VolumeTarget, Float>>
+    ): List<String> {
+        var modeMatches = false
+        var unresolvedVolumes = requestedVolumes
+        repeat(6) {
+            delay(100L)
+            modeMatches = NotificationAlertMode.resolve(audioManager.ringerMode) == expectedRingerMode
+            unresolvedVolumes = requestedVolumes.filter { (target, fraction) ->
+                val min = runCatching { audioManager.getStreamMinVolume(target.streamType) }
+                    .getOrDefault(0)
+                val max = runCatching { audioManager.getStreamMaxVolume(target.streamType) }
+                    .getOrDefault(min)
+                val expected = volumeIndex(fraction, min, max)
+                val observed = runCatching { audioManager.getStreamVolume(target.streamType) }
+                    .getOrDefault(Int.MIN_VALUE)
+                !profileVolumeSettled(
+                    target = target,
+                    expectedRingerMode = expectedRingerMode,
+                    ringerModeMatches = modeMatches,
+                    observedVolume = observed,
+                    expectedVolume = expected
+                )
+            }
+            if (modeMatches && unresolvedVolumes.isEmpty()) {
+                return emptyList()
+            }
+        }
+        return buildList {
+            if (!modeMatches) add("Ringer mode could not be changed")
+            unresolvedVolumes.forEach { (target, _) ->
+                add("${target.label} volume could not be changed")
+            }
+        }
     }
 
     private fun applyLocalStream(target: VolumeTarget, fraction: Float): Boolean {
@@ -419,7 +462,7 @@ class ProfileCoordinator(
             val store = preferences.profileStore.first()
             val profile = store.activeProfile ?: return@launch
             val snapshot = captureSnapshot()
-            if (profile.saveMode == ProfileSaveMode.AUTO_DEVICE) {
+            if (preferences.automaticallySaveProfileChanges.first()) {
                 val updated = profile.copy(snapshot = snapshot, updatedAtEpochMs = System.currentTimeMillis())
                 preferences.updateProfileStore {
                     it.copy(profiles = it.profiles + (profile.id to updated), activeDraft = snapshot)
@@ -435,7 +478,7 @@ class ProfileCoordinator(
         autoSaveJob = null
         if (applying) return
         val profile = preferences.profileStore.first().activeProfile ?: return
-        if (profile.saveMode != ProfileSaveMode.AUTO_DEVICE) return
+        if (!preferences.automaticallySaveProfileChanges.first()) return
         saveCurrentProfile()
     }
 }
