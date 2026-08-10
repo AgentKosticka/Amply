@@ -212,14 +212,17 @@ internal fun AppSettingsRow(
                 fontWeight = FontWeight.Bold
             )
 
-            if (app.isCustomized) {
-                TextButton(
-                    onClick = onReset,
-                    enabled = enabled,
-                    contentPadding = PaddingValues(horizontal = 6.dp)
-                ) {
-                    Text("RESET", color = NothingColors.GreyMedium, style = MaterialTheme.typography.labelSmall)
-                }
+            TextButton(
+                onClick = onReset,
+                enabled = enabled,
+                contentPadding = PaddingValues(horizontal = 6.dp)
+            ) {
+                Text(
+                    "FORGET",
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
             }
 
         }
