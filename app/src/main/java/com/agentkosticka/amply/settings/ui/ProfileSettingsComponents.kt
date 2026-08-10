@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +56,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -64,6 +67,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -429,42 +434,47 @@ private fun ProfileEditor(
     var showExitPrompt by remember { mutableStateOf(false) }
     var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     val editorListState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     val personalUserId = Process.myUid() / 100_000
-    val appPresentations = appSettings.entries.map { (identity, setting) ->
-        val base = appDisplayName(setting.appName, identity.userId, personalUserId, hideProfileIdentity)
-        val suffix = appProfileFallbackLabel(
-            setting.appName,
-            identity.userId,
-            personalUserId,
-            hideProfileIdentity
-        )
-        ProfileEditorApp(identity, setting, base, suffix)
-    }.sortedBy { it.displayName }
-    var revealedApps by remember(profile.id) {
-        mutableStateOf<Set<AppIdentity>>(
-            appPresentations
-                .filter { presentation ->
-                    (snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume) < 0.999f
-                }
-                .mapTo(linkedSetOf()) { it.identity }
-        )
+    val appPresentations = remember(appSettings, personalUserId, hideProfileIdentity) {
+        appSettings.entries.map { (identity, setting) ->
+            val base = appDisplayName(
+                setting.appName,
+                identity.userId,
+                personalUserId,
+                hideProfileIdentity
+            )
+            val suffix = appProfileFallbackLabel(
+                setting.appName,
+                identity.userId,
+                personalUserId,
+                hideProfileIdentity
+            )
+            ProfileEditorApp(identity, setting, base, suffix)
+        }.sortedBy { it.displayName }
     }
-    LaunchedEffect(search, appPresentations) {
-        if (search.isNotBlank()) {
-            revealedApps = revealedApps + appPresentations
-                .filter { it.searchText.contains(search, ignoreCase = true) }
-                .map { it.identity }
-        }
-    }
+    var adjustedApps by remember(profile.id) { mutableStateOf<Set<AppIdentity>>(emptySet()) }
+    var searchFocused by remember { mutableStateOf(false) }
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val shownApps = appPresentations.filter { presentation ->
         val effectiveVolume = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
         shouldShowProfileApp(
             search = search,
             displayName = presentation.searchText,
             volume = effectiveVolume,
-            alreadyRevealed = presentation.identity in revealedApps
+            alreadyRevealed = presentation.identity in adjustedApps
         )
+    }
+    LaunchedEffect(searchFocused, imeVisible) {
+        if (!searchFocused) return@LaunchedEffect
+        val searchIndex = editorListState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.key == "profile-app-search" }
+            ?.index
+            ?: return@LaunchedEffect
+        if (imeVisible) {
+            editorListState.scrollToItem(searchIndex)
+        } else {
+            editorListState.animateScrollToItem(searchIndex)
+        }
     }
 
     DisposableEffect(profile.id, dirty) {
@@ -566,19 +576,24 @@ private fun ProfileEditor(
                 )
             }
         }
-        item(key = "profile-app-search") {
+        item(key = "profile-app-heading") {
             SectionTitle("APP VOLUMES")
-            Spacer(Modifier.height(8.dp))
+        }
+        item(key = "profile-app-search") {
             NothingTextField(
                 value = search,
-                onValueChange = { search = it },
+                onValueChange = { nextSearch ->
+                    adjustedApps = retainedProfileAppsAfterSearchChange(
+                        currentSearch = search,
+                        nextSearch = nextSearch,
+                        adjustedApps = adjustedApps
+                    )
+                    search = nextSearch
+                },
                 label = "Search apps",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                modifier = Modifier.moveSearchToTopOnFocus(
-                    editorListState,
-                    "profile-app-search",
-                    scope
-                )
+                modifier = Modifier
+                    .onFocusChanged { searchFocused = it.isFocused }
             )
             if (search.isBlank() && shownApps.isEmpty()) {
                 Text(
@@ -588,20 +603,36 @@ private fun ProfileEditor(
                 )
             }
         }
-        items(shownApps, key = { it.identity.storageKey }) { presentation ->
-            val value = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
-            ProfileAppVolumeRow(
-                packageName = presentation.identity.packageName,
-                displayName = presentation.displayName,
-                profileLabel = presentation.profileLabel,
-                fraction = value,
-                onChange = { changed ->
-                    revealedApps = revealedApps + presentation.identity
-                    snapshot = snapshot.copy(
-                        appVolumes = snapshot.appVolumes + (presentation.identity to changed)
-                    )
+        item(key = "profile-app-results-holder") {
+            val holderModifier = if (searchFocused) {
+                Modifier.fillParentMaxHeight(0.82f)
+            } else {
+                Modifier
+            }
+            Column(
+                modifier = holderModifier
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                shownApps.forEach { presentation ->
+                    key(presentation.identity.storageKey) {
+                        val value = snapshot.appVolumes[presentation.identity]
+                            ?: presentation.setting.defaultVolume
+                        ProfileAppVolumeRow(
+                            packageName = presentation.identity.packageName,
+                            displayName = presentation.displayName,
+                            profileLabel = presentation.profileLabel,
+                            fraction = value,
+                            onChange = { changed ->
+                                adjustedApps = adjustedApps + presentation.identity
+                                snapshot = snapshot.copy(
+                                    appVolumes = snapshot.appVolumes + (presentation.identity to changed)
+                                )
+                            }
+                        )
+                    }
                 }
-            )
+            }
         }
         item {
             Button(
@@ -887,8 +918,17 @@ internal fun shouldShowProfileApp(
     volume: Float,
     alreadyRevealed: Boolean = false
 ): Boolean = alreadyRevealed ||
-    volume < 0.999f ||
-    (search.isNotBlank() && displayName.contains(search, ignoreCase = true))
+    if (search.isNotBlank()) {
+        displayName.contains(search, ignoreCase = true)
+    } else {
+        volume < 0.999f
+    }
+
+internal fun retainedProfileAppsAfterSearchChange(
+    currentSearch: String,
+    nextSearch: String,
+    adjustedApps: Set<AppIdentity>
+): Set<AppIdentity> = if (currentSearch == nextSearch) adjustedApps else emptySet()
 
 private data class ProfileEditorApp(
     val identity: AppIdentity,

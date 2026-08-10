@@ -3,23 +3,22 @@ package com.agentkosticka.amply.overlay.ui
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -30,6 +29,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +56,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -161,6 +163,33 @@ fun VolumeOverlay(
     }
     val hasPanelContent = profileMenuExpanded || apps.isNotEmpty() ||
         (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
+    val panelSwapTransition = updateTransition(
+        targetState = profileMenuExpanded,
+        label = "profilePanelSwap"
+    )
+    val panelSwapProgress by panelSwapTransition.animateFloat(
+        transitionSpec = {
+            if (targetState) {
+                tween(380, easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f))
+            } else {
+                tween(280, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))
+            }
+        },
+        label = "profilePanelSwapProgress"
+    ) { showProfiles ->
+        if (showProfiles) 1f else 0f
+    }
+    val profilePanelAlpha by panelSwapTransition.animateFloat(
+        transitionSpec = {
+            tween(
+                durationMillis = if (targetState) 240 else 190,
+                easing = LinearEasing
+            )
+        },
+        label = "profilePanelSwapAlpha"
+    ) { showProfiles ->
+        if (showProfiles) 1f else 0f
+    }
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val density = LocalDensity.current
     val containerSize = LocalWindowInfo.current.containerSize
@@ -387,29 +416,52 @@ fun VolumeOverlay(
     }
 
     val panelBody: @Composable (Dp, Dp) -> Unit = { panelWidth, maxHeight ->
-        androidx.compose.animation.AnimatedContent(
-            targetState = profileMenuExpanded,
-            transitionSpec = {
-                val direction = if (targetState) 1 else -1
-                (
-                    fadeIn(tween(190, delayMillis = 35)) +
-                        slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) {
-                            direction * it / 5
-                        }
-                    ).togetherWith(
-                    fadeOut(tween(135)) +
-                        slideOutHorizontally(tween(175, easing = FastOutSlowInEasing)) {
-                            -direction * it / 6
-                        }
-                ).using(
-                    SizeTransform(clip = false) { _, _ ->
-                        tween(220, easing = FastOutSlowInEasing)
+        val travelPx = with(density) { panelWidth.toPx() * 0.1f }
+        Box(
+            modifier = Modifier
+                .width(panelWidth)
+                .heightIn(min = 1.dp, max = maxHeight),
+            contentAlignment = Alignment.TopStart
+        ) {
+            Box(
+                Modifier
+                    .zIndex(if (profileMenuExpanded) 0f else 2f)
+                    .graphicsLayer {
+                        alpha = 1f - profilePanelAlpha
+                        translationX = -travelPx * panelSwapProgress
+                        scaleX = 1f - panelSwapProgress * 0.018f
+                        scaleY = 1f - panelSwapProgress * 0.018f
                     }
-                )
-            },
-            label = "overlayPanelContent"
-        ) { showProfiles ->
-            if (showProfiles) {
+                    .semantics { if (profileMenuExpanded) hideFromAccessibility() }
+            ) {
+                if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()) {
+                    AmplyPanel(
+                        panelWidth = panelWidth,
+                        maxHeight = maxHeight,
+                        apps = apps,
+                        shizukuDisconnected = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED,
+                        showAppProfileIdentity = showAppProfileIdentity,
+                        onAppVolumeChange = { app, volume ->
+                            if (!profileMenuExpanded) onAppVolumeChange(app, volume)
+                        },
+                        onTouchStart = { if (!profileMenuExpanded) onTouchStart() },
+                        onTouchEnd = { if (!profileMenuExpanded) onTouchEnd() }
+                    )
+                } else if (showShizukuDisconnectedWarning) {
+                    ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
+                }
+            }
+            Box(
+                Modifier
+                    .zIndex(if (profileMenuExpanded) 2f else 0f)
+                    .graphicsLayer {
+                        alpha = profilePanelAlpha
+                        translationX = travelPx * (1f - panelSwapProgress)
+                        scaleX = 0.982f + panelSwapProgress * 0.018f
+                        scaleY = 0.982f + panelSwapProgress * 0.018f
+                    }
+                    .semantics { if (!profileMenuExpanded) hideFromAccessibility() }
+            ) {
                 OverlayProfileSelectorPanel(
                     panelWidth = panelWidth,
                     maxHeight = maxHeight,
@@ -418,31 +470,18 @@ fun VolumeOverlay(
                     profileDirty = profileDirty,
                     autoSavingProfile = autoSavingProfile,
                     onProfileActivate = { profileId ->
-                        profileMenuExpanded = false
-                        onProfileActivate(profileId)
+                        if (profileMenuExpanded) {
+                            profileMenuExpanded = false
+                            onProfileActivate(profileId)
+                        }
                     },
                     onProfileSave = {
-                        profileMenuExpanded = false
-                        onProfileSave()
+                        if (profileMenuExpanded) {
+                            profileMenuExpanded = false
+                            onProfileSave()
+                        }
                     }
                 )
-            } else if (
-                shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()
-            ) {
-                AmplyPanel(
-                    panelWidth = panelWidth,
-                    maxHeight = maxHeight,
-                    apps = apps,
-                    shizukuDisconnected = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED,
-                    showAppProfileIdentity = showAppProfileIdentity,
-                    onAppVolumeChange = { app, volume -> onAppVolumeChange(app, volume) },
-                    onTouchStart = onTouchStart,
-                    onTouchEnd = onTouchEnd
-                )
-            } else if (showShizukuDisconnectedWarning) {
-                ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
-            } else {
-                Box(Modifier.width(panelWidth).height(1.dp))
             }
         }
     }
@@ -509,11 +548,16 @@ fun VolumeOverlay(
                     androidx.compose.animation.AnimatedVisibility(
                         visibleState = panelTransitionState,
                         enter = slideInHorizontally(
-                            initialOffsetX = { it }
-                        ) + fadeIn(animationSpec = tween(180)),
+                            initialOffsetX = { it / 5 },
+                            animationSpec = tween(
+                                380,
+                                easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+                            )
+                        ) + fadeIn(animationSpec = tween(250, easing = LinearEasing)),
                         exit = slideOutHorizontally(
-                            targetOffsetX = { it }
-                        ) + fadeOut(animationSpec = tween(120))
+                            targetOffsetX = { it / 8 },
+                            animationSpec = tween(260, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(220))
                     ) {
                         Row(verticalAlignment = Alignment.Bottom) {
                             Box(
@@ -545,11 +589,16 @@ fun VolumeOverlay(
                     androidx.compose.animation.AnimatedVisibility(
                         visibleState = panelTransitionState,
                         enter = slideInHorizontally(
-                            initialOffsetX = { -it }
-                        ) + fadeIn(animationSpec = tween(180)),
+                            initialOffsetX = { -it / 5 },
+                            animationSpec = tween(
+                                380,
+                                easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+                            )
+                        ) + fadeIn(animationSpec = tween(250, easing = LinearEasing)),
                         exit = slideOutHorizontally(
-                            targetOffsetX = { -it }
-                        ) + fadeOut(animationSpec = tween(120))
+                            targetOffsetX = { -it / 8 },
+                            animationSpec = tween(260, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(220))
                     ) {
                         Row(verticalAlignment = Alignment.Bottom) {
                             Spacer(modifier = Modifier.width(PanelSpacing))
@@ -577,26 +626,29 @@ fun VolumeOverlay(
                 pillContent()
                 AnimatedVisibility(
                     visibleState = panelTransitionState,
-                    enter = fadeIn(animationSpec = tween(180)) + expandVertically(
-                        expandFrom = Alignment.Top,
-                        animationSpec = tween(230, easing = FastOutSlowInEasing)
+                    enter = fadeIn(animationSpec = tween(250, easing = LinearEasing)) + slideInVertically(
+                        initialOffsetY = { -it / 10 },
+                        animationSpec = tween(
+                            380,
+                            easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+                        )
                     ),
-                    exit = fadeOut(animationSpec = tween(140)) + shrinkVertically(
-                        shrinkTowards = Alignment.Top,
-                        animationSpec = tween(190, easing = FastOutSlowInEasing)
+                    exit = fadeOut(animationSpec = tween(220)) + slideOutVertically(
+                        targetOffsetY = { -it / 14 },
+                        animationSpec = tween(280, easing = FastOutSlowInEasing)
                     )
                 ) {
                     val horizontalReveal = transition.animateFloat(
                         transitionSpec = {
                             if (targetState == EnterExitState.Visible) {
-                                tween(210, easing = FastOutSlowInEasing)
+                                tween(380, easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f))
                             } else {
-                                tween(140, easing = FastOutSlowInEasing)
+                                tween(260, easing = FastOutSlowInEasing)
                             }
                         },
                         label = "portraitPanelHorizontalReveal"
                     ) { state ->
-                        if (state == EnterExitState.Visible) 1f else 0.86f
+                        if (state == EnterExitState.Visible) 1f else 0.96f
                     }
                     Column {
                         Spacer(modifier = Modifier.height(PanelSpacing))

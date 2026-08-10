@@ -9,9 +9,10 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
@@ -157,70 +158,72 @@ internal fun OverlayProfileSelectorPanel(
 ) {
     val shape = RoundedCornerShape(OverlayCornerRadius)
     val active = profiles.firstOrNull { it.id == activeProfileId }
-    LazyColumn(
+    val showSave = profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT
+    val selectorHeight = (92 + profiles.size * 52 + if (showSave) 52 else 0).dp
+        .coerceIn(100.dp, maxHeight)
+    val sortedProfiles = remember(profiles) { profiles.sortedBy { it.name } }
+    Column(
         modifier = Modifier
             .width(panelWidth)
-            .heightIn(min = 100.dp, max = maxHeight)
+            .height(selectorHeight)
             .clip(shape)
             .background(Color(0xFF1C1C1C), shape)
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        item(key = "profile-selector-heading") {
-            Text(
-                "PROFILES",
-                color = NothingColors.White,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
-            )
-            Text(
-                when {
-                    active == null -> "No active profile"
-                    autoSavingProfile -> "${active.name} · Auto-saving"
-                    profileDirty -> "${active.name} · Unsaved changes"
-                    else -> active.name
-                },
-                color = if (profileDirty) NothingColors.Red else NothingColors.GreyMedium,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-            )
-            Spacer(Modifier.height(6.dp))
-        }
-        if (profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT) {
-            item(key = "profile-selector-save") {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xFF292929))
-                        .clickable(onClick = onProfileSave)
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Save, null, tint = NothingColors.Red, modifier = Modifier.size(20.dp))
-                    Text("Save ${active.name}", color = NothingColors.White, modifier = Modifier.padding(start = 10.dp))
-                }
+        Text(
+            "PROFILES",
+            color = NothingColors.White,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+        )
+        Text(
+            when {
+                active == null -> "No active profile"
+                autoSavingProfile -> "${active.name} · Auto-saving"
+                profileDirty -> "${active.name} · Unsaved changes"
+                else -> active.name
+            },
+            color = if (profileDirty) NothingColors.Red else NothingColors.GreyMedium,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+        )
+        Spacer(Modifier.height(6.dp))
+        if (showSave) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF292929))
+                    .clickable(onClick = onProfileSave)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Save, null, tint = NothingColors.Red, modifier = Modifier.size(20.dp))
+                Text("Save ${active.name}", color = NothingColors.White, modifier = Modifier.padding(start = 10.dp))
             }
         }
-        items(
-            items = profiles.sortedBy { it.name },
-            key = { "profile-selector-${it.id}" }
-        ) { profile ->
+        sortedProfiles.forEach { profile ->
             val selected = profile.id == activeProfileId
             Row(
                 Modifier
                     .fillMaxWidth()
+                    .height(48.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (selected) Color(0xFF292929) else Color.Transparent)
                     .clickable { onProfileActivate(profile.id) }
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                    .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     profile.name,
                     color = NothingColors.White,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (selected) {
                     Icon(Icons.Default.Check, "Active profile", tint = NothingColors.Red, modifier = Modifier.size(20.dp))

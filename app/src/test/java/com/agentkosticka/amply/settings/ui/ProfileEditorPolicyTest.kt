@@ -1,5 +1,6 @@
 package com.agentkosticka.amply.settings.ui
 
+import com.agentkosticka.amply.settings.model.AppIdentity
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,9 +14,9 @@ class ProfileEditorPolicyTest {
     }
 
     @Test
-    fun alwaysShowsAppsBelowFullVolume() {
+    fun showsReducedAppsNormallyButFiltersThemDuringSearch() {
         assertTrue(shouldShowProfileApp("", "WhatsApp", 0.75f))
-        assertTrue(shouldShowProfileApp("Signal", "WhatsApp", 0.75f))
+        assertFalse(shouldShowProfileApp("Signal", "WhatsApp", 0.75f))
     }
 
     @Test
@@ -27,6 +28,18 @@ class ProfileEditorPolicyTest {
                 volume = 1f,
                 alreadyRevealed = true
             )
+        )
+    }
+
+    @Test
+    fun changingSearchReleasesAppsRetainedByVolumeInteraction() {
+        val identity = AppIdentity(0, "com.example.chat")
+
+        assertTrue(
+            retainedProfileAppsAfterSearchChange("chat", "chat", setOf(identity)).contains(identity)
+        )
+        assertTrue(
+            retainedProfileAppsAfterSearchChange("chat", "music", setOf(identity)).isEmpty()
         )
     }
 }
