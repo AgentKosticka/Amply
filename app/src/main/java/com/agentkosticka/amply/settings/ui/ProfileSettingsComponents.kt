@@ -3,14 +3,19 @@ package com.agentkosticka.amply.settings.ui
 import android.os.Process
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +23,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,6 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -39,6 +44,7 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Headphones
@@ -47,6 +53,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.RingVolume
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -64,9 +71,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,13 +82,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -541,51 +549,35 @@ private fun ProfileEditor(
         }.sortedBy { it.displayName }
     }
     var adjustedApps by remember(profile.id) { mutableStateOf<Set<AppIdentity>>(emptySet()) }
-    var searchFocused by remember { mutableStateOf(false) }
-    var imeWasVisible by remember { mutableStateOf(false) }
+    var searchingApps by rememberSaveable(profile.id) { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
-    val density = LocalDensity.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
-    val resultHolderMinHeightPx by remember(editorListState, density) {
-        derivedStateOf {
-            if (!searchFocused) return@derivedStateOf 0
-            val layout = editorListState.layoutInfo
-            val searchItem = layout.visibleItemsInfo
-                .firstOrNull { it.key == "profile-app-search" }
-                ?: return@derivedStateOf 0
-            val itemSpacing = with(density) { 14.dp.roundToPx() }
-            (layout.viewportSize.height - searchItem.offset - searchItem.size - itemSpacing)
-                .coerceAtLeast(0)
-        }
-    }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val searchFocusRequester = remember { FocusRequester() }
     val shownApps = appPresentations.filter { presentation ->
         val effectiveVolume = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
         shouldShowProfileApp(
-            search = search,
+            search = "",
             displayName = presentation.searchText,
             volume = effectiveVolume,
             alreadyRevealed = presentation.identity in adjustedApps
         )
     }
-    LaunchedEffect(searchFocused, imeVisible) {
-        if (!searchFocused) return@LaunchedEffect
-        val searchIndex = editorListState.layoutInfo.visibleItemsInfo
-            .firstOrNull { it.key == "profile-app-search" }
-            ?.index
-            ?: return@LaunchedEffect
-        if (imeVisible) {
-            editorListState.scrollToItem(searchIndex)
-        } else {
-            editorListState.animateScrollToItem(searchIndex)
-        }
+    val searchResults = remember(search, appPresentations) {
+        profileAppSearchResults(search, appPresentations)
     }
-    LaunchedEffect(imeVisible) {
-        if (imeVisible) {
-            imeWasVisible = true
-        } else if (imeWasVisible) {
-            focusManager.clearFocus(force = true)
-            searchFocused = false
-            imeWasVisible = false
+
+    fun closeAppSearch() {
+        searchingApps = false
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+    }
+
+    LaunchedEffect(searchingApps) {
+        if (searchingApps) {
+            search = ""
+            adjustedApps = emptySet()
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
         }
     }
 
@@ -601,15 +593,20 @@ private fun ProfileEditor(
         }
         onDispose { navigationGuard.detach() }
     }
-    BackHandler { navigationGuard.requestExit() }
+    BackHandler {
+        if (searchingApps) closeAppSearch() else navigationGuard.requestExit()
+    }
 
-    LazyColumn(
-        state = editorListState,
-        modifier = modifier
-            .lazyScrollProgressIndicator(editorListState),
-        contentPadding = PaddingValues(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            state = editorListState,
+            modifier = Modifier
+                .matchParentSize()
+                .lazyScrollProgressIndicator(editorListState),
+            userScrollEnabled = !searchingApps,
+            contentPadding = PaddingValues(24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         item(key = "profile-editor-header") {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -692,22 +689,8 @@ private fun ProfileEditor(
             SectionTitle("APP VOLUMES")
         }
         item(key = "profile-app-search") {
-            NothingTextField(
-                value = search,
-                onValueChange = { nextSearch ->
-                    adjustedApps = retainedProfileAppsAfterSearchChange(
-                        currentSearch = search,
-                        nextSearch = nextSearch,
-                        adjustedApps = adjustedApps
-                    )
-                    search = nextSearch
-                },
-                label = "Search apps",
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                modifier = Modifier
-                    .onFocusChanged { searchFocused = it.isFocused }
-            )
-            if (search.isBlank() && shownApps.isEmpty()) {
+            ProfileAppSearchLauncher(onClick = { searchingApps = true })
+            if (shownApps.isEmpty()) {
                 Text(
                     "Apps at 100% are hidden. Search to add or edit one.",
                     color = NothingColors.GreyMedium,
@@ -715,36 +698,30 @@ private fun ProfileEditor(
                 )
             }
         }
-        item(key = "profile-app-results-holder") {
-            val holderModifier = if (searchFocused && resultHolderMinHeightPx > 0) {
-                Modifier.heightIn(min = with(density) { resultHolderMinHeightPx.toDp() })
-            } else {
-                Modifier
-            }
-            Column(
-                modifier = holderModifier
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                shownApps.forEach { presentation ->
-                    key(presentation.identity.storageKey) {
-                        val value = snapshot.appVolumes[presentation.identity]
-                            ?: presentation.setting.defaultVolume
-                        ProfileAppVolumeRow(
-                            packageName = presentation.identity.packageName,
-                            displayName = presentation.displayName,
-                            profileLabel = presentation.profileLabel,
-                            fraction = value,
-                            onChange = { changed ->
-                                adjustedApps = adjustedApps + presentation.identity
-                                snapshot = snapshot.copy(
-                                    appVolumes = snapshot.appVolumes + (presentation.identity to changed)
-                                )
-                            }
-                        )
-                    }
-                }
-            }
+        items(
+            items = shownApps,
+            key = { "profile-app-${it.identity.storageKey}" },
+            contentType = { "profile-app-volume" }
+        ) { presentation ->
+            val value = snapshot.appVolumes[presentation.identity]
+                ?: presentation.setting.defaultVolume
+            ProfileAppVolumeRow(
+                packageName = presentation.identity.packageName,
+                displayName = presentation.displayName,
+                profileLabel = presentation.profileLabel,
+                fraction = value,
+                onChange = { changed ->
+                    adjustedApps = adjustedApps + presentation.identity
+                    snapshot = snapshot.copy(
+                        appVolumes = snapshot.appVolumes + (presentation.identity to changed)
+                    )
+                },
+                modifier = Modifier.animateItem(
+                    fadeInSpec = tween(180),
+                    fadeOutSpec = tween(120),
+                    placementSpec = tween(240)
+                )
+            )
         }
         item {
             Button(
@@ -753,6 +730,56 @@ private fun ProfileEditor(
                 colors = ButtonDefaults.buttonColors(containerColor = NothingColors.Red),
                 shape = RoundedCornerShape(18.dp)
             ) { Text("SAVE PROFILE") }
+        }
+        }
+
+        AnimatedVisibility(
+            visible = searchingApps,
+            modifier = Modifier.matchParentSize(),
+            enter = fadeIn(tween(180)) + slideInVertically(
+                animationSpec = tween(
+                    durationMillis = 360,
+                    easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+                ),
+                initialOffsetY = { height -> (height * 0.06f).roundToInt() }
+            ),
+            exit = fadeOut(tween(180)) + slideOutVertically(
+                animationSpec = tween(
+                    durationMillis = 240,
+                    easing = CubicBezierEasing(0.4f, 0f, 1f, 1f)
+                ),
+                targetOffsetY = { height -> (height * 0.03f).roundToInt() }
+            )
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(NothingColors.Black)
+                        .pointerInput(Unit) { detectTapGestures {} }
+                )
+                ProfileAppSearchSurface(
+                    search = search,
+                    results = searchResults,
+                    snapshot = snapshot,
+                    focusRequester = searchFocusRequester,
+                    onSearchChange = { nextSearch ->
+                        adjustedApps = retainedProfileAppsAfterSearchChange(
+                            currentSearch = search,
+                            nextSearch = nextSearch,
+                            adjustedApps = adjustedApps
+                        )
+                        search = nextSearch
+                    },
+                    onAppVolumeChange = { presentation, changed ->
+                        adjustedApps = adjustedApps + presentation.identity
+                        snapshot = snapshot.copy(
+                            appVolumes = snapshot.appVolumes + (presentation.identity to changed)
+                        )
+                    },
+                    onDone = ::closeAppSearch
+                )
+            }
         }
     }
 
@@ -776,6 +803,206 @@ private fun ProfileEditor(
                 after()
             }
         )
+    }
+}
+
+@Composable
+private fun ProfileAppSearchLauncher(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF151515))
+            .border(1.dp, Color(0xFF444444), RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 17.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Search,
+            contentDescription = null,
+            tint = NothingColors.Red,
+            modifier = Modifier.size(22.dp)
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "Search apps",
+                color = NothingColors.White,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Find by name or package",
+                color = NothingColors.GreyMedium,
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileAppSearchSurface(
+    search: String,
+    results: List<ProfileEditorApp>,
+    snapshot: AudioProfileSnapshot,
+    focusRequester: FocusRequester,
+    onSearchChange: (String) -> Unit,
+    onAppVolumeChange: (ProfileEditorApp, Float) -> Unit,
+    onDone: () -> Unit
+) {
+    val resultsListState = rememberLazyListState()
+
+    LaunchedEffect(search) {
+        if (resultsListState.firstVisibleItemIndex != 0 || resultsListState.firstVisibleItemScrollOffset != 0) {
+            resultsListState.scrollToItem(0)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(NothingColors.Black)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "FIND AN APP",
+                color = NothingColors.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onDone) {
+                Text(
+                    text = "DONE",
+                    color = NothingColors.Red,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        OutlinedTextField(
+            value = search,
+            onValueChange = onSearchChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .focusRequester(focusRequester),
+            placeholder = { Text("App name or package") },
+            leadingIcon = {
+                Icon(Icons.Default.Search, contentDescription = null, tint = NothingColors.Red)
+            },
+            trailingIcon = if (search.isNotEmpty()) {
+                {
+                    IconButton(onClick = { onSearchChange("") }) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Clear app search",
+                            tint = NothingColors.GreyMedium
+                        )
+                    }
+                }
+            } else {
+                null
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(16.dp),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Text,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(onDone = { onDone() }),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = NothingColors.White,
+                unfocusedTextColor = NothingColors.White,
+                focusedBorderColor = NothingColors.Red,
+                unfocusedBorderColor = Color(0xFF444444),
+                focusedPlaceholderColor = NothingColors.GreyMedium,
+                unfocusedPlaceholderColor = NothingColors.GreyMedium,
+                cursorColor = NothingColors.Red,
+                focusedContainerColor = Color(0xFF151515),
+                unfocusedContainerColor = Color(0xFF151515)
+            )
+        )
+
+        val resultSummary = when {
+            search.isBlank() && results.isEmpty() -> "NO KNOWN AUDIO APPS"
+            search.isBlank() && results.size == 1 -> "1 KNOWN AUDIO APP"
+            search.isBlank() -> "${results.size} KNOWN AUDIO APPS"
+            results.isEmpty() -> "NO MATCHES"
+            results.size == 1 -> "1 MATCH"
+            else -> "${results.size} MATCHES"
+        }
+        Text(
+            text = resultSummary,
+            color = if (search.isNotBlank() && results.isEmpty()) NothingColors.Red else NothingColors.GreyMedium,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 8.dp)
+        )
+
+        LazyColumn(
+            state = resultsListState,
+            modifier = Modifier
+                .weight(1f)
+                .background(
+                    color = Color(0xFF0D0D0D),
+                    shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+                )
+                .lazyScrollProgressIndicator(resultsListState),
+            contentPadding = PaddingValues(start = 24.dp, top = 14.dp, end = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            if (results.isEmpty()) {
+                item(key = "profile-search-empty") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (search.isBlank()) {
+                                "Play an app once and it will appear here."
+                            } else {
+                                "No app matches “${search.trim()}”."
+                            },
+                            color = NothingColors.GreyMedium,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+            items(
+                items = results,
+                key = { "profile-search-${it.identity.storageKey}" },
+                contentType = { "profile-search-app-volume" }
+            ) { presentation ->
+                val value = snapshot.appVolumes[presentation.identity]
+                    ?: presentation.setting.defaultVolume
+                ProfileAppVolumeRow(
+                    packageName = presentation.identity.packageName,
+                    displayName = presentation.displayName,
+                    profileLabel = presentation.profileLabel,
+                    fraction = value,
+                    onChange = { changed -> onAppVolumeChange(presentation, changed) },
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = tween(180),
+                        fadeOutSpec = tween(110),
+                        placementSpec = tween(
+                            durationMillis = 260,
+                            easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+                        )
+                    )
+                )
+            }
+        }
     }
 }
 
@@ -846,12 +1073,13 @@ private fun ProfileAppVolumeRow(
     displayName: String,
     profileLabel: String?,
     fraction: Float,
-    onChange: (Float) -> Unit
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val icon = rememberApplicationIconBitmap(packageName, 72)
     val percent = (fraction * 100).roundToInt()
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .heightIn(min = 130.dp)
             .background(Color(0xFF1C1C1C), RoundedCornerShape(27.dp))
@@ -1043,11 +1271,10 @@ internal fun shouldShowProfileApp(
     displayName: String,
     volume: Float,
     alreadyRevealed: Boolean = false
-): Boolean = alreadyRevealed ||
-    if (search.isNotBlank()) {
+): Boolean = if (search.isNotBlank()) {
         displayName.contains(search, ignoreCase = true)
     } else {
-        volume < 0.999f
+        alreadyRevealed || volume < 0.999f
     }
 
 internal fun retainedProfileAppsAfterSearchChange(
@@ -1062,5 +1289,27 @@ private data class ProfileEditorApp(
     val displayName: String,
     val profileLabel: String?
 ) {
-    val searchText: String get() = listOfNotNull(displayName, profileLabel).joinToString(" ")
+    val searchText: String
+        get() = listOfNotNull(displayName, profileLabel, identity.packageName).joinToString(" ")
+}
+
+private fun profileAppSearchResults(
+    search: String,
+    apps: List<ProfileEditorApp>
+): List<ProfileEditorApp> {
+    val query = search.trim()
+    if (query.isEmpty()) return apps
+
+    return apps
+        .asSequence()
+        .filter { it.searchText.contains(query, ignoreCase = true) }
+        .sortedWith(
+            compareBy<ProfileEditorApp>(
+                { !it.displayName.startsWith(query, ignoreCase = true) },
+                { !it.identity.packageName.substringAfterLast('.').startsWith(query, ignoreCase = true) },
+                { it.displayName.lowercase() },
+                { it.identity.storageKey }
+            )
+        )
+        .toList()
 }

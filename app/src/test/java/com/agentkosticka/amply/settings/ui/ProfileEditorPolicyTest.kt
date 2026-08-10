@@ -32,6 +32,18 @@ class ProfileEditorPolicyTest {
     }
 
     @Test
+    fun searchOnlyShowsMatchesEvenWhenAnotherAppWasRevealed() {
+        assertFalse(
+            shouldShowProfileApp(
+                search = "Signal",
+                displayName = "WhatsApp com.example.whatsapp",
+                volume = 1f,
+                alreadyRevealed = true
+            )
+        )
+    }
+
+    @Test
     fun changingSearchReleasesAppsRetainedByVolumeInteraction() {
         val identity = AppIdentity(0, "com.example.chat")
 
