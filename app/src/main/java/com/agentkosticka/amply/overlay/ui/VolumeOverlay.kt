@@ -195,6 +195,8 @@ fun VolumeOverlay(
     val density = LocalDensity.current
     val containerSize = LocalWindowInfo.current.containerSize
     var mainPillHeightPx by remember { mutableIntStateOf(0) }
+    var appPanelHeightPx by remember { mutableIntStateOf(0) }
+    var profilePanelHeightPx by remember { mutableIntStateOf(0) }
     val isLandscape = containerSize.width > containerSize.height
     val measuredAvailableWidth = if (availableWidthDp > 0f) {
         availableWidthDp.dp
@@ -316,6 +318,15 @@ fun VolumeOverlay(
                     }
                     val profileControl: @Composable () -> Unit = {
                         if (profiles.isNotEmpty()) {
+                            val profileButtonBackground by animateColorAsState(
+                                targetValue = if (profileMenuExpanded) {
+                                    NothingColors.Red
+                                } else {
+                                    Color(0xFF1C1C1C)
+                                },
+                                animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                label = "profileButtonBackground"
+                            )
                             Box(Modifier.size(CollapsedPillWidth), contentAlignment = Alignment.Center) {
                                 androidx.compose.animation.AnimatedVisibility(
                                     visible = isExpanded,
@@ -326,7 +337,7 @@ fun VolumeOverlay(
                                         modifier = Modifier
                                             .size(48.dp)
                                             .clip(CircleShape)
-                                            .background(Color(0xFF1C1C1C))
+                                            .background(profileButtonBackground)
                                             .clickable {
                                                 profileMenuExpanded = !profileMenuExpanded
                                                 onInteraction()
@@ -402,6 +413,7 @@ fun VolumeOverlay(
                 chevronRotation = chevronRotation,
                 keepMediaAtEnd = expandToStart,
                 iconType = iconType,
+                profileAnimationKey = activeProfileId,
                 onStreamVolumeChange = { streamType, newVolume ->
                     onStreamVolumeChange(streamType, newVolume)
                 },
@@ -418,14 +430,36 @@ fun VolumeOverlay(
 
     val panelBody: @Composable (Dp, Dp) -> Unit = { panelWidth, maxHeight ->
         val travelPx = with(density) { panelWidth.toPx() * 0.1f }
+        val visiblePanelHeightPx = if (panelSwapTransition.isRunning) {
+            maxOf(appPanelHeightPx, profilePanelHeightPx)
+        } else if (profileMenuExpanded) {
+            profilePanelHeightPx
+        } else {
+            appPanelHeightPx
+        }
+        val blankPanelDismissModifier = Modifier.pointerInput(
+            visiblePanelHeightPx,
+            profileMenuExpanded,
+            panelSwapTransition.isRunning
+        ) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                if (visiblePanelHeightPx > 0 && down.position.y >= visiblePanelHeightPx) {
+                    down.consume()
+                    onDismissRequest()
+                }
+            }
+        }
         Box(
             modifier = Modifier
                 .width(panelWidth)
-                .heightIn(min = 1.dp, max = maxHeight),
+                .heightIn(min = 1.dp, max = maxHeight)
+                .then(blankPanelDismissModifier),
             contentAlignment = Alignment.TopStart
         ) {
             Box(
                 Modifier
+                    .onSizeChanged { appPanelHeightPx = it.height }
                     .zIndex(if (profileMenuExpanded) 0f else 2f)
                     .graphicsLayer {
                         alpha = 1f - profilePanelAlpha
@@ -452,6 +486,7 @@ fun VolumeOverlay(
             }
             Box(
                 Modifier
+                    .onSizeChanged { profilePanelHeightPx = it.height }
                     .zIndex(if (profileMenuExpanded) 2f else 0f)
                     .graphicsLayer {
                         alpha = profilePanelAlpha

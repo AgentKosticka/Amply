@@ -1,6 +1,7 @@
 package com.agentkosticka.amply.overlay.ui
 
 import android.media.AudioManager
+import android.os.SystemClock
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -86,6 +87,7 @@ internal fun MainVolumePill(
     chevronRotation: State<Float>,
     keepMediaAtEnd: Boolean,
     iconType: String,
+    profileAnimationKey: String?,
     onStreamVolumeChange: (Int, Int) -> Unit,
     onStreamSelected: (VolumeTarget) -> Unit,
     onMuteToggle: (Int) -> Unit,
@@ -164,34 +166,37 @@ internal fun MainVolumePill(
                     (CollapsedPillWidth * expandedSlot).toPx()
                 }
 
-                StreamVolumeColumn(
-                    stream = stream,
-                    enabled = stream.enabled && (isExpanded || isSelected),
-                    iconType = iconType,
-                    limitFeedback = streamLimitFeedback,
-                    onVolumeChange = { newVolume ->
-                        if (isExpanded) {
-                            onStreamSelected(stream.target)
-                        }
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onInteraction()
-                        onStreamVolumeChange(stream.target.streamType, newVolume)
-                    },
-                    onMuteToggle = {
-                        if (isExpanded) {
-                            onStreamSelected(stream.target)
-                        }
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onInteraction()
-                        onMuteToggle(stream.target.streamType)
-                    },
-                    modifier = Modifier
-                        .graphicsLayer {
-                            translationX = expandedSlotOffsetPx * expansionProgress.value
-                            alpha = if (isSelected) 1f else expansionProgress.value
-                        }
-                        .zIndex(if (isSelected) 1f else 0f)
-                )
+                key(stream.target) {
+                    StreamVolumeColumn(
+                        stream = stream,
+                        enabled = stream.enabled && (isExpanded || isSelected),
+                        iconType = iconType,
+                        profileAnimationKey = profileAnimationKey,
+                        limitFeedback = streamLimitFeedback,
+                        onVolumeChange = { newVolume ->
+                            if (isExpanded) {
+                                onStreamSelected(stream.target)
+                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onInteraction()
+                            onStreamVolumeChange(stream.target.streamType, newVolume)
+                        },
+                        onMuteToggle = {
+                            if (isExpanded) {
+                                onStreamSelected(stream.target)
+                            }
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onInteraction()
+                            onMuteToggle(stream.target.streamType)
+                        },
+                        modifier = Modifier
+                            .graphicsLayer {
+                                translationX = expandedSlotOffsetPx * expansionProgress.value
+                                alpha = if (isSelected) 1f else expansionProgress.value
+                            }
+                            .zIndex(if (isSelected) 1f else 0f)
+                    )
+                }
             }
         }
 
@@ -241,11 +246,37 @@ private fun StreamVolumeColumn(
     onVolumeChange: (Int) -> Unit,
     onMuteToggle: () -> Unit,
     iconType: String,
+    profileAnimationKey: String?,
     limitFeedback: VolumeLimitFeedback?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
     val percentageBoundaryShake = remember { Animatable(0f) }
+    val animatedVolume = remember { Animatable(stream.currentVolume.toFloat()) }
+    var lastProfileAnimationKey by remember { mutableStateOf(profileAnimationKey) }
+    var lastTargetVolume by remember { mutableIntStateOf(stream.currentVolume) }
+    var profileAnimationDeadlineMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(profileAnimationKey, stream.currentVolume) {
+        val now = SystemClock.uptimeMillis()
+        if (profileAnimationKey != lastProfileAnimationKey) {
+            lastProfileAnimationKey = profileAnimationKey
+            profileAnimationDeadlineMs = now + 1_500L
+        }
+        if (stream.currentVolume != lastTargetVolume) {
+            lastTargetVolume = stream.currentVolume
+            if (now <= profileAnimationDeadlineMs) {
+                animatedVolume.animateTo(
+                    stream.currentVolume.toFloat(),
+                    animationSpec = tween(420, easing = FastOutSlowInEasing)
+                )
+            } else {
+                animatedVolume.snapTo(stream.currentVolume.toFloat())
+            }
+        }
+    }
+    val visualVolume = animatedVolume.value
+        .roundToInt()
+        .coerceIn(stream.minVolume, stream.maxVolume)
     val usesPercentageBoundaryFeedback = VolumeLimitFeedbackPolicy.usesPercentageBoundaryFeedback(
         isUp = limitFeedback?.isUpperBound ?: false,
         min = stream.minVolume,
@@ -275,7 +306,7 @@ private fun StreamVolumeColumn(
         )
     }
     val displayedPercentage = if (stream.maxVolume > 0) {
-        ((stream.currentVolume.toFloat() / stream.maxVolume.toFloat()) * 100f)
+        ((visualVolume.toFloat() / stream.maxVolume.toFloat()) * 100f)
             .roundToInt()
             .coerceIn(0, 100)
     } else {
@@ -305,7 +336,7 @@ private fun StreamVolumeColumn(
             when {
                 isMediaStream -> MediaAlertIcon(
                     route = iconType,
-                    muted = stream.currentVolume <= stream.minVolume,
+                    muted = visualVolume <= stream.minVolume,
                     label = stream.label
                 )
 
@@ -347,7 +378,7 @@ private fun StreamVolumeColumn(
         Spacer(modifier = Modifier.height(8.dp))
 
         DraggableDotSlider(
-            currentVolume = stream.currentVolume,
+            currentVolume = visualVolume,
             minVolume = stream.minVolume,
             maxVolume = stream.maxVolume,
             referenceMaxVolume = stream.referenceMaxVolume,

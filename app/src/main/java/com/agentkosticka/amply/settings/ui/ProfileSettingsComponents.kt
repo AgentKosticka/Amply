@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -56,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -140,6 +141,16 @@ internal fun ProfilesSettingsPage(
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
     val editing = editingId?.let(state.store.profiles::get)
+    val assignedOutputNames = state.store.devices.values
+        .filter { it.assignedProfileId != null }
+        .groupBy { it.assignedProfileId!! }
+        .mapValues { (_, devices) -> devices.map { it.descriptor.displayName }.sorted() }
+    val assignedProfiles = state.store.profiles.values
+        .filter { it.id in assignedOutputNames }
+        .sortedBy { it.name.lowercase() }
+    val unassignedProfiles = state.store.profiles.values
+        .filterNot { it.id in assignedOutputNames }
+        .sortedBy { it.name.lowercase() }
 
     if (editing != null) {
         ProfileEditor(
@@ -239,30 +250,6 @@ internal fun ProfilesSettingsPage(
             }
         }
 
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SectionTitle("NAMED PROFILES")
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { creating = true }) {
-                    Icon(Icons.Default.Add, "Create profile", tint = NothingColors.Red)
-                }
-            }
-        }
-        val named = state.store.profiles.values.filter { it.saveMode == ProfileSaveMode.EXPLICIT }
-        if (named.isEmpty()) {
-            item { Text("No named profiles yet. Create one from your current settings.", color = NothingColors.GreyMedium) }
-        } else {
-            items(named.sortedBy { it.createdAtEpochMs }, key = { it.id }) { profile ->
-                ProfileCard(
-                    profile = profile,
-                    active = profile.id == state.store.activeProfileId,
-                    onActivate = { scope.launch { runtime.profileCoordinator.activateProfile(profile.id) } },
-                    onEdit = { editingId = profile.id },
-                    onDelete = { deletingId = profile.id }
-                )
-            }
-        }
-
         item { SectionTitle("OUTPUT DEVICES") }
         items(state.store.devices.values.sortedBy { it.descriptor.displayName }, key = { it.descriptor.key }) { device ->
             var menu by remember { mutableStateOf(false) }
@@ -322,13 +309,49 @@ internal fun ProfilesSettingsPage(
             }
         }
 
-        val deviceProfiles = state.store.profiles.values.filter { it.saveMode == ProfileSaveMode.AUTO_DEVICE }
-        if (deviceProfiles.isNotEmpty()) {
-            item { SectionTitle("DEVICE PROFILES") }
-            items(deviceProfiles.sortedBy { it.createdAtEpochMs }, key = { "device-${it.id}" }) { profile ->
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SectionTitle("PROFILES")
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { creating = true }) {
+                    Icon(Icons.Default.Add, "Create profile", tint = NothingColors.Red)
+                }
+            }
+        }
+        if (assignedProfiles.isEmpty() && unassignedProfiles.isEmpty()) {
+            item {
+                Text(
+                    "No profiles yet. Create one from your current settings.",
+                    color = NothingColors.GreyMedium
+                )
+            }
+        } else {
+            items(assignedProfiles, key = { "profile-${it.id}" }) { profile ->
                 ProfileCard(
                     profile = profile,
                     active = profile.id == state.store.activeProfileId,
+                    assignedOutputs = assignedOutputNames[profile.id].orEmpty(),
+                    onActivate = { scope.launch { runtime.profileCoordinator.activateProfile(profile.id) } },
+                    onEdit = { editingId = profile.id },
+                    onDelete = { deletingId = profile.id }
+                )
+            }
+            if (assignedProfiles.isNotEmpty() && unassignedProfiles.isNotEmpty()) {
+                item(key = "profile-assignment-divider") {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                            .height(1.dp)
+                            .background(Color(0xFF343434))
+                    )
+                }
+            }
+            items(unassignedProfiles, key = { "profile-${it.id}" }) { profile ->
+                ProfileCard(
+                    profile = profile,
+                    active = profile.id == state.store.activeProfileId,
+                    assignedOutputs = emptyList(),
                     onActivate = { scope.launch { runtime.profileCoordinator.activateProfile(profile.id) } },
                     onEdit = { editingId = profile.id },
                     onDelete = { deletingId = profile.id }
@@ -367,6 +390,7 @@ internal fun ProfilesSettingsPage(
 private fun ProfileCard(
     profile: AudioProfile,
     active: Boolean,
+    assignedOutputs: List<String>,
     onActivate: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -375,7 +399,20 @@ private fun ProfileCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(profile.name, color = NothingColors.White, fontWeight = FontWeight.Bold)
-                Text(if (active) "Active" else "Saved profile", color = if (active) NothingColors.Red else NothingColors.GreyMedium)
+                val status = buildList {
+                    if (active) add("Active")
+                    if (assignedOutputs.isNotEmpty()) {
+                        add("Default for ${assignedOutputs.joinToString()}")
+                    } else if (!active) {
+                        add("Saved profile")
+                    }
+                }.joinToString(" · ")
+                Text(
+                    status,
+                    color = if (active) NothingColors.Red else NothingColors.GreyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             TextButton(onClick = onActivate, enabled = !active) {
                 Text(if (active) "ACTIVE" else "ACTIVATE", color = if (active) NothingColors.GreyMedium else NothingColors.Red)
@@ -458,7 +495,20 @@ private fun ProfileEditor(
     var searchFocused by remember { mutableStateOf(false) }
     var imeWasVisible by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val resultHolderMinHeightPx by remember(editorListState, density) {
+        derivedStateOf {
+            if (!searchFocused) return@derivedStateOf 0
+            val layout = editorListState.layoutInfo
+            val searchItem = layout.visibleItemsInfo
+                .firstOrNull { it.key == "profile-app-search" }
+                ?: return@derivedStateOf 0
+            val itemSpacing = with(density) { 14.dp.roundToPx() }
+            (layout.viewportSize.height - searchItem.offset - searchItem.size - itemSpacing)
+                .coerceAtLeast(0)
+        }
+    }
     val shownApps = appPresentations.filter { presentation ->
         val effectiveVolume = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
         shouldShowProfileApp(
@@ -507,7 +557,6 @@ private fun ProfileEditor(
     LazyColumn(
         state = editorListState,
         modifier = modifier
-            .imePadding()
             .lazyScrollProgressIndicator(editorListState),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -618,8 +667,8 @@ private fun ProfileEditor(
             }
         }
         item(key = "profile-app-results-holder") {
-            val holderModifier = if (searchFocused) {
-                Modifier.fillParentMaxHeight(0.82f)
+            val holderModifier = if (searchFocused && resultHolderMinHeightPx > 0) {
+                Modifier.heightIn(min = with(density) { resultHolderMinHeightPx.toDp() })
             } else {
                 Modifier
             }
@@ -755,6 +804,7 @@ private fun ProfileAppVolumeRow(
     Column(
         Modifier
             .fillMaxWidth()
+            .heightIn(min = 130.dp)
             .background(Color(0xFF1C1C1C), RoundedCornerShape(27.dp))
             .padding(horizontal = 16.dp, vertical = 15.dp)
     ) {
