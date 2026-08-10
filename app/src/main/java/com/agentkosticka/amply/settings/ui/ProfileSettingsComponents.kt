@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -454,6 +456,8 @@ private fun ProfileEditor(
     }
     var adjustedApps by remember(profile.id) { mutableStateOf<Set<AppIdentity>>(emptySet()) }
     var searchFocused by remember { mutableStateOf(false) }
+    var imeWasVisible by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val shownApps = appPresentations.filter { presentation ->
         val effectiveVolume = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
@@ -476,6 +480,15 @@ private fun ProfileEditor(
             editorListState.animateScrollToItem(searchIndex)
         }
     }
+    LaunchedEffect(imeVisible) {
+        if (imeVisible) {
+            imeWasVisible = true
+        } else if (imeWasVisible) {
+            focusManager.clearFocus(force = true)
+            searchFocused = false
+            imeWasVisible = false
+        }
+    }
 
     DisposableEffect(profile.id, dirty) {
         navigationGuard.attach { afterExit ->
@@ -494,6 +507,7 @@ private fun ProfileEditor(
     LazyColumn(
         state = editorListState,
         modifier = modifier
+            .imePadding()
             .lazyScrollProgressIndicator(editorListState),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -675,6 +689,13 @@ private fun ProfileSystemVolumeRow(
     onChange: (Float) -> Unit
 ) {
     val current = volumeIndex(fraction, bar.minVolume, bar.maxVolume)
+    val displayedPercentage = if (bar.maxVolume > 0) {
+        ((current.toFloat() / bar.maxVolume.toFloat()) * 100f)
+            .roundToInt()
+            .coerceIn(0, 100)
+    } else {
+        0
+    }
     SettingsPanel {
         Column(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -692,8 +713,8 @@ private fun ProfileSystemVolumeRow(
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "${(fraction * 100).roundToInt()}%",
-                    color = if (fraction > 0.75f) NothingColors.Red else NothingColors.White,
+                    "$displayedPercentage%",
+                    color = if (displayedPercentage > 75) NothingColors.Red else NothingColors.White,
                     style = MaterialTheme.typography.labelLarge,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold

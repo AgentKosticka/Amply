@@ -48,8 +48,8 @@ android {
         applicationId = "com.agentkosticka.amply"
         minSdk = 29
         targetSdk = amplyTargetSdk
-        versionCode = 54
-        versionName = "1.3.4"
+        versionCode = 56
+        versionName = "1.3.6"
         if (versionedReleaseRequested) {
             versionCode = nextVersionCode
             versionName = nextVersionName

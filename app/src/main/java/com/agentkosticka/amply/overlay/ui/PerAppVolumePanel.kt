@@ -159,16 +159,15 @@ internal fun OverlayProfileSelectorPanel(
     val shape = RoundedCornerShape(OverlayCornerRadius)
     val active = profiles.firstOrNull { it.id == activeProfileId }
     val showSave = profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT
-    val selectorHeight = (92 + profiles.size * 52 + if (showSave) 52 else 0).dp
-        .coerceIn(100.dp, maxHeight)
+    val selectorScrollState = rememberScrollState()
     val sortedProfiles = remember(profiles) { profiles.sortedBy { it.name } }
     Column(
         modifier = Modifier
             .width(panelWidth)
-            .height(selectorHeight)
+            .heightIn(min = 100.dp, max = maxHeight)
             .clip(shape)
             .background(Color(0xFF1C1C1C), shape)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(selectorScrollState)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {

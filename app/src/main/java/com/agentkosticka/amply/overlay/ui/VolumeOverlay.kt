@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -443,9 +444,7 @@ fun VolumeOverlay(
                         showAppProfileIdentity = showAppProfileIdentity,
                         onAppVolumeChange = { app, volume ->
                             if (!profileMenuExpanded) onAppVolumeChange(app, volume)
-                        },
-                        onTouchStart = { if (!profileMenuExpanded) onTouchStart() },
-                        onTouchEnd = { if (!profileMenuExpanded) onTouchEnd() }
+                        }
                     )
                 } else if (showShizukuDisconnectedWarning) {
                     ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
@@ -499,6 +498,18 @@ fun VolumeOverlay(
             animationSpec = tween(200, easing = FastOutSlowInEasing)
         ) + fadeOut(animationSpec = tween(150))
     ) {
+        val currentOnTouchStart by rememberUpdatedState(onTouchStart)
+        val currentOnTouchEnd by rememberUpdatedState(onTouchEnd)
+        val touchHoldModifier = Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                currentOnTouchStart()
+                do {
+                    val event = awaitPointerEvent()
+                } while (event.changes.any { it.pressed })
+                currentOnTouchEnd()
+            }
+        }
         val collapsedHitTestModifier = Modifier.pointerInput(
             isExpanded,
             expandToStart,
@@ -536,6 +547,7 @@ fun VolumeOverlay(
             Row(
                 modifier = Modifier
                     .width(overlayContainerWidth)
+                    .then(touchHoldModifier)
                     .then(collapsedHitTestModifier),
                 horizontalArrangement = if (expandToStart) {
                     Arrangement.Absolute.Right
@@ -616,6 +628,7 @@ fun VolumeOverlay(
             Column(
                 modifier = Modifier
                     .width(overlayContainerWidth)
+                    .then(touchHoldModifier)
                     .then(collapsedHitTestModifier),
                 horizontalAlignment = if (expandToStart) {
                     androidx.compose.ui.AbsoluteAlignment.Right
