@@ -1242,9 +1242,32 @@ private fun NothingDialog(
         ) {
             Text(title.uppercase(), color = NothingColors.White, fontWeight = FontWeight.Bold)
             Text(body, color = NothingColors.GreyMedium)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text(dismissLabel, color = NothingColors.GreyMedium) }
-                TextButton(onClick = onConfirm) { Text(confirmLabel, color = NothingColors.Red) }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                TextButton(
+                    onClick = onConfirm,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = confirmLabel,
+                        color = NothingColors.Red,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
+                    )
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = dismissLabel,
+                        color = NothingColors.GreyMedium,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
