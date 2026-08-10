@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
@@ -177,12 +178,19 @@ internal fun SectionTitle(text: String) {
 }
 
 @Composable
-internal fun SettingsPanel(content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsPanel(
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(14.dp),
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF1C1C1C), RoundedCornerShape(18.dp))
-            .padding(14.dp),
+            .clip(shape)
+            .then(modifier)
+            .background(Color(0xFF1C1C1C), shape)
+            .padding(contentPadding),
         content = content
     )
 }
@@ -198,12 +206,15 @@ internal fun DataRecoveryPanel(
     onReset: () -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    SettingsPanel {
+    SettingsPanel(
+        modifier = if (expanded) Modifier else Modifier.clickable { expanded = true },
+        contentPadding = PaddingValues(0.dp)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
-                .padding(vertical = 4.dp),
+                .then(if (expanded) Modifier.clickable { expanded = false } else Modifier)
+                .padding(horizontal = 14.dp, vertical = 18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -226,18 +237,23 @@ internal fun DataRecoveryPanel(
             )
         }
         if (expanded) {
-            Spacer(Modifier.height(14.dp))
-            MaintenanceButton("EXPORT SETTINGS", onClick = onExport)
-            Spacer(Modifier.height(8.dp))
-            MaintenanceButton("IMPORT SETTINGS", onClick = onImport)
-            Spacer(Modifier.height(8.dp))
-            MaintenanceButton("CLEAN STALE APPS · $staleAppCount", onClick = onCleanup)
-            Spacer(Modifier.height(8.dp))
-            if (health == AppSettingsStoreHealth.CORRUPT) {
-                MaintenanceButton("REPAIR APP SETTINGS", destructive = true, onClick = onRepair)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+            ) {
+                MaintenanceButton("EXPORT SETTINGS", onClick = onExport)
                 Spacer(Modifier.height(8.dp))
+                MaintenanceButton("IMPORT SETTINGS", onClick = onImport)
+                Spacer(Modifier.height(8.dp))
+                MaintenanceButton("CLEAN STALE APPS · $staleAppCount", onClick = onCleanup)
+                Spacer(Modifier.height(8.dp))
+                if (health == AppSettingsStoreHealth.CORRUPT) {
+                    MaintenanceButton("REPAIR APP SETTINGS", destructive = true, onClick = onRepair)
+                    Spacer(Modifier.height(8.dp))
+                }
+                MaintenanceButton("RESET AMPLY", destructive = true, onClick = onReset)
             }
-            MaintenanceButton("RESET AMPLY", destructive = true, onClick = onReset)
         }
     }
 }

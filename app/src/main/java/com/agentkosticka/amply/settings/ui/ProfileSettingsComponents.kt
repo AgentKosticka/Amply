@@ -240,41 +240,42 @@ internal fun ProfilesSettingsPage(
         }
 
         item(key = "automatic-profile-saving") {
-            SettingsPanel {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .toggleable(
-                            value = automaticallySaveProfileChanges,
-                            role = Role.Switch,
-                            onValueChange = { enabled ->
-                                scope.launch {
-                                    runtime.preferencesManager
-                                        .setAutomaticallySaveProfileChanges(enabled)
-                                    if (enabled) runtime.profileCoordinator.saveCurrentProfile()
-                                }
+            Column {
+                SettingsPanel(
+                    modifier = Modifier.toggleable(
+                        value = automaticallySaveProfileChanges,
+                        role = Role.Switch,
+                        onValueChange = { enabled ->
+                            scope.launch {
+                                runtime.preferencesManager
+                                    .setAutomaticallySaveProfileChanges(enabled)
+                                if (enabled) runtime.profileCoordinator.saveCurrentProfile()
                             }
-                        )
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        }
+                    )
                 ) {
-                    Text(
-                        "Automatically save profile changes",
-                        color = NothingColors.White,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Switch(
-                        checked = automaticallySaveProfileChanges,
-                        onCheckedChange = null,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = NothingColors.White,
-                            checkedTrackColor = NothingColors.Red,
-                            uncheckedThumbColor = NothingColors.GreyMedium,
-                            uncheckedTrackColor = Color(0xFF333333)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "Automatically save profile changes",
+                            color = NothingColors.White,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
                         )
-                    )
+                        Switch(
+                            checked = automaticallySaveProfileChanges,
+                            onCheckedChange = null,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = NothingColors.White,
+                                checkedTrackColor = NothingColors.Red,
+                                uncheckedThumbColor = NothingColors.GreyMedium,
+                                uncheckedTrackColor = Color(0xFF333333)
+                            )
+                        )
+                    }
                 }
                 AnimatedVisibility(
                     visible = !automaticallySaveProfileChanges,

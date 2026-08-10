@@ -49,12 +49,9 @@ internal fun RingerExperimentPanel(
     var expanded by rememberSaveable { mutableStateOf(false) }
     var explainedMethod by rememberSaveable { mutableStateOf<String?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SettingsPanel {
+        SettingsPanel(modifier = Modifier.clickable { expanded = !expanded }) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {

@@ -299,36 +299,38 @@ private fun OverlayPreferenceToggle(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Row(
+    SettingsPanel(
         modifier = Modifier
-            .fillMaxWidth()
             .toggleable(
                 value = checked,
                 role = Role.Switch,
                 onValueChange = onCheckedChange
             )
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = NothingColors.White, fontWeight = FontWeight.Bold)
-            Text(
-                description,
-                color = NothingColors.GreyMedium,
-                style = MaterialTheme.typography.bodySmall
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = NothingColors.White, fontWeight = FontWeight.Bold)
+                Text(
+                    description,
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = NothingColors.White,
+                    checkedTrackColor = NothingColors.Red,
+                    uncheckedThumbColor = NothingColors.GreyMedium,
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
             )
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = NothingColors.White,
-                checkedTrackColor = NothingColors.Red,
-                uncheckedThumbColor = NothingColors.GreyMedium,
-                uncheckedTrackColor = Color(0xFF333333)
-            )
-        )
     }
 }
 
@@ -947,16 +949,14 @@ fun SettingsDashboard(
                     }
                     if (showProfileIdentityToggle) {
                         item {
-                            SettingsPanel {
-                                OverlayPreferenceToggle(
-                                    title = "Hide personal/work app identity",
-                                    description = "Show only the app name and hide profile labels such as Work or Personal.",
-                                    checked = hideAppProfileIdentity,
-                                    onCheckedChange = { hidden ->
-                                        scope.launch { preferences.setHideAppProfileIdentity(hidden) }
-                                    }
-                                )
-                            }
+                            OverlayPreferenceToggle(
+                                title = "Hide personal/work app identity",
+                                description = "Show only the app name and hide profile labels such as Work or Personal.",
+                                checked = hideAppProfileIdentity,
+                                onCheckedChange = { hidden ->
+                                    scope.launch { preferences.setHideAppProfileIdentity(hidden) }
+                                }
+                            )
                         }
                     }
                     if (connectionState != VolumeServiceConnectionState.CONNECTED) {
@@ -1314,60 +1314,52 @@ fun SettingsDashboard(
                         )
                     }
                     item {
-                        SettingsPanel {
-                            OverlayPreferenceToggle(
-                                title = stringResource(com.agentkosticka.amply.R.string.pill_hide_shizuku_warning),
-                                description = stringResource(com.agentkosticka.amply.R.string.pill_hide_shizuku_warning_description),
-                                checked = disableShizukuDisconnectedWarning,
-                                onCheckedChange = { disabled ->
-                                    scope.launch {
-                                        preferences.setDisableShizukuDisconnectedWarning(disabled)
-                                    }
+                        OverlayPreferenceToggle(
+                            title = stringResource(com.agentkosticka.amply.R.string.pill_hide_shizuku_warning),
+                            description = stringResource(com.agentkosticka.amply.R.string.pill_hide_shizuku_warning_description),
+                            checked = disableShizukuDisconnectedWarning,
+                            onCheckedChange = { disabled ->
+                                scope.launch {
+                                    preferences.setDisableShizukuDisconnectedWarning(disabled)
                                 }
-                            )
-                        }
+                            }
+                        )
                     }
                     item {
-                        SettingsPanel {
-                            OverlayPreferenceToggle(
-                                title = stringResource(com.agentkosticka.amply.R.string.pill_hide_per_app_control),
-                                description = stringResource(com.agentkosticka.amply.R.string.pill_hide_per_app_control_description),
-                                checked = hidePerAppVolumeControl,
-                                onCheckedChange = { hidden ->
-                                    scope.launch { preferences.setHidePerAppVolumeControl(hidden) }
-                                }
-                            )
-                        }
+                        OverlayPreferenceToggle(
+                            title = stringResource(com.agentkosticka.amply.R.string.pill_hide_per_app_control),
+                            description = stringResource(com.agentkosticka.amply.R.string.pill_hide_per_app_control_description),
+                            checked = hidePerAppVolumeControl,
+                            onCheckedChange = { hidden ->
+                                scope.launch { preferences.setHidePerAppVolumeControl(hidden) }
+                            }
+                        )
                     }
                     item {
-                        SettingsPanel {
-                            OverlayPreferenceToggle(
-                                title = stringResource(com.agentkosticka.amply.R.string.pill_show_dnd),
-                                description = stringResource(com.agentkosticka.amply.R.string.pill_show_dnd_description),
-                                checked = showDndButton,
-                                onCheckedChange = { show ->
-                                    scope.launch { preferences.setShowDndButton(show) }
-                                    if (show && !runtime.dndController.hasPolicyAccess()) {
-                                        waitingForDndPermission = true
-                                        wentToSettingsForDndPermission = false
-                                        showDndPermissionFallback = false
-                                        onNotificationPolicyClick()
-                                    }
+                        OverlayPreferenceToggle(
+                            title = stringResource(com.agentkosticka.amply.R.string.pill_show_dnd),
+                            description = stringResource(com.agentkosticka.amply.R.string.pill_show_dnd_description),
+                            checked = showDndButton,
+                            onCheckedChange = { show ->
+                                scope.launch { preferences.setShowDndButton(show) }
+                                if (show && !runtime.dndController.hasPolicyAccess()) {
+                                    waitingForDndPermission = true
+                                    wentToSettingsForDndPermission = false
+                                    showDndPermissionFallback = false
+                                    onNotificationPolicyClick()
                                 }
-                            )
-                        }
+                            }
+                        )
                     }
                     item {
-                        SettingsPanel {
-                            OverlayPreferenceToggle(
-                                title = stringResource(com.agentkosticka.amply.R.string.pill_hide_stand_down),
-                                description = stringResource(com.agentkosticka.amply.R.string.pill_hide_stand_down_description),
-                                checked = hideStandDownButton,
-                                onCheckedChange = { hidden ->
-                                    scope.launch { preferences.setHideStandDownButton(hidden) }
-                                }
-                            )
-                        }
+                        OverlayPreferenceToggle(
+                            title = stringResource(com.agentkosticka.amply.R.string.pill_hide_stand_down),
+                            description = stringResource(com.agentkosticka.amply.R.string.pill_hide_stand_down_description),
+                            checked = hideStandDownButton,
+                            onCheckedChange = { hidden ->
+                                scope.launch { preferences.setHideStandDownButton(hidden) }
+                            }
+                        )
                     }
                 }
 
