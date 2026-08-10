@@ -13,10 +13,12 @@ import androidx.core.content.ContextCompat
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.ringer.RingerExperimentExecutor
 import com.agentkosticka.amply.audio.routing.VolumeTarget
+import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.dnd.AmplyDndController
 import com.agentkosticka.amply.dnd.DndOperationResult
 import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.settings.model.AppIdentity
+import com.agentkosticka.amply.settings.model.VolumeDotScaleConfig
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -177,15 +179,12 @@ class ProfileCoordinator(
     }
 
     suspend fun assignDevice(deviceKey: String, profileId: String?) {
+        val currentOutputKey = state.value.currentOutput?.key
         preferences.updateProfileStore { store ->
-            val known = store.devices[deviceKey] ?: return@updateProfileStore store
-            if (profileId != null && profileId !in store.profiles) return@updateProfileStore store
-            store.copy(
-                devices = store.devices + (deviceKey to known.copy(
-                    assignedProfileId = profileId,
-                    explicitlyUnassigned = profileId == null
-                ))
-            )
+            store.withDeviceAssignment(deviceKey, profileId, currentOutputKey)
+        }
+        if (deviceKey == currentOutputKey && profileId != null) {
+            activateProfile(profileId)
         }
     }
 
@@ -250,6 +249,39 @@ class ProfileCoordinator(
                     lastApplyWarnings = _state.value.lastApplyWarnings + "Call volume could not be changed"
                 )
             }
+        }
+    }
+
+    /** Live device limits used by the profile editor's shared Nothing-style rails. */
+    fun systemVolumeBars(dotConfig: VolumeDotScaleConfig): Map<VolumeTarget, VolumeBarModel> {
+        val route = outputMonitor.state.value
+        val localReferenceMax = PROFILE_SYSTEM_TARGETS.maxOfOrNull { target ->
+            runCatching { audioManager.getStreamMaxVolume(target.streamType) }.getOrDefault(1)
+        }?.coerceAtLeast(1) ?: 16
+        return PROFILE_SYSTEM_TARGETS.associateWith { target ->
+            val remoteMedia = target == VolumeTarget.MEDIA &&
+                route.descriptor.kind == OutputKind.CAST && route.remoteMaxVolume > 0
+            val min = if (remoteMedia) 0 else {
+                runCatching { audioManager.getStreamMinVolume(target.streamType) }.getOrDefault(0)
+            }
+            val max = if (remoteMedia) route.remoteMaxVolume else {
+                runCatching { audioManager.getStreamMaxVolume(target.streamType) }.getOrDefault(min)
+            }
+            val reference = if (remoteMedia) max.coerceAtLeast(1) else localReferenceMax
+            VolumeBarModel(
+                target = target,
+                aliases = setOf(target.streamType),
+                label = target.label,
+                currentVolume = if (remoteMedia) route.remoteVolume else {
+                    runCatching { audioManager.getStreamVolume(target.streamType) }.getOrDefault(min)
+                },
+                minVolume = min,
+                maxVolume = max,
+                active = true,
+                enabled = target.userAdjustable && (!remoteMedia || route.remoteVolumeVariable),
+                referenceMaxVolume = reference,
+                dotCount = dotConfig.resolvedDotCount(reference)
+            )
         }
     }
 
@@ -326,6 +358,16 @@ class ProfileCoordinator(
         val warnings = mutableListOf<String>()
         val topology = shizukuVolumeManager.getStreamTopology()
         val seenCanonical = mutableSetOf<Int>()
+        val ringerPlan = profileRingerApplyPlan(snapshot.ringerMode)
+
+        // Setting Loud can restore a remembered alert volume. Do it before applying
+        // the saved Ring/Notifications levels so independently routed streams are
+        // not collapsed back onto that remembered value.
+        if (ringerPlan.applyBeforeVolumes &&
+            !ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)
+        ) {
+            warnings += "Ringer mode could not be changed"
+        }
         snapshot.systemVolumes.forEach { (target, fraction) ->
             val canonical = topology?.canonicalStream(target.streamType) ?: target.streamType
             if (!seenCanonical.add(canonical)) return@forEach
@@ -337,8 +379,14 @@ class ProfileCoordinator(
             } else applyLocalStream(target, fraction)
             if (!applied) warnings += "${target.label} volume could not be changed"
         }
-        if (!ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)) {
-            warnings += "Ringer mode could not be changed"
+
+        // Alert-volume controls can promote the phone to Loud. Reassert non-Loud
+        // modes after the levels are in place; unlike Loud, these modes do not
+        // restore and overwrite an independently saved stream volume.
+        if (ringerPlan.reapplyAfterVolumes &&
+            !ringerExecutor.setProductionAlertMode(snapshot.ringerMode, VolumeTarget.RING.streamType)
+        ) {
+            warnings += "Ringer mode could not be restored"
         }
         snapshot.dndEnabled?.let { enabled ->
             when (dndController.setActive(enabled)) {

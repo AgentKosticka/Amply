@@ -16,15 +16,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,8 +48,6 @@ import com.agentkosticka.amply.audio.session.AppVolumeControlState
 import com.agentkosticka.amply.settings.model.appDisplayName
 import com.agentkosticka.amply.settings.model.appProfileFallbackLabel
 import com.agentkosticka.amply.ui.theme.NothingColors
-import com.agentkosticka.amply.profiles.AudioProfile
-import com.agentkosticka.amply.profiles.ProfileSaveMode
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
@@ -71,14 +64,8 @@ internal fun AmplyPanel(
     panelWidth: Dp,
     maxHeight: Dp,
     apps: List<OverlayAppPresentation>,
-    profiles: List<AudioProfile> = emptyList(),
-    activeProfileId: String? = null,
-    profileDirty: Boolean = false,
-    autoSavingProfile: Boolean = false,
     shizukuDisconnected: Boolean = false,
     showAppProfileIdentity: Boolean = false,
-    onProfileActivate: (String) -> Unit = {},
-    onProfileSave: () -> Unit = {},
     onAppVolumeChange: (AppVolumeTarget, Float) -> Unit,
     onTouchStart: () -> Unit = {},
     onTouchEnd: () -> Unit = {}
@@ -116,57 +103,6 @@ internal fun AmplyPanel(
                 .weight(1f, fill = false)
                 .fillMaxWidth()
         ) {
-            if (profiles.isNotEmpty()) {
-                item(key = "profile-header", contentType = "profile-header") {
-                    var menuExpanded by remember { mutableStateOf(false) }
-                    val active = profiles.firstOrNull { it.id == activeProfileId }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { menuExpanded = true }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                active?.name ?: "Choose profile",
-                                color = NothingColors.White,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                when {
-                                    autoSavingProfile -> "Auto-saving"
-                                    profileDirty -> "Unsaved changes"
-                                    active != null -> "Saved profile"
-                                    else -> "Profiles"
-                                },
-                                color = if (profileDirty) NothingColors.Red else NothingColors.GreyMedium,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                        if (profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT) {
-                            IconButton(onClick = onProfileSave) {
-                                Icon(Icons.Default.Save, "Save current profile", tint = NothingColors.Red)
-                            }
-                        }
-                        Icon(Icons.Default.KeyboardArrowDown, "Switch profile", tint = NothingColors.GreyMedium)
-                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                            profiles.sortedBy { it.name }.forEach { profile ->
-                                DropdownMenuItem(
-                                    text = { Text(profile.name) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onProfileActivate(profile.id)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2D2D2D)))
-                }
-            }
             if (shizukuDisconnected) {
                 item(key = "shizuku-warning", contentType = "warning") {
                     Text(

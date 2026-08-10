@@ -31,8 +31,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DoNotDisturbOn
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +66,7 @@ import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.profiles.AudioProfile
+import com.agentkosticka.amply.profiles.ProfileSaveMode
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -128,6 +135,7 @@ fun VolumeOverlay(
     onDismissRequest: () -> Unit = {}
 ) {
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
+    var profileMenuExpanded by remember { mutableStateOf(false) }
     val isExpanded = expanded ?: internalExpanded
     val showCollapsedDnd = selectedTarget == VolumeTarget.RING ||
         selectedTarget == VolumeTarget.NOTIFICATION
@@ -138,8 +146,10 @@ fun VolumeOverlay(
     )
     val dndCollapsedTranslation = animateFloatAsState(
         targetValue = with(LocalDensity.current) {
-            if (!isExpanded && showCollapsedDnd && showStandDownButton) {
-                CollapsedPillWidth.toPx()
+            if (!isExpanded && showCollapsedDnd) {
+                val hiddenSlots = listOf(profiles.isNotEmpty(), showStandDownButton).count { it }
+                val direction = if (overlaySide == OverlaySide.RIGHT) 1f else -1f
+                CollapsedPillWidth.toPx() * hiddenSlots * direction
             } else {
                 0f
             }
@@ -151,7 +161,7 @@ fun VolumeOverlay(
         internalExpanded = value
         onExpandedChange(value)
     }
-    val hasPanelContent = profiles.isNotEmpty() || apps.isNotEmpty() ||
+    val hasPanelContent = apps.isNotEmpty() ||
         (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val density = LocalDensity.current
@@ -215,20 +225,18 @@ fun VolumeOverlay(
                 androidx.compose.ui.AbsoluteAlignment.Left
             }
         ) {
-            if (showStandDownButton || showDndButton) {
+            if (showStandDownButton || showDndButton || profiles.isNotEmpty()) {
                 Box(
                     modifier = Modifier
-                        .width(
-                            if (showStandDownButton && showDndButton) {
-                                CollapsedPillWidth * 2
-                            } else {
-                                CollapsedPillWidth
-                            }
-                        )
+                        .width(CollapsedPillWidth * listOf(
+                            showDndButton,
+                            profiles.isNotEmpty(),
+                            showStandDownButton
+                        ).count { it })
                         .height(PauseControlSlotHeight),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    Row {
+                    val dndControl: @Composable () -> Unit = {
                         if (showDndButton) {
                             Box(
                                 Modifier
@@ -238,7 +246,7 @@ fun VolumeOverlay(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                this@Row.AnimatedVisibility(
+                                androidx.compose.animation.AnimatedVisibility(
                                     visible = isExpanded || showCollapsedDnd,
                                     enter = fadeIn(tween(180)) + slideInVertically { it },
                                     exit = fadeOut(tween(120)) + slideOutVertically { it }
@@ -273,9 +281,76 @@ fun VolumeOverlay(
                             }
                             }
                         }
+                    }
+                    val profileControl: @Composable () -> Unit = {
+                        if (profiles.isNotEmpty()) {
+                            Box(Modifier.size(CollapsedPillWidth), contentAlignment = Alignment.Center) {
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = isExpanded,
+                                    enter = fadeIn(tween(180)) + slideInVertically { it },
+                                    exit = fadeOut(tween(120)) + slideOutVertically { it }
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF1C1C1C))
+                                            .clickable {
+                                                profileMenuExpanded = true
+                                                onInteraction()
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.SwapHoriz,
+                                            contentDescription = if (autoSavingProfile) {
+                                                "Switch profile, current profile auto-saves"
+                                            } else {
+                                                "Switch profile"
+                                            },
+                                            tint = if (activeProfileId != null) NothingColors.Red else NothingColors.White,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        DropdownMenu(
+                                            expanded = profileMenuExpanded,
+                                            onDismissRequest = { profileMenuExpanded = false },
+                                            containerColor = Color(0xFF1C1C1C)
+                                        ) {
+                                            val active = profiles.firstOrNull { it.id == activeProfileId }
+                                            if (profileDirty && active?.saveMode == ProfileSaveMode.EXPLICIT) {
+                                                DropdownMenuItem(
+                                                    leadingIcon = { Icon(Icons.Default.Save, null, tint = NothingColors.Red) },
+                                                    text = { Text("Save ${active.name}", color = NothingColors.White) },
+                                                    onClick = {
+                                                        profileMenuExpanded = false
+                                                        onProfileSave()
+                                                    }
+                                                )
+                                            }
+                                            profiles.sortedBy { it.name }.forEach { profile ->
+                                                DropdownMenuItem(
+                                                    leadingIcon = {
+                                                        if (profile.id == activeProfileId) {
+                                                            Icon(Icons.Default.Check, null, tint = NothingColors.Red)
+                                                        }
+                                                    },
+                                                    text = { Text(profile.name, color = NothingColors.White) },
+                                                    onClick = {
+                                                        profileMenuExpanded = false
+                                                        onProfileActivate(profile.id)
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            }
+                        }
+                    val standDownControl: @Composable () -> Unit = {
                         if (showStandDownButton) {
                             Box(Modifier.size(CollapsedPillWidth), contentAlignment = Alignment.Center) {
-                                this@Row.AnimatedVisibility(
+                                androidx.compose.animation.AnimatedVisibility(
                                     visible = isExpanded,
                                     enter = fadeIn(tween(180)) + slideInVertically { it },
                                     exit = fadeOut(tween(120)) + slideOutVertically { it }
@@ -300,6 +375,17 @@ fun VolumeOverlay(
                                 }
                             }
                             }
+                        }
+                    }
+                    Row {
+                        if (overlaySide == OverlaySide.RIGHT) {
+                            dndControl()
+                            profileControl()
+                            standDownControl()
+                        } else {
+                            standDownControl()
+                            profileControl()
+                            dndControl()
                         }
                     }
                 }
@@ -335,14 +421,8 @@ fun VolumeOverlay(
                 panelWidth = panelWidth,
                 maxHeight = maxHeight,
                 apps = apps,
-                profiles = profiles,
-                activeProfileId = activeProfileId,
-                profileDirty = profileDirty,
-                autoSavingProfile = autoSavingProfile,
                 shizukuDisconnected = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED,
                 showAppProfileIdentity = showAppProfileIdentity,
-                onProfileActivate = onProfileActivate,
-                onProfileSave = onProfileSave,
                 onAppVolumeChange = { app, volume ->
                     onAppVolumeChange(app, volume)
                 },
@@ -384,15 +464,10 @@ fun VolumeOverlay(
                     } else {
                         down.position.x <= collapsedWidth
                     }
-                    val dndRowWidth = if (showStandDownButton) {
-                        collapsedWidth * 2f
-                    } else {
-                        collapsedWidth
-                    }
                     val isInsideVisibleDnd = showDndButton && showCollapsedDnd &&
                         down.position.y <= PauseControlSlotHeight.toPx() &&
                         if (expandToStart) {
-                            down.position.x >= size.width - dndRowWidth
+                            down.position.x >= size.width - collapsedWidth
                         } else {
                             down.position.x <= collapsedWidth
                         }

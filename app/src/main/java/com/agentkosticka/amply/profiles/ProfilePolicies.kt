@@ -1,5 +1,7 @@
 package com.agentkosticka.amply.profiles
 
+import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
+
 internal sealed interface OutputProfileAction {
     data object Ignore : OutputProfileAction
     data object Clear : OutputProfileAction
@@ -17,6 +19,37 @@ internal object OutputProfilePolicy {
             ?: OutputProfileAction.Create
     }
 }
+
+internal fun ProfileStore.withDeviceAssignment(
+    deviceKey: String,
+    profileId: String?,
+    currentOutputKey: String?
+): ProfileStore {
+    val known = devices[deviceKey] ?: return this
+    if (profileId != null && profileId !in profiles) return this
+    val clearingCurrentOutput = deviceKey == currentOutputKey && profileId == null
+    return copy(
+        devices = devices + (deviceKey to known.copy(
+            assignedProfileId = profileId,
+            explicitlyUnassigned = profileId == null
+        )),
+        activeProfileId = if (clearingCurrentOutput) null else activeProfileId,
+        activeDraft = if (clearingCurrentOutput) null else activeDraft
+    )
+}
+
+internal data class ProfileRingerApplyPlan(
+    val applyBeforeVolumes: Boolean,
+    val reapplyAfterVolumes: Boolean
+)
+
+internal fun profileRingerApplyPlan(mode: NotificationAlertMode): ProfileRingerApplyPlan =
+    ProfileRingerApplyPlan(
+        applyBeforeVolumes = true,
+        // Loud restores a remembered alert level, so applying it after the two
+        // saved streams would overwrite one of them. Silent/Vibrate do not.
+        reapplyAfterVolumes = mode != NotificationAlertMode.LOUD
+    )
 
 internal fun normalizedVolume(current: Int, min: Int, max: Int): Float =
     if (max <= min) 0f else ((current.coerceIn(min, max) - min).toFloat() / (max - min)).coerceIn(0f, 1f)

@@ -92,6 +92,23 @@ class OutputProfilePolicyTest {
     fun ignoresForgottenOutputUntilRouteLeaves() {
         assertEquals(OutputProfileAction.Ignore, OutputProfilePolicy.resolve(ProfileStore(), output.key, output.key))
     }
+
+    @Test
+    fun noAutomaticProfilePersistsAndClearsCurrentActivationImmediately() {
+        val store = ProfileStore(
+            profiles = mapOf(profile.id to profile),
+            devices = mapOf(output.key to KnownOutputDevice(output, profile.id)),
+            activeProfileId = profile.id,
+            activeDraft = profile.snapshot
+        )
+
+        val updated = store.withDeviceAssignment(output.key, null, output.key)
+
+        assertTrue(updated.devices.getValue(output.key).explicitlyUnassigned)
+        assertEquals(null, updated.devices.getValue(output.key).assignedProfileId)
+        assertEquals(null, updated.activeProfileId)
+        assertEquals(null, updated.activeDraft)
+    }
 }
 
 class ProfileVolumeMathTest {
@@ -108,6 +125,22 @@ class ProfileVolumeMathTest {
         assertEquals(15, volumeIndex(2f, 0, 15))
         assertTrue(normalizedVolume(20, 0, 15) <= 1f)
         assertFalse(normalizedVolume(-5, 0, 15) < 0f)
+    }
+}
+
+class ProfileRingerApplyPlanTest {
+    @Test
+    fun loudModeIsNeverAppliedAfterIndependentAlertVolumes() {
+        val plan = profileRingerApplyPlan(NotificationAlertMode.LOUD)
+
+        assertTrue(plan.applyBeforeVolumes)
+        assertFalse(plan.reapplyAfterVolumes)
+    }
+
+    @Test
+    fun silentAndVibrateAreRestoredAfterVolumeControls() {
+        assertTrue(profileRingerApplyPlan(NotificationAlertMode.MUTED).reapplyAfterVolumes)
+        assertTrue(profileRingerApplyPlan(NotificationAlertMode.VIBRATIONS).reapplyAfterVolumes)
     }
 }
 

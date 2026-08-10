@@ -517,6 +517,7 @@ fun SettingsDashboard(
         initialPage = SettingsTab.entries.indexOf(selectedTab),
         pageCount = { SettingsTab.entries.size }
     )
+    val profileEditorNavigation = remember { ProfileEditorNavigationGuard() }
     val appsListState = rememberLazyListState()
     val pillListState = rememberLazyListState()
     val keysListState = rememberLazyListState()
@@ -866,16 +867,25 @@ fun SettingsDashboard(
                 if (tutorialStage.isAppTour && index == tutorialStage.settingsTabIndex) {
                     runtime.tutorialCoordinator.advanceAppTour()
                 } else {
-                    tabNavigation.job?.cancel()
-                    tabNavigation.job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                        val pageDistance = abs(index - pagerState.currentPage)
-                        pagerState.animateScrollToPage(
-                            page = index,
-                            animationSpec = tween(
-                                durationMillis = 330 + (pageDistance - 1).coerceAtLeast(0) * 45,
-                                easing = FastOutSlowInEasing
+                    val navigate = {
+                        tabNavigation.job?.cancel()
+                        tabNavigation.job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            val pageDistance = abs(index - pagerState.currentPage)
+                            pagerState.animateScrollToPage(
+                                page = index,
+                                animationSpec = tween(
+                                    durationMillis = 330 + (pageDistance - 1).coerceAtLeast(0) * 45,
+                                    easing = FastOutSlowInEasing
+                                )
                             )
-                        )
+                        }
+                    }
+                    if (pagerState.currentPage == SettingsTab.PROFILES.ordinal &&
+                        index != pagerState.currentPage && profileEditorNavigation.editing
+                    ) {
+                        profileEditorNavigation.requestExit(navigate)
+                    } else {
+                        navigate()
                     }
                 }
             }
@@ -888,7 +898,8 @@ fun SettingsDashboard(
                 .padding(scaffoldPadding)
                 .background(NothingColors.Black),
             key = { SettingsTab.entries[it].name },
-            beyondViewportPageCount = SettingsTab.entries.lastIndex
+            beyondViewportPageCount = SettingsTab.entries.lastIndex,
+            userScrollEnabled = !profileEditorNavigation.editing
         ) { page ->
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 12.dp)) {
@@ -1239,6 +1250,7 @@ fun SettingsDashboard(
                     notificationPolicyGranted = appPermissionState.notificationPolicyGranted,
                     onNearbyDevicesClick = onNearbyDevicesClick,
                     onNotificationPolicyClick = onNotificationPolicyClick,
+                    navigationGuard = profileEditorNavigation,
                     modifier = Modifier.weight(1f)
                 )
 

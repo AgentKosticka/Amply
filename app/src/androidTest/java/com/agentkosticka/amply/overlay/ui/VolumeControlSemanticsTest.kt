@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
@@ -87,7 +88,7 @@ class VolumeControlSemanticsTest {
         compose.onAllNodesWithContentDescription("Pause Amply temporarily").assertCountEquals(0)
     }
 
-    @Test fun expandedOverlayShowsActiveProfileAndDirtySaveAction() {
+    @Test fun expandedOverlayMovesProfileSwitchingIntoItsOwnActionButton() {
         val profile = AudioProfile(
             id = "night",
             name = "Night",
@@ -110,8 +111,9 @@ class VolumeControlSemanticsTest {
             }
         }
 
+        compose.onNodeWithContentDescription("Switch profile").performClick()
         compose.onNodeWithText("Night").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Save current profile").assertIsDisplayed()
+        compose.onNodeWithText("Save Night").assertIsDisplayed()
     }
 
     @Test fun collapsedRingerPillKeepsDndButtonVisible() {
