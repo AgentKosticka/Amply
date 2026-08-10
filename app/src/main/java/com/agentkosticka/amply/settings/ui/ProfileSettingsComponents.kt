@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,15 +64,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeTarget
-import com.agentkosticka.amply.overlay.ui.DraggableDotSlider
 import com.agentkosticka.amply.overlay.ui.HorizontalDraggableDotSlider
 import com.agentkosticka.amply.profiles.AudioProfile
 import com.agentkosticka.amply.profiles.AudioProfileSnapshot
@@ -89,6 +90,7 @@ import com.agentkosticka.amply.settings.model.appDisplayName
 import com.agentkosticka.amply.settings.model.appProfileFallbackLabel
 import com.agentkosticka.amply.ui.theme.NothingColors
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 internal class ProfileEditorNavigationGuard {
     var editing by mutableStateOf(false)
@@ -428,6 +430,42 @@ private fun ProfileEditor(
     var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     val editorListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val personalUserId = Process.myUid() / 100_000
+    val appPresentations = appSettings.entries.map { (identity, setting) ->
+        val base = appDisplayName(setting.appName, identity.userId, personalUserId, hideProfileIdentity)
+        val suffix = appProfileFallbackLabel(
+            setting.appName,
+            identity.userId,
+            personalUserId,
+            hideProfileIdentity
+        )
+        ProfileEditorApp(identity, setting, base, suffix)
+    }.sortedBy { it.displayName }
+    var revealedApps by remember(profile.id) {
+        mutableStateOf<Set<AppIdentity>>(
+            appPresentations
+                .filter { presentation ->
+                    (snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume) < 0.999f
+                }
+                .mapTo(linkedSetOf()) { it.identity }
+        )
+    }
+    LaunchedEffect(search, appPresentations) {
+        if (search.isNotBlank()) {
+            revealedApps = revealedApps + appPresentations
+                .filter { it.searchText.contains(search, ignoreCase = true) }
+                .map { it.identity }
+        }
+    }
+    val shownApps = appPresentations.filter { presentation ->
+        val effectiveVolume = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
+        shouldShowProfileApp(
+            search = search,
+            displayName = presentation.searchText,
+            volume = effectiveVolume,
+            alreadyRevealed = presentation.identity in revealedApps
+        )
+    }
 
     DisposableEffect(profile.id, dirty) {
         navigationGuard.attach { afterExit ->
@@ -446,15 +484,27 @@ private fun ProfileEditor(
     LazyColumn(
         state = editorListState,
         modifier = modifier
-            .imePadding()
             .lazyScrollProgressIndicator(editorListState),
         contentPadding = PaddingValues(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item(key = "profile-editor-header") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { navigationGuard.requestExit() }) { Text("BACK", color = NothingColors.Red) }
-                Text("EDIT PROFILE", color = NothingColors.White, style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "EDIT PROFILE",
+                    color = NothingColors.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { navigationGuard.requestExit() }) {
+                    Text(
+                        "BACK",
+                        color = NothingColors.Red,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
         item { NothingTextField(name, { name = it.take(40) }, "Profile name") }
@@ -530,7 +580,7 @@ private fun ProfileEditor(
                     scope
                 )
             )
-            if (search.isBlank()) {
+            if (search.isBlank() && shownApps.isEmpty()) {
                 Text(
                     "Apps at 100% are hidden. Search to add or edit one.",
                     color = NothingColors.GreyMedium,
@@ -538,28 +588,18 @@ private fun ProfileEditor(
                 )
             }
         }
-        val personalUserId = Process.myUid() / 100_000
-        val shownApps = appSettings.entries.map { (identity, setting) ->
-            val base = appDisplayName(setting.appName, identity.userId, personalUserId, hideProfileIdentity)
-            val suffix = appProfileFallbackLabel(
-                setting.appName,
-                identity.userId,
-                personalUserId,
-                hideProfileIdentity
-            ).orEmpty()
-            Triple(identity, setting, listOf(base, suffix).filter(String::isNotBlank).joinToString(" "))
-        }.filter { (identity, setting, displayName) ->
-            val effectiveVolume = snapshot.appVolumes[identity] ?: setting.defaultVolume
-            shouldShowProfileApp(search, displayName, effectiveVolume)
-        }.sortedBy { it.third }
-        items(shownApps, key = { it.first.storageKey }) { (identity, setting, displayName) ->
-            val value = snapshot.appVolumes[identity] ?: setting.defaultVolume
+        items(shownApps, key = { it.identity.storageKey }) { presentation ->
+            val value = snapshot.appVolumes[presentation.identity] ?: presentation.setting.defaultVolume
             ProfileAppVolumeRow(
-                packageName = identity.packageName,
-                displayName = displayName,
+                packageName = presentation.identity.packageName,
+                displayName = presentation.displayName,
+                profileLabel = presentation.profileLabel,
                 fraction = value,
                 onChange = { changed ->
-                    snapshot = snapshot.copy(appVolumes = snapshot.appVolumes + (identity to changed))
+                    revealedApps = revealedApps + presentation.identity
+                    snapshot = snapshot.copy(
+                        appVolumes = snapshot.appVolumes + (presentation.identity to changed)
+                    )
                 }
             )
         }
@@ -616,11 +656,17 @@ private fun ProfileSystemVolumeRow(
                 Text(
                     target.label,
                     color = NothingColors.White,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = 12.dp)
                 )
                 Spacer(Modifier.weight(1f))
-                Text("${(fraction * 100).toInt()}%", color = NothingColors.GreyMedium)
+                Text(
+                    "${(fraction * 100).roundToInt()}%",
+                    color = if (fraction > 0.75f) NothingColors.Red else NothingColors.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
             }
             HorizontalDraggableDotSlider(
                 currentVolume = current,
@@ -648,32 +694,68 @@ private fun ProfileSystemVolumeRow(
 private fun ProfileAppVolumeRow(
     packageName: String,
     displayName: String,
+    profileLabel: String?,
     fraction: Float,
     onChange: (Float) -> Unit
 ) {
-    val icon = rememberApplicationIconBitmap(packageName, 80)
-    SettingsPanel {
-        Row(Modifier.fillMaxWidth().height(126.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (icon != null) {
-                Image(icon, null, Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)))
-            } else {
-                Icon(Icons.Default.MusicNote, null, tint = NothingColors.Red, modifier = Modifier.size(36.dp))
+    val icon = rememberApplicationIconBitmap(packageName, 72)
+    val percent = (fraction * 100).roundToInt()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF1C1C1C), RoundedCornerShape(27.dp))
+            .padding(horizontal = 16.dp, vertical = 15.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .background(Color(0xFF303030), RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (icon != null) {
+                    Image(icon, displayName, Modifier.size(32.dp))
+                } else {
+                    Icon(Icons.Default.MusicNote, displayName, tint = NothingColors.GreyMedium)
+                }
             }
-            Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                Text(displayName, color = NothingColors.White, fontWeight = FontWeight.Bold)
-                Text("${(fraction * 100).toInt()}%", color = NothingColors.GreyMedium)
+            Column(Modifier.weight(1f)) {
+                Text(
+                    displayName,
+                    color = NothingColors.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                profileLabel?.let {
+                    Text(
+                        it,
+                        color = NothingColors.GreyMedium,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
-            DraggableDotSlider(
-                currentVolume = (fraction * 100).toInt(),
-                minVolume = 0,
-                maxVolume = 100,
-                referenceMaxVolume = 100,
-                dotCount = 16,
-                onVolumeChange = { onChange(it / 100f) },
-                accessibilityLabel = "$displayName profile volume",
-                modifier = Modifier.width(42.dp).height(106.dp)
+            Text(
+                "$percent%",
+                color = if (percent > 75) NothingColors.Red else NothingColors.White,
+                style = MaterialTheme.typography.labelLarge,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
             )
         }
+        Spacer(Modifier.height(14.dp))
+        AppVolumeRail(
+            volume = fraction,
+            enabled = true,
+            onVolumeChange = onChange,
+            accessibilityLabel = "$displayName profile volume",
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -799,5 +881,20 @@ private fun outputIcon(kind: OutputKind): ImageVector = when (kind) {
     OutputKind.CAST -> Icons.Default.Cast
 }
 
-internal fun shouldShowProfileApp(search: String, displayName: String, volume: Float): Boolean =
-    volume < 0.999f || (search.isNotBlank() && displayName.contains(search, ignoreCase = true))
+internal fun shouldShowProfileApp(
+    search: String,
+    displayName: String,
+    volume: Float,
+    alreadyRevealed: Boolean = false
+): Boolean = alreadyRevealed ||
+    volume < 0.999f ||
+    (search.isNotBlank() && displayName.contains(search, ignoreCase = true))
+
+private data class ProfileEditorApp(
+    val identity: AppIdentity,
+    val setting: AppSettings,
+    val displayName: String,
+    val profileLabel: String?
+) {
+    val searchText: String get() = listOfNotNull(displayName, profileLabel).joinToString(" ")
+}

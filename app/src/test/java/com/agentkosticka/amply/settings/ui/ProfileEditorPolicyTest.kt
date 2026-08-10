@@ -17,4 +17,16 @@ class ProfileEditorPolicyTest {
         assertTrue(shouldShowProfileApp("", "WhatsApp", 0.75f))
         assertTrue(shouldShowProfileApp("Signal", "WhatsApp", 0.75f))
     }
+
+    @Test
+    fun keepsRevealedAppVisibleAfterItReachesFullVolume() {
+        assertTrue(
+            shouldShowProfileApp(
+                search = "",
+                displayName = "WhatsApp",
+                volume = 1f,
+                alreadyRevealed = true
+            )
+        )
+    }
 }

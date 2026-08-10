@@ -3,6 +3,7 @@ package com.agentkosticka.amply.overlay.ui
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
@@ -12,10 +13,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -383,38 +387,63 @@ fun VolumeOverlay(
     }
 
     val panelBody: @Composable (Dp, Dp) -> Unit = { panelWidth, maxHeight ->
-        if (profileMenuExpanded) {
-            OverlayProfileSelectorPanel(
-                panelWidth = panelWidth,
-                maxHeight = maxHeight,
-                profiles = profiles,
-                activeProfileId = activeProfileId,
-                profileDirty = profileDirty,
-                autoSavingProfile = autoSavingProfile,
-                onProfileActivate = { profileId ->
-                    profileMenuExpanded = false
-                    onProfileActivate(profileId)
-                },
-                onProfileSave = {
-                    profileMenuExpanded = false
-                    onProfileSave()
-                }
-            )
-        } else if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()) {
-            AmplyPanel(
-                panelWidth = panelWidth,
-                maxHeight = maxHeight,
-                apps = apps,
-                shizukuDisconnected = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED,
-                showAppProfileIdentity = showAppProfileIdentity,
-                onAppVolumeChange = { app, volume ->
-                    onAppVolumeChange(app, volume)
-                },
-                onTouchStart = onTouchStart,
-                onTouchEnd = onTouchEnd
-            )
-        } else if (showShizukuDisconnectedWarning) {
-            ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
+        androidx.compose.animation.AnimatedContent(
+            targetState = profileMenuExpanded,
+            transitionSpec = {
+                val direction = if (targetState) 1 else -1
+                (
+                    fadeIn(tween(190, delayMillis = 35)) +
+                        slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) {
+                            direction * it / 5
+                        }
+                    ).togetherWith(
+                    fadeOut(tween(135)) +
+                        slideOutHorizontally(tween(175, easing = FastOutSlowInEasing)) {
+                            -direction * it / 6
+                        }
+                ).using(
+                    SizeTransform(clip = false) { _, _ ->
+                        tween(220, easing = FastOutSlowInEasing)
+                    }
+                )
+            },
+            label = "overlayPanelContent"
+        ) { showProfiles ->
+            if (showProfiles) {
+                OverlayProfileSelectorPanel(
+                    panelWidth = panelWidth,
+                    maxHeight = maxHeight,
+                    profiles = profiles,
+                    activeProfileId = activeProfileId,
+                    profileDirty = profileDirty,
+                    autoSavingProfile = autoSavingProfile,
+                    onProfileActivate = { profileId ->
+                        profileMenuExpanded = false
+                        onProfileActivate(profileId)
+                    },
+                    onProfileSave = {
+                        profileMenuExpanded = false
+                        onProfileSave()
+                    }
+                )
+            } else if (
+                shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()
+            ) {
+                AmplyPanel(
+                    panelWidth = panelWidth,
+                    maxHeight = maxHeight,
+                    apps = apps,
+                    shizukuDisconnected = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED,
+                    showAppProfileIdentity = showAppProfileIdentity,
+                    onAppVolumeChange = { app, volume -> onAppVolumeChange(app, volume) },
+                    onTouchStart = onTouchStart,
+                    onTouchEnd = onTouchEnd
+                )
+            } else if (showShizukuDisconnectedWarning) {
+                ShizukuDisconnectedPanel(panelWidth, shizukuIcon)
+            } else {
+                Box(Modifier.width(panelWidth).height(1.dp))
+            }
         }
     }
 
@@ -548,8 +577,14 @@ fun VolumeOverlay(
                 pillContent()
                 AnimatedVisibility(
                     visibleState = panelTransitionState,
-                    enter = fadeIn(animationSpec = tween(170)),
-                    exit = fadeOut(animationSpec = tween(120))
+                    enter = fadeIn(animationSpec = tween(180)) + expandVertically(
+                        expandFrom = Alignment.Top,
+                        animationSpec = tween(230, easing = FastOutSlowInEasing)
+                    ),
+                    exit = fadeOut(animationSpec = tween(140)) + shrinkVertically(
+                        shrinkTowards = Alignment.Top,
+                        animationSpec = tween(190, easing = FastOutSlowInEasing)
+                    )
                 ) {
                     val horizontalReveal = transition.animateFloat(
                         transitionSpec = {

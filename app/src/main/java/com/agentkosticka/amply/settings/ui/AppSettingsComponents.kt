@@ -303,7 +303,7 @@ private fun VisibilityButton(
 }
 
 @Composable
-private fun AppVolumeRail(
+internal fun AppVolumeRail(
     volume: Float,
     enabled: Boolean,
     onVolumeChange: (Float) -> Unit,
