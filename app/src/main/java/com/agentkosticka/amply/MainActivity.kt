@@ -24,20 +24,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.agentkosticka.amply.settings.ui.SettingsDashboard
+import com.agentkosticka.amply.settings.ui.AmplyPopupAction
+import com.agentkosticka.amply.settings.ui.AmplyPopupActionTone
+import com.agentkosticka.amply.settings.ui.AmplyPopupDialog
 import com.agentkosticka.amply.permissions.AppPermissionState
 import com.agentkosticka.amply.service.VolumeKeyService
 import com.agentkosticka.amply.setup.SetupViewModel
@@ -172,64 +170,28 @@ class MainActivity : ComponentActivity() {
                     readiness.canShowDashboard(introductionSeen) &&
                     tutorialStage == TutorialStage.COMPLETED
                 ) {
-                    AlertDialog(
+                    AmplyPopupDialog(
                         onDismissRequest = runtime.updateChecker::dismissAvailableUpdate,
-                        title = {
-                            Column {
-                                Text(
-                                    text = stringResource(R.string.update_available_eyebrow),
-                                    color = com.agentkosticka.amply.ui.theme.NothingColors.Red,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = stringResource(
-                                        R.string.update_available_title,
-                                        update.version.toString()
-                                    ),
-                                    color = com.agentkosticka.amply.ui.theme.NothingColors.White,
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                        title = stringResource(R.string.update_available_eyebrow),
+                        body = buildString {
+                            append(stringResource(R.string.update_available_title, update.version.toString()))
+                            append("\n\n")
+                            append(stringResource(R.string.update_available_message))
                         },
-                        text = {
-                            Text(
-                                stringResource(R.string.update_available_message),
-                                color = com.agentkosticka.amply.ui.theme.NothingColors.GreyMedium,
-                                style = MaterialTheme.typography.bodyMedium
+                        actions = listOf(
+                            AmplyPopupAction(
+                                label = stringResource(R.string.update_view_release),
+                                onClick = {
+                                    runtime.updateChecker.dismissAvailableUpdate()
+                                    openReleasePage(update.releaseUrl)
+                                }
+                            ),
+                            AmplyPopupAction(
+                                label = stringResource(R.string.update_later),
+                                onClick = runtime.updateChecker::dismissAvailableUpdate,
+                                tone = AmplyPopupActionTone.MUTED
                             )
-                        },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                runtime.updateChecker.dismissAvailableUpdate()
-                                openReleasePage(update.releaseUrl)
-                            }) {
-                                Text(
-                                    stringResource(R.string.update_view_release),
-                                    color = com.agentkosticka.amply.ui.theme.NothingColors.Red,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = runtime.updateChecker::dismissAvailableUpdate) {
-                                Text(
-                                    stringResource(R.string.update_later),
-                                    color = com.agentkosticka.amply.ui.theme.NothingColors.GreyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        },
-                        shape = RoundedCornerShape(24.dp),
-                        containerColor = Color(0xFF151515),
-                        tonalElevation = 0.dp,
-                        titleContentColor = com.agentkosticka.amply.ui.theme.NothingColors.White,
-                        textContentColor = com.agentkosticka.amply.ui.theme.NothingColors.GreyMedium
+                        )
                     )
                 }
             }

@@ -59,7 +59,6 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -1627,54 +1626,39 @@ fun SettingsDashboard(
     }
 
     pendingRingerTest?.let { method ->
-        AlertDialog(
+        AmplyPopupDialog(
             onDismissRequest = { pendingRingerTest = null },
-            title = { Text("RUN DEVICE-MODIFYING CHECK?") },
-            text = {
-                Text(
-                    "Amply will temporarily change ringer mode and ring/notification volume, then restore the captured values. The check is blocked during calls, ringing, alarms, or Do Not Disturb."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingRingerTest = null
-                    scope.launch { runtime.ringerExperimentExecutor.testAllTransitions(method) }
-                }) { Text("RUN CHECK", color = NothingColors.Red) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingRingerTest = null }) {
-                    Text("CANCEL", color = NothingColors.GreyMedium)
-                }
-            },
-            containerColor = Color(0xFF1C1C1C),
-            titleContentColor = NothingColors.White,
-            textContentColor = NothingColors.GreyMedium
+            title = "Run device-modifying check?",
+            body = "Amply will temporarily change ringer mode and ring/notification volume, then restore the captured values. The check is blocked during calls, ringing, alarms, or Do Not Disturb.",
+            actions = listOf(
+                AmplyPopupAction("Run check", onClick = {
+                        pendingRingerTest = null
+                        scope.launch { runtime.ringerExperimentExecutor.testAllTransitions(method) }
+                    }
+                ),
+                AmplyPopupAction("Cancel", { pendingRingerTest = null }, AmplyPopupActionTone.MUTED)
+            )
         )
     }
 
     pendingImportPreview?.let { preview ->
-        AlertDialog(
+        AmplyPopupDialog(
             onDismissRequest = {
                 pendingImportRaw = null
                 pendingImportPreview = null
             },
-            title = { Text(if (preview.valid) "IMPORT SETTINGS" else "INVALID SETTINGS FILE") },
-            text = {
-                Text(
-                    if (preview.valid) {
-                        "${preview.appCount} app records, ${preview.customizedAppCount} customized, and ${preview.standDownCount} stood-down packages. Both modes replace global settings; Merge keeps other app records and unions Stand-Down, while Replace removes local records not in the backup."
-                    } else preview.error.orEmpty()
-                )
-            },
-            confirmButton = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (preview.valid) Arrangement.SpaceBetween else Arrangement.End
-                ) {
-                    if (preview.valid) {
-                        TextButton(
+            title = if (preview.valid) "Import settings" else "Invalid settings file",
+            body = if (preview.valid) {
+                "${preview.appCount} app records, ${preview.customizedAppCount} customized, and ${preview.standDownCount} stood-down packages. Both modes replace global settings; Merge keeps other app records and unions Stand-Down, while Replace removes local records not in the backup."
+            } else preview.error.orEmpty(),
+            actions = buildList {
+                if (preview.valid) {
+                    add(
+                        AmplyPopupAction(
+                            label = "Merge",
+                            tone = AmplyPopupActionTone.NEUTRAL,
                             onClick = {
-                                val raw = pendingImportRaw ?: return@TextButton
+                                pendingImportRaw?.let { raw ->
                                 scope.launch {
                                     when (val result = preferences.importSettings(raw, ImportMode.MERGE)) {
                                         SettingsOperationResult.Success -> {
@@ -1691,14 +1675,17 @@ fun SettingsDashboard(
                                             Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
                                     }
                                 }
+                                }
                                 pendingImportRaw = null
                                 pendingImportPreview = null
-                            },
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) { Text("MERGE", color = NothingColors.White, maxLines = 1, softWrap = false) }
-                        TextButton(
+                            }
+                        )
+                    )
+                    add(
+                        AmplyPopupAction(
+                            label = "Replace",
                             onClick = {
-                                val raw = pendingImportRaw ?: return@TextButton
+                                pendingImportRaw?.let { raw ->
                                 scope.launch {
                                     when (val result = preferences.importSettings(raw, ImportMode.REPLACE)) {
                                         SettingsOperationResult.Success -> {
@@ -1715,153 +1702,123 @@ fun SettingsDashboard(
                                             Toast.makeText(context, "Import failed: ${result.reason}", Toast.LENGTH_LONG).show()
                                     }
                                 }
+                                }
                                 pendingImportRaw = null
                                 pendingImportPreview = null
-                            },
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) { Text("REPLACE", color = NothingColors.Red, maxLines = 1, softWrap = false) }
-                    }
-                    TextButton(
+                            }
+                        )
+                    )
+                }
+                add(
+                    AmplyPopupAction(
+                        label = "Cancel",
+                        tone = AmplyPopupActionTone.MUTED,
                         onClick = {
                             pendingImportRaw = null
                             pendingImportPreview = null
-                        },
-                        contentPadding = PaddingValues(horizontal = 6.dp)
-                    ) { Text("CANCEL", color = NothingColors.GreyMedium, maxLines = 1, softWrap = false) }
-                }
-            },
-            containerColor = Color(0xFF1C1C1C),
-            titleContentColor = NothingColors.White,
-            textContentColor = NothingColors.GreyMedium
+                        }
+                    )
+                )
+            }
         )
     }
 
     if (showDndPermissionFallback) {
-        AlertDialog(
+        AmplyPopupDialog(
             onDismissRequest = {
                 showDndPermissionFallback = false
                 waitingForDndPermission = false
                 wentToSettingsForDndPermission = false
                 scope.launch { preferences.setShowDndButton(false) }
             },
-            title = { Text("CAN'T ENABLE DND BUTTON WITHOUT PERMISSIONS") },
-            text = {
-                Text(
-                    "Amply requires Do Not Disturb (Notification Policy) access to show the DND button. Please grant permissions or disable the button."
-                )
-            },
-            confirmButton = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    TextButton(
+            title = "Can't enable DND button without permissions",
+            body = "Amply requires Do Not Disturb (Notification Policy) access to show the DND button. Please grant permissions or disable the button.",
+            actions = listOf(
+                AmplyPopupAction(
+                    label = "Give permissions",
+                    tone = AmplyPopupActionTone.NEUTRAL,
                         onClick = {
                             waitingForDndPermission = true
                             wentToSettingsForDndPermission = false
                             showDndPermissionFallback = false
                             onNotificationPolicyClick()
                         }
-                    ) {
-                        Text("GIVE PERMISSIONS", color = NothingColors.White, maxLines = 1, softWrap = false)
-                    }
-                    TextButton(
+                ),
+                AmplyPopupAction(
+                    label = "Disable DND button",
                         onClick = {
                             showDndPermissionFallback = false
                             waitingForDndPermission = false
                             wentToSettingsForDndPermission = false
                             scope.launch { preferences.setShowDndButton(false) }
                         }
-                    ) {
-                        Text("DISABLE DND BUTTON", color = NothingColors.Red, maxLines = 1, softWrap = false)
-                    }
-                }
-            },
-            containerColor = Color(0xFF1C1C1C),
-            titleContentColor = NothingColors.White,
-            textContentColor = NothingColors.GreyMedium
+                )
+            )
         )
     }
 
     if (showCleanupConfirmation) {
-        AlertDialog(
+        AmplyPopupDialog(
             onDismissRequest = { showCleanupConfirmation = false },
-            title = { Text("REMOVE STALE APP DATA?") },
-            text = { Text("This removes $staleAppCount uninstalled app records, including customized records shown in this count.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        staleAppCount = withContext(Dispatchers.IO) {
-                            preferences.pruneStaleApps(automatic = false)
-                            preferences.findStaleApps().size
+            title = "Remove stale app data?",
+            body = "This removes $staleAppCount uninstalled app records, including customized records shown in this count.",
+            actions = listOf(
+                AmplyPopupAction(
+                    label = "Remove",
+                    onClick = {
+                        scope.launch {
+                            staleAppCount = withContext(Dispatchers.IO) {
+                                preferences.pruneStaleApps(automatic = false)
+                                preferences.findStaleApps().size
+                            }
                         }
+                        showCleanupConfirmation = false
                     }
-                    showCleanupConfirmation = false
-                }) { Text("REMOVE", color = NothingColors.Red) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCleanupConfirmation = false }) {
-                    Text("CANCEL", color = NothingColors.GreyMedium)
-                }
-            },
-            containerColor = Color(0xFF1C1C1C),
-            titleContentColor = NothingColors.White,
-            textContentColor = NothingColors.GreyMedium
+                ),
+                AmplyPopupAction("Cancel", { showCleanupConfirmation = false }, AmplyPopupActionTone.MUTED)
+            )
         )
     }
 
     if (showRepairConfirmation) {
-        AlertDialog(
+        AmplyPopupDialog(
             onDismissRequest = { showRepairConfirmation = false },
-            title = { Text("REPAIR APP SETTINGS?") },
-            text = {
-                Text(
-                    "This removes only unreadable per-app records. Global layout, pause, and Stand-Down settings are preserved; export first if you need the corrupt raw data for support."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        when (preferences.repairAppSettingsStore()) {
-                            SettingsOperationResult.Success ->
-                                Toast.makeText(context, "App settings repaired", Toast.LENGTH_SHORT).show()
-                            else -> Toast.makeText(context, "Repair failed", Toast.LENGTH_LONG).show()
+            title = "Repair app settings?",
+            body = "This removes only unreadable per-app records. Global layout, pause, and Stand-Down settings are preserved; export first if you need the corrupt raw data for support.",
+            actions = listOf(
+                AmplyPopupAction(
+                    label = "Repair",
+                    onClick = {
+                        scope.launch {
+                            when (preferences.repairAppSettingsStore()) {
+                                SettingsOperationResult.Success ->
+                                    Toast.makeText(context, "App settings repaired", Toast.LENGTH_SHORT).show()
+                                else -> Toast.makeText(context, "Repair failed", Toast.LENGTH_LONG).show()
+                            }
                         }
+                        showRepairConfirmation = false
                     }
-                    showRepairConfirmation = false
-                }) { Text("REPAIR", color = NothingColors.Red) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRepairConfirmation = false }) {
-                    Text("CANCEL", color = NothingColors.GreyMedium)
-                }
-            },
-            containerColor = Color(0xFF1C1C1C),
-            titleContentColor = NothingColors.White,
-            textContentColor = NothingColors.GreyMedium
+                ),
+                AmplyPopupAction("Cancel", { showRepairConfirmation = false }, AmplyPopupActionTone.MUTED)
+            )
         )
     }
 
     if (showResetConfirmation) {
-        AlertDialog(
+        AmplyPopupDialog(
             onDismissRequest = { showResetConfirmation = false },
-            title = { Text("RESET AMPLY?") },
-            text = { Text("Layout, volume behavior, app records, pins, stand-down choices, and pause settings return to defaults. Android permissions are not revoked.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch { preferences.resetAllUserSettings() }
-                    showResetConfirmation = false
-                }) { Text("RESET", color = NothingColors.Red) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetConfirmation = false }) {
-                    Text("CANCEL", color = NothingColors.GreyMedium)
-                }
-            },
-            containerColor = Color(0xFF1C1C1C),
-            titleContentColor = NothingColors.White,
-            textContentColor = NothingColors.GreyMedium
+            title = "Reset Amply?",
+            body = "Layout, volume behavior, app records, pins, stand-down choices, and pause settings return to defaults. Android permissions are not revoked.",
+            actions = listOf(
+                AmplyPopupAction(
+                    label = "Reset",
+                    onClick = {
+                        scope.launch { preferences.resetAllUserSettings() }
+                        showResetConfirmation = false
+                    }
+                ),
+                AmplyPopupAction("Cancel", { showResetConfirmation = false }, AmplyPopupActionTone.MUTED)
+            )
         )
     }
 }

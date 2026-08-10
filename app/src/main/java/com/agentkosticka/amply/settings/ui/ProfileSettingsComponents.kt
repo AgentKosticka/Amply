@@ -94,7 +94,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import com.agentkosticka.amply.AmplyRuntime
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
@@ -338,13 +337,25 @@ internal fun ProfilesSettingsPage(
                     DropdownMenu(
                         expanded = menu,
                         onDismissRequest = { menu = false },
-                        containerColor = Color(0xFF1C1C1C)
+                        shape = RoundedCornerShape(18.dp),
+                        containerColor = Color(0xFF1C1C1C),
+                        tonalElevation = 0.dp
                     ) {
                         DropdownMenuItem(
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp),
                             leadingIcon = {
                                 if (device.explicitlyUnassigned) Icon(Icons.Default.Check, null, tint = NothingColors.Red)
                             },
-                            text = { Text("No automatic profile", color = NothingColors.White) },
+                            text = {
+                                Text(
+                                    "No automatic profile",
+                                    color = NothingColors.White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            },
                             onClick = {
                                 menu = false
                                 scope.launch { runtime.profileCoordinator.assignDevice(device.descriptor.key, null) }
@@ -352,12 +363,23 @@ internal fun ProfilesSettingsPage(
                         )
                         state.store.profiles.values.sortedBy { it.name }.forEach { profile ->
                             DropdownMenuItem(
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
                                 leadingIcon = {
                                     if (device.assignedProfileId == profile.id) {
                                         Icon(Icons.Default.Check, null, tint = NothingColors.Red)
                                     }
                                 },
-                                text = { Text(profile.name, color = NothingColors.White) },
+                                text = {
+                                    Text(
+                                        profile.name,
+                                        color = NothingColors.White,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 onClick = {
                                     menu = false
                                     scope.launch { runtime.profileCoordinator.assignDevice(device.descriptor.key, profile.id) }
@@ -483,24 +505,23 @@ private fun ProfileCard(
 @Composable
 private fun CreateProfileDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xFF1C1C1C))
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text("CREATE PROFILE", color = NothingColors.White, fontWeight = FontWeight.Bold)
-            NothingTextField(name, { name = it.take(40) }, "Profile name")
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text("CANCEL", color = NothingColors.GreyMedium) }
-                TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) {
-                    Text("CREATE", color = if (name.isNotBlank()) NothingColors.Red else NothingColors.GreyMedium)
-                }
-            }
-        }
+    AmplyPopupDialog(
+        title = "Create profile",
+        onDismissRequest = onDismiss,
+        actions = listOf(
+            AmplyPopupAction(
+                label = "Create",
+                onClick = { onCreate(name) },
+                enabled = name.isNotBlank()
+            ),
+            AmplyPopupAction(
+                label = "Cancel",
+                onClick = onDismiss,
+                tone = AmplyPopupActionTone.MUTED
+            )
+        )
+    ) {
+        NothingTextField(name, { name = it.take(40) }, "Profile name")
     }
 }
 
@@ -1231,46 +1252,19 @@ private fun NothingDialog(
     dismissLabel: String,
     onDismiss: () -> Unit
 ) {
-    Dialog(onDismissRequest = {}) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xFF1C1C1C))
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(title.uppercase(), color = NothingColors.White, fontWeight = FontWeight.Bold)
-            Text(body, color = NothingColors.GreyMedium)
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                TextButton(
-                    onClick = onConfirm,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = confirmLabel,
-                        color = NothingColors.Red,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1
-                    )
-                }
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = dismissLabel,
-                        color = NothingColors.GreyMedium,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1
-                    )
-                }
-            }
-        }
-    }
+    AmplyPopupDialog(
+        title = title,
+        body = body,
+        onDismissRequest = {},
+        actions = listOf(
+            AmplyPopupAction(confirmLabel, onConfirm),
+            AmplyPopupAction(
+                label = dismissLabel,
+                onClick = onDismiss,
+                tone = AmplyPopupActionTone.MUTED
+            )
+        )
+    )
 }
 
 private fun systemIcon(target: VolumeTarget): ImageVector = when (target) {

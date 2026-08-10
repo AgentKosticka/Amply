@@ -15,6 +15,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,12 +27,91 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.agentkosticka.amply.R
 import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
 import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
+
+internal enum class AmplyPopupActionTone {
+    PRIMARY,
+    NEUTRAL,
+    MUTED
+}
+
+internal data class AmplyPopupAction(
+    val label: String,
+    val onClick: () -> Unit,
+    val tone: AmplyPopupActionTone = AmplyPopupActionTone.PRIMARY,
+    val enabled: Boolean = true
+)
+
+@Composable
+internal fun AmplyPopupDialog(
+    title: String,
+    onDismissRequest: () -> Unit,
+    actions: List<AmplyPopupAction>,
+    body: String? = null,
+    content: (@Composable ColumnScope.() -> Unit)? = null
+) {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color(0xFF1C1C1C))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = title.uppercase(),
+                color = NothingColors.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            body?.let {
+                Text(
+                    text = it,
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            content?.invoke(this)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                actions.forEach { action ->
+                    val color = when {
+                        !action.enabled -> Color(0xFF555555)
+                        action.tone == AmplyPopupActionTone.PRIMARY -> NothingColors.Red
+                        action.tone == AmplyPopupActionTone.NEUTRAL -> NothingColors.White
+                        else -> NothingColors.GreyMedium
+                    }
+                    TextButton(
+                        onClick = action.onClick,
+                        enabled = action.enabled,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 44.dp)
+                    ) {
+                        Text(
+                            text = action.label.uppercase(),
+                            color = color,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 
 @Composable
