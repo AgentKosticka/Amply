@@ -244,19 +244,31 @@ internal fun Modifier.lazyScrollProgressIndicator(state: LazyListState): Modifie
         drawContent()
         if (!state.canScrollBackward && !state.canScrollForward) return@drawWithContent
 
-        val indicatorState = state.scrollIndicatorState ?: return@drawWithContent
-        val maximumScrollOffset =
-            (indicatorState.contentSize - indicatorState.viewportSize).coerceAtLeast(1)
-        val progress = when {
-            !state.canScrollBackward -> 0f
-            !state.canScrollForward -> 1f
-            else -> indicatorState.scrollOffset.toFloat() / maximumScrollOffset
-        }.coerceIn(0f, 1f)
+        val layoutInfo = state.layoutInfo
+        val firstVisibleItem = layoutInfo.visibleItemsInfo.firstOrNull { item ->
+            item.offset + item.size + layoutInfo.mainAxisItemSpacing > layoutInfo.viewportStartOffset
+        } ?: return@drawWithContent
+        val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull { item ->
+            item.offset < layoutInfo.viewportEndOffset
+        } ?: return@drawWithContent
+        val thumbFractions = stableLazyScrollThumbFractions(
+            firstVisibleItemIndex = firstVisibleItem.index,
+            firstVisibleItemOffset = firstVisibleItem.offset,
+            firstVisibleItemSize = firstVisibleItem.size,
+            lastVisibleItemIndex = lastVisibleItem.index,
+            lastVisibleItemOffset = lastVisibleItem.offset,
+            lastVisibleItemSize = lastVisibleItem.size,
+            itemSpacing = layoutInfo.mainAxisItemSpacing,
+            viewportStartOffset = layoutInfo.viewportStartOffset,
+            viewportEndOffset = layoutInfo.viewportEndOffset,
+            totalItemsCount = layoutInfo.totalItemsCount
+        )
 
         val trackInset = 10.dp.toPx()
         val trackHeight = (size.height - trackInset * 2f).coerceAtLeast(1f)
         val thumbHeight = 48.dp.toPx().coerceAtMost(trackHeight)
-        val thumbTop = trackInset + (trackHeight - thumbHeight) * progress
+        val thumbProgress = stableLazyScrollThumbProgress(thumbFractions)
+        val thumbTop = trackInset + (trackHeight - thumbHeight) * thumbProgress
         val trackWidth = 3.dp.toPx()
         val thumbWidth = 6.dp.toPx()
         val centerX = size.width - 8.dp.toPx()
@@ -274,6 +286,46 @@ internal fun Modifier.lazyScrollProgressIndicator(state: LazyListState): Modifie
             cornerRadius = CornerRadius(thumbWidth)
         )
     }
+
+internal data class LazyScrollThumbFractions(val start: Float, val end: Float)
+
+internal fun stableLazyScrollThumbProgress(fractions: LazyScrollThumbFractions): Float {
+    val visibleFraction = (fractions.end - fractions.start).coerceIn(0f, 1f)
+    val scrollableFraction = (1f - visibleFraction).coerceAtLeast(0.000001f)
+    return (fractions.start / scrollableFraction).coerceIn(0f, 1f)
+}
+
+internal fun stableLazyScrollThumbFractions(
+    firstVisibleItemIndex: Int,
+    firstVisibleItemOffset: Int,
+    firstVisibleItemSize: Int,
+    lastVisibleItemIndex: Int,
+    lastVisibleItemOffset: Int,
+    lastVisibleItemSize: Int,
+    itemSpacing: Int,
+    viewportStartOffset: Int,
+    viewportEndOffset: Int,
+    totalItemsCount: Int,
+): LazyScrollThumbFractions {
+    if (totalItemsCount <= 0) return LazyScrollThumbFractions(0f, 1f)
+
+    val firstExtent = (
+        firstVisibleItemSize + if (firstVisibleItemIndex < totalItemsCount - 1) itemSpacing else 0
+    ).coerceAtLeast(1)
+    val lastExtent = (
+        lastVisibleItemSize + if (lastVisibleItemIndex < totalItemsCount - 1) itemSpacing else 0
+    ).coerceAtLeast(1)
+    val hiddenFirstFraction = ((viewportStartOffset - firstVisibleItemOffset).toFloat() / firstExtent)
+        .coerceIn(0f, 1f)
+    val visibleLastFraction = ((viewportEndOffset - lastVisibleItemOffset).toFloat() / lastExtent)
+        .coerceIn(0f, 1f)
+    val startUnits = firstVisibleItemIndex.coerceAtLeast(0) + hiddenFirstFraction
+    val endUnits = lastVisibleItemIndex.coerceAtLeast(firstVisibleItemIndex) + visibleLastFraction
+    val total = totalItemsCount.toFloat()
+    val start = (startUnits / total).coerceIn(0f, 1f)
+    val end = (endUnits / total).coerceIn(start, 1f)
+    return LazyScrollThumbFractions(start, end)
+}
 
 internal fun Modifier.moveSearchToTopOnFocus(
     state: LazyListState,
