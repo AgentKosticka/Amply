@@ -135,6 +135,7 @@ fun VolumeOverlay(
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
     var profileMenuExpanded by remember { mutableStateOf(false) }
     val isExpanded = expanded ?: internalExpanded
+    val canSwitchProfiles = profiles.size > 1
     val showCollapsedDnd = selectedTarget == VolumeTarget.RING ||
         selectedTarget == VolumeTarget.NOTIFICATION
     val dndCollapsedSize = animateDpAsState(
@@ -145,7 +146,7 @@ fun VolumeOverlay(
     val dndCollapsedTranslation = animateFloatAsState(
         targetValue = with(LocalDensity.current) {
             if (!isExpanded && showCollapsedDnd) {
-                val hiddenSlots = listOf(profiles.isNotEmpty(), showStandDownButton).count { it }
+                val hiddenSlots = listOf(canSwitchProfiles, showStandDownButton).count { it }
                 val direction = if (overlaySide == OverlaySide.RIGHT) 1f else -1f
                 CollapsedPillWidth.toPx() * hiddenSlots * direction
             } else {
@@ -230,8 +231,8 @@ fun VolumeOverlay(
         }
     }
 
-    LaunchedEffect(isExpanded, profiles.isEmpty()) {
-        if (!isExpanded || profiles.isEmpty()) profileMenuExpanded = false
+    LaunchedEffect(isExpanded, canSwitchProfiles) {
+        if (!isExpanded || !canSwitchProfiles) profileMenuExpanded = false
     }
 
     panelTransitionState.targetState = isExpanded && hasPanelContent
@@ -256,12 +257,12 @@ fun VolumeOverlay(
                 androidx.compose.ui.AbsoluteAlignment.Left
             }
         ) {
-            if (showStandDownButton || showDndButton || profiles.isNotEmpty()) {
+            if (showStandDownButton || showDndButton || canSwitchProfiles) {
                 Box(
                     modifier = Modifier
                         .width(CollapsedPillWidth * listOf(
                             showDndButton,
-                            profiles.isNotEmpty(),
+                            canSwitchProfiles,
                             showStandDownButton
                         ).count { it })
                         .height(PauseControlSlotHeight),
@@ -314,7 +315,7 @@ fun VolumeOverlay(
                         }
                     }
                     val profileControl: @Composable () -> Unit = {
-                        if (profiles.isNotEmpty()) {
+                        if (canSwitchProfiles) {
                             val profileButtonBackground by animateColorAsState(
                                 targetValue = if (profileMenuExpanded) {
                                     NothingColors.Red

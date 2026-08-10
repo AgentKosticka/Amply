@@ -101,7 +101,10 @@ class VolumeControlSemanticsTest {
             AmplyTheme {
                 VolumeOverlay(
                     expanded = true,
-                    profiles = listOf(profile),
+                    profiles = listOf(
+                        profile,
+                        profile.copy(id = "commute", name = "Commute")
+                    ),
                     activeProfileId = profile.id,
                     showStandDownButton = false,
                     showShizukuDisconnectedWarning = false,
@@ -112,6 +115,32 @@ class VolumeControlSemanticsTest {
 
         compose.onNodeWithContentDescription("Switch profile").performClick()
         compose.onNodeWithText("Night").assertIsDisplayed()
+    }
+
+    @Test fun overlayHidesProfileSelectorWhenThereIsOnlyOneChoice() {
+        val profile = AudioProfile(
+            id = "night",
+            name = "Night",
+            saveMode = ProfileSaveMode.EXPLICIT,
+            snapshot = AudioProfileSnapshot(),
+            createdAtEpochMs = 0L,
+            updatedAtEpochMs = 0L
+        )
+        compose.setContent {
+            AmplyTheme {
+                VolumeOverlay(
+                    expanded = true,
+                    profiles = listOf(profile),
+                    activeProfileId = profile.id,
+                    showStandDownButton = false,
+                    showDndButton = false,
+                    showShizukuDisconnectedWarning = false,
+                    shizukuConnectionState = VolumeServiceConnectionState.CONNECTED
+                )
+            }
+        }
+
+        compose.onAllNodesWithContentDescription("Switch profile").assertCountEquals(0)
     }
 
     @Test fun collapsedRingerPillKeepsDndButtonVisible() {

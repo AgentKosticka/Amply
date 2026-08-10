@@ -297,10 +297,10 @@ object OverlayManager {
     }
 
     fun updateProfileState(state: ProfileRuntimeState) {
-        val hadProfileButton = profiles.value.isNotEmpty()
+        val hadProfileButton = profiles.value.size > 1
         profiles.value = state.store.profiles.values.toList()
         activeProfileId.value = state.store.activeProfileId
-        if (hadProfileButton != profiles.value.isNotEmpty()) {
+        if (hadProfileButton != (profiles.value.size > 1)) {
             overlayContainer?.context?.let(::updateOverlayPosition)
         }
     }
@@ -1052,7 +1052,7 @@ object OverlayManager {
         val margin = (16 * context.resources.displayMetrics.density).toInt()
         val baseOverlayHeight = (BASE_OVERLAY_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
         val pauseControlSlotHeight = if (
-            showStandDownButton.value || showDndButton.value || profiles.value.isNotEmpty()
+            showStandDownButton.value || showDndButton.value || profiles.value.size > 1
         ) {
             (PAUSE_CONTROL_SLOT_HEIGHT_DP * context.resources.displayMetrics.density).toInt()
         } else {
