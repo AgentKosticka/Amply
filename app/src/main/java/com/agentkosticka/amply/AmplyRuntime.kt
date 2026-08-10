@@ -29,6 +29,8 @@ import com.agentkosticka.amply.tutorial.TutorialCoordinator
 import com.agentkosticka.amply.update.AppUpdateChecker
 import com.agentkosticka.amply.dnd.AmplyDndController
 import com.agentkosticka.amply.dnd.DndOperationResult
+import com.agentkosticka.amply.profiles.OutputRouteMonitor
+import com.agentkosticka.amply.profiles.ProfileCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,10 +69,21 @@ class AmplyRuntime(context: Context) {
         shizukuVolumeManager,
         shizukuRepository
     )
+    val outputRouteMonitor = OutputRouteMonitor(appContext)
+    val profileCoordinator = ProfileCoordinator(
+        context = appContext,
+        preferences = preferencesManager,
+        outputMonitor = outputRouteMonitor,
+        dndController = dndController,
+        ringerExecutor = ringerExperimentExecutor,
+        shizukuVolumeManager = shizukuVolumeManager,
+        scope = runtimeScope
+    )
     val audioSessionManager = AudioSessionManager(
         context = appContext,
         preferencesManager = preferencesManager,
-        shizukuVolumeManager = shizukuVolumeManager
+        shizukuVolumeManager = shizukuVolumeManager,
+        profileCoordinator = profileCoordinator
     )
     val foregroundVisitTracker = ForegroundVisitTracker()
     val foregroundVisitState = foregroundVisitTracker.state
@@ -91,6 +104,7 @@ class AmplyRuntime(context: Context) {
 
     init {
         Log.i(TAG, "Creating process-owned Amply runtime")
+        profileCoordinator.start()
         runtimeScope.launch(Dispatchers.IO) {
             runCatching { preferencesManager.pruneStaleApps(automatic = true) }
                 .onFailure { Log.w(TAG, "Automatic stale-app cleanup failed", it) }
@@ -229,6 +243,7 @@ class AmplyRuntime(context: Context) {
     }
 
     fun onAudioModeObserved(mode: Int) {
+        val wasCallActive = lastObservedAudioMode?.let(VolumeTargetPolicy::isActiveCallMode) ?: false
         if (lastObservedAudioMode != mode) {
             lastObservedAudioMode = mode
             shizukuVolumeManager.invalidateStreamTopologyCache()
@@ -238,6 +253,9 @@ class AmplyRuntime(context: Context) {
         systemStreamSessionController.onCallModeChanged(
             VolumeTargetPolicy.isActiveCallMode(mode)
         )
+        if (!wasCallActive && VolumeTargetPolicy.isActiveCallMode(mode)) {
+            profileCoordinator.onCallBecameActive()
+        }
     }
 
     fun onOverlayShown(): Boolean {

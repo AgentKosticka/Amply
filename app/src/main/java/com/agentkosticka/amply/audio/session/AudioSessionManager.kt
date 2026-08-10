@@ -17,11 +17,13 @@ import com.agentkosticka.amply.settings.model.AppIdentity
 import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
+import com.agentkosticka.amply.profiles.ProfileCoordinator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
@@ -37,7 +39,8 @@ import kotlin.time.Duration.Companion.milliseconds
 class AudioSessionManager(
     context: Context,
     private val preferencesManager: PreferencesManager,
-    private val shizukuVolumeManager: ShizukuVolumeManager
+    private val shizukuVolumeManager: ShizukuVolumeManager,
+    private val profileCoordinator: ProfileCoordinator
 ) {
     companion object {
         private const val TAG = "AudioSessionManager"
@@ -119,7 +122,14 @@ class AudioSessionManager(
 
         appSettingsJob?.cancel()
         appSettingsJob = managerScope.launch {
-            preferencesManager.appSettings.collect { settings ->
+            combine(
+                preferencesManager.appSettings,
+                profileCoordinator.effectiveAppVolumes
+            ) { settings, overrides ->
+                settings.mapValues { (identity, setting) ->
+                    setting.copy(defaultVolume = overrides[identity] ?: setting.defaultVolume)
+                }
+            }.collect { settings ->
                 appSettingsCache = settings
                 uidVolumeCache.clear()
                 settings.values.forEach { setting ->
@@ -458,12 +468,7 @@ class AudioSessionManager(
             }
         } else {
             Log.w(TAG, "Playback session is no longer active; persisting its saved volume")
-            preferencesManager.persistAppVolume(
-                packageName = target.packageName,
-                appName = target.appName,
-                uid = target.uid,
-                volume = volume
-            )
+            persistAppVolume(target, volume)
         }
     }
 
@@ -473,12 +478,7 @@ class AudioSessionManager(
             setSessionVolume(active.sessionId, target, volume)
         } else {
             managerScope.launch {
-                preferencesManager.persistAppVolume(
-                    packageName = target.packageName,
-                    appName = target.appName,
-                    uid = target.uid,
-                    volume = volume
-                )
+                persistAppVolume(target, volume)
             }
         }
     }
@@ -553,10 +553,20 @@ class AudioSessionManager(
 
     private suspend fun persistSessionVolume(session: AudioSession, volume: Float) {
         uidVolumeCache[session.uid] = volume
-        preferencesManager.persistAppVolume(
+        val target = AppVolumeTarget(
             packageName = session.packageName,
             appName = session.appName,
-            uid = session.uid,
+            uid = session.uid
+        )
+        persistAppVolume(target, volume)
+    }
+
+    private suspend fun persistAppVolume(target: AppVolumeTarget, volume: Float) {
+        if (profileCoordinator.recordAppVolume(target.identity, volume)) return
+        preferencesManager.persistAppVolume(
+            packageName = target.packageName,
+            appName = target.appName,
+            uid = target.uid,
             volume = volume
         )
     }

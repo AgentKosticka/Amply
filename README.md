@@ -24,6 +24,7 @@ Amply (1) replaces the stock volume popup with a clean, customizable volume pill
 - **All your important volume controls together**—media, ring, notifications, alarms, calls, and supported optional streams.
 - **Independent app volume** for active audio apps when Shizuku is connected.
 - **Remembered app preferences** so favorite volumes, pinned apps, hidden apps, and display order survive between sessions.
+- **Output profiles and named presets** for keeping different app, system, ringer, and Do Not Disturb levels on your speaker, headphones, Bluetooth devices, and cast routes.
 - **A quick way back to Android's controls** by pausing Amply or letting selected apps receive the original volume-button behavior.
 - **A Quick Settings switch** that lights up while Amply is on and dims while it is paused.
 - **A look that fits your phone** with left or right placement, vertical positioning, and an adjustable dot scale.
@@ -71,6 +72,7 @@ Amply keeps its controls in one focused dashboard. Check permissions, manage rem
 | [Shizuku](https://github.com/RikkaApps/Shizuku) | Optional; unlocks live per-app volume controls |
 | Notifications | Recommended for runtime status and quick pause or retry actions |
 | Phone permission | Optional; helps Amply keep volume buttons behaving naturally during calls |
+| Nearby Devices | Optional; improves matching between profiles and individual paired Bluetooth outputs |
 
 Amply works as an improved controller for normal Android volume without Shizuku. Shizuku is only required for discovering active audio players and changing individual app volume.
 

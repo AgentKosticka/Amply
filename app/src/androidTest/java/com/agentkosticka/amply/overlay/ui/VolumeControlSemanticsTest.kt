@@ -7,12 +7,17 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.ui.theme.AmplyTheme
 import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
+import com.agentkosticka.amply.profiles.AudioProfile
+import com.agentkosticka.amply.profiles.AudioProfileSnapshot
+import com.agentkosticka.amply.profiles.ProfileSaveMode
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -80,6 +85,33 @@ class VolumeControlSemanticsTest {
         }
 
         compose.onAllNodesWithContentDescription("Pause Amply temporarily").assertCountEquals(0)
+    }
+
+    @Test fun expandedOverlayShowsActiveProfileAndDirtySaveAction() {
+        val profile = AudioProfile(
+            id = "night",
+            name = "Night",
+            saveMode = ProfileSaveMode.EXPLICIT,
+            snapshot = AudioProfileSnapshot(),
+            createdAtEpochMs = 0L,
+            updatedAtEpochMs = 0L
+        )
+        compose.setContent {
+            AmplyTheme {
+                VolumeOverlay(
+                    expanded = true,
+                    profiles = listOf(profile),
+                    activeProfileId = profile.id,
+                    profileDirty = true,
+                    showStandDownButton = false,
+                    showShizukuDisconnectedWarning = false,
+                    shizukuConnectionState = VolumeServiceConnectionState.CONNECTED
+                )
+            }
+        }
+
+        compose.onNodeWithText("Night").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Save current profile").assertIsDisplayed()
     }
 
     @Test fun collapsedRingerPillKeepsDndButtonVisible() {

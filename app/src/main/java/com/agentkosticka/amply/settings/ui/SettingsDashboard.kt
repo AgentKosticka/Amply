@@ -56,6 +56,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -154,6 +155,7 @@ internal enum class AppListMode {
 internal enum class SettingsTab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     ACCESS("Access", Icons.Default.Security),
     APPS("Apps", Icons.Default.Apps),
+    PROFILES("Profiles", Icons.Default.Style),
     PILL("Pill", Icons.Default.Tune),
     STAND_DOWN("Stand-Down", Icons.AutoMirrored.Filled.VolumeUp),
     DIAGNOSTICS("Diagnostics", Icons.Default.BugReport)
@@ -465,7 +467,8 @@ fun SettingsDashboard(
     onAccessibilityClick: () -> Unit,
     onNotificationPolicyClick: () -> Unit,
     onPhoneStateClick: () -> Unit,
-    onNotificationsClick: () -> Unit
+    onNotificationsClick: () -> Unit,
+    onNearbyDevicesClick: () -> Unit
 ) {
     val context = LocalContext.current
     val preferences = runtime.preferencesManager
@@ -473,7 +476,13 @@ fun SettingsDashboard(
     val overlaySide by preferences.overlaySide.collectAsState(initial = OverlaySide.LEFT)
     val verticalFraction by preferences.overlayVerticalFraction.collectAsState(initial = 0.5f)
     val dotScaleConfig by preferences.volumeDotScaleConfig.collectAsState(initial = VolumeDotScaleConfig())
-    val appSettings by preferences.appSettings.collectAsState(initial = emptyMap())
+    val baseAppSettings by preferences.appSettings.collectAsState(initial = emptyMap())
+    val profileAppVolumes by runtime.profileCoordinator.effectiveAppVolumes.collectAsState()
+    val appSettings = remember(baseAppSettings, profileAppVolumes) {
+        baseAppSettings.mapValues { (identity, setting) ->
+            setting.copy(defaultVolume = profileAppVolumes[identity] ?: setting.defaultVolume)
+        }
+    }
     val appOverlayOrder by preferences.appOverlayOrder.collectAsState(initial = emptyList())
     val appSettingsStoreHealth by preferences.appSettingsStoreHealth.collectAsState(
         initial = AppSettingsStoreHealth.HEALTHY
@@ -1224,6 +1233,15 @@ fun SettingsDashboard(
                     }
                 }
 
+                SettingsTab.PROFILES -> ProfilesSettingsPage(
+                    runtime = runtime,
+                    nearbyDevicesGranted = appPermissionState.nearbyDevicesGranted,
+                    notificationPolicyGranted = appPermissionState.notificationPolicyGranted,
+                    onNearbyDevicesClick = onNearbyDevicesClick,
+                    onNotificationPolicyClick = onNotificationPolicyClick,
+                    modifier = Modifier.weight(1f)
+                )
+
                 SettingsTab.PILL -> LazyColumn(
                     modifier = Modifier
                         .weight(1f)
@@ -1828,6 +1846,7 @@ private val SettingsTab.tutorialStage: TutorialStage?
     get() = when (this) {
         SettingsTab.ACCESS -> TutorialStage.APP_ACCESS
         SettingsTab.APPS -> TutorialStage.APP_APPS
+        SettingsTab.PROFILES -> null
         SettingsTab.PILL -> TutorialStage.APP_PILL
         SettingsTab.STAND_DOWN -> TutorialStage.APP_STAND_DOWN
         SettingsTab.DIAGNOSTICS -> null

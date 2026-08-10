@@ -59,6 +59,7 @@ import com.agentkosticka.amply.audio.routing.VolumeBarModel
 import com.agentkosticka.amply.audio.routing.VolumeLimitFeedback
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
+import com.agentkosticka.amply.profiles.AudioProfile
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
@@ -104,6 +105,10 @@ fun VolumeOverlay(
     showStandDownButton: Boolean = true,
     showDndButton: Boolean = false,
     dndActive: Boolean = false,
+    profiles: List<AudioProfile> = emptyList(),
+    activeProfileId: String? = null,
+    profileDirty: Boolean = false,
+    autoSavingProfile: Boolean = false,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     initiallyExpanded: Boolean = false,
@@ -118,6 +123,8 @@ fun VolumeOverlay(
     onExpandedChange: (Boolean) -> Unit = {},
     onPauseAmply: () -> Unit = {},
     onDndToggle: () -> Unit = {},
+    onProfileActivate: (String) -> Unit = {},
+    onProfileSave: () -> Unit = {},
     onDismissRequest: () -> Unit = {}
 ) {
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
@@ -144,7 +151,7 @@ fun VolumeOverlay(
         internalExpanded = value
         onExpandedChange(value)
     }
-    val hasPanelContent = apps.isNotEmpty() ||
+    val hasPanelContent = profiles.isNotEmpty() || apps.isNotEmpty() ||
         (showShizukuDisconnectedWarning && shizukuConnectionState != VolumeServiceConnectionState.CONNECTED)
     val expandToStart = overlaySide == OverlaySide.RIGHT
     val density = LocalDensity.current
@@ -323,12 +330,19 @@ fun VolumeOverlay(
     }
 
     val panelBody: @Composable (Dp, Dp) -> Unit = { panelWidth, maxHeight ->
-        if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED) {
+        if (shizukuConnectionState == VolumeServiceConnectionState.CONNECTED || profiles.isNotEmpty()) {
             AmplyPanel(
                 panelWidth = panelWidth,
                 maxHeight = maxHeight,
                 apps = apps,
+                profiles = profiles,
+                activeProfileId = activeProfileId,
+                profileDirty = profileDirty,
+                autoSavingProfile = autoSavingProfile,
+                shizukuDisconnected = shizukuConnectionState != VolumeServiceConnectionState.CONNECTED,
                 showAppProfileIdentity = showAppProfileIdentity,
+                onProfileActivate = onProfileActivate,
+                onProfileSave = onProfileSave,
                 onAppVolumeChange = { app, volume ->
                     onAppVolumeChange(app, volume)
                 },

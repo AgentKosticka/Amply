@@ -226,6 +226,9 @@ open class OverlayForegroundService : Service() {
                     runtime.dndController.active.collect(OverlayManager::updateDndActive)
                 },
                 serviceScope.launch {
+                    runtime.profileCoordinator.state.collect(OverlayManager::updateProfileState)
+                },
+                serviceScope.launch {
                     runtime.selectedVolumeTarget.collect { target ->
                         OverlayManager.updateSelectedVolumeTarget(target)
                     }
@@ -236,8 +239,13 @@ open class OverlayForegroundService : Service() {
                 serviceScope.launch {
                     val settingsAndOrder = combine(
                         preferences.appSettings,
-                        preferences.appOverlayOrder
-                    ) { settings, order -> settings to order }
+                        preferences.appOverlayOrder,
+                        runtime.profileCoordinator.effectiveAppVolumes
+                    ) { settings, order, overrides ->
+                        settings.mapValues { (identity, setting) ->
+                            setting.copy(defaultVolume = overrides[identity] ?: setting.defaultVolume)
+                        } to order
+                    }
                     combine(
                         runtime.sessionState,
                         settingsAndOrder,
@@ -304,6 +312,14 @@ open class OverlayForegroundService : Service() {
             OverlayManager.setDndToggleCallback {
                 runtime.dndController.toggleFromOverlay()
             }
+            OverlayManager.setProfileCallbacks(
+                onActivate = { id ->
+                    serviceScope.launch { runtime.profileCoordinator.activateProfile(id) }
+                },
+                onSave = {
+                    serviceScope.launch { runtime.profileCoordinator.saveCurrentProfile() }
+                }
+            )
             OverlayManager.setNotificationModeToggleCallback {
                 serviceScope.launch {
                     runtime.ringerExperimentExecutor.toggleProductionAlertMode()
@@ -466,6 +482,7 @@ open class OverlayForegroundService : Service() {
         OverlayManager.clearVolumeTargetCallbacks()
         OverlayManager.clearPauseAmplyCallback()
         OverlayManager.clearDndToggleCallback()
+        OverlayManager.clearProfileCallbacks()
         OverlayManager.clearNotificationModeToggleCallback()
         OverlayManager.clearSystemStreamVolumeCallback()
     }

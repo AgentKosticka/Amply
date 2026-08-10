@@ -69,6 +69,8 @@ data class SettingsImportPreview(
     val customizedAppCount: Int,
     val valid: Boolean,
     val standDownCount: Int = 0,
+    val profileCount: Int = 0,
+    val outputDeviceCount: Int = 0,
     val replacesGlobalSettings: Boolean = true,
     val error: String? = null
 )

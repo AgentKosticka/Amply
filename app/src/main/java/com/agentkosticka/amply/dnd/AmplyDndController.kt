@@ -68,7 +68,6 @@ class AmplyDndController(context: Context) {
 
     @Synchronized
     fun setActive(active: Boolean): DndOperationResult {
-        if (active && !featureEnabled) return DndOperationResult.FEATURE_DISABLED
         if (!hasPolicyAccess()) return DndOperationResult.ACCESS_REQUIRED
         return runCatching {
             val ruleId = ensureRuleId()

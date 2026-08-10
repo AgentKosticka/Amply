@@ -66,6 +66,12 @@ class MainActivity : ComponentActivity() {
     ) {
         refreshPermissionState()
     }
+    private val nearbyDevicesPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        refreshPermissionState()
+        runtime.outputRouteMonitor.refresh()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Install splash screen BEFORE super.onCreate()
@@ -239,7 +245,8 @@ class MainActivity : ComponentActivity() {
             onAccessibilityClick = { openAccessibilitySettings() },
             onNotificationPolicyClick = { openNotificationPolicySettings() },
             onPhoneStateClick = { requestPhoneStatePermission() },
-            onNotificationsClick = { requestNotificationPermission() }
+            onNotificationsClick = { requestNotificationPermission() },
+            onNearbyDevicesClick = { requestNearbyDevicesPermission() }
         )
     }
 
@@ -262,7 +269,9 @@ class MainActivity : ComponentActivity() {
             phoneStateGranted = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) ==
                 PackageManager.PERMISSION_GRANTED,
             notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+            nearbyDevicesGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
         )
     }
 
@@ -305,6 +314,14 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         ) {
             phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
+        }
+    }
+
+    private fun requestNearbyDevicesPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            nearbyDevicesPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
         }
     }
 

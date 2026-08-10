@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import org.json.JSONArray
 import com.agentkosticka.amply.tutorial.TutorialStage
+import com.agentkosticka.amply.profiles.ProfileCodec
+import com.agentkosticka.amply.profiles.ProfileStore
 
 
 class PreferencesManager(private val context: Context) {
@@ -48,12 +50,14 @@ class PreferencesManager(private val context: Context) {
         private val HIDE_APP_PROFILE_IDENTITY = booleanPreferencesKey("hide_app_profile_identity")
         private val HIDE_STAND_DOWN_BUTTON = booleanPreferencesKey("hide_stand_down_button")
         private val SHOW_DND_BUTTON = booleanPreferencesKey("show_dnd_button")
+        private val AUDIO_PROFILES_JSON = stringPreferencesKey("audio_profiles_json")
+        private val AUDIO_PROFILES_JSON_BACKUP = stringPreferencesKey("audio_profiles_json_backup")
         private val LAST_STALE_APP_CLEANUP_EPOCH_MS = longPreferencesKey("last_stale_app_cleanup_epoch_ms")
         private val LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS =
             longPreferencesKey("last_successful_update_check_epoch_ms")
         private val LEGACY_RINGER_METHOD = stringPreferencesKey("ringer_method")
         const val MAX_IMPORT_BYTES = 2 * 1024 * 1024
-        const val EXPORT_SCHEMA_VERSION = 3
+        const val EXPORT_SCHEMA_VERSION = 4
         private const val AUTO_PRUNE_AGE_MS = 90L * 24L * 60L * 60L * 1_000L
         private const val AUTO_PRUNE_INTERVAL_MS = 7L * 24L * 60L * 60L * 1_000L
     }
@@ -145,6 +149,22 @@ class PreferencesManager(private val context: Context) {
 
     val appSettingsStoreHealth: Flow<AppSettingsStoreHealth> = context.dataStore.data.map { preferences ->
         readAppSettings(preferences).second
+    }
+
+    val profileStore: Flow<ProfileStore> = context.dataStore.data.map(::readProfileStore)
+
+    suspend fun updateProfileStore(
+        transform: (ProfileStore) -> ProfileStore
+    ): SettingsOperationResult = try {
+        context.dataStore.edit { preferences ->
+            val current = readProfileStore(preferences)
+            writeProfileStore(preferences, current, transform(current))
+        }
+        SettingsOperationResult.Success
+    } catch (error: IllegalArgumentException) {
+        SettingsOperationResult.ValidationFailed(error.message ?: "Invalid profile")
+    } catch (error: Exception) {
+        SettingsOperationResult.IoFailed(error.message ?: "Profile storage failed")
     }
 
     val volumeKeyPassThroughPackages: Flow<Set<String>> = context.dataStore.data.map { preferences ->
@@ -411,6 +431,9 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(HIDE_PER_APP_VOLUME_CONTROL)
             preferences.remove(HIDE_APP_PROFILE_IDENTITY)
             preferences.remove(HIDE_STAND_DOWN_BUTTON)
+            preferences.remove(SHOW_DND_BUTTON)
+            preferences.remove(AUDIO_PROFILES_JSON)
+            preferences.remove(AUDIO_PROFILES_JSON_BACKUP)
             preferences.remove(LAST_STALE_APP_CLEANUP_EPOCH_MS)
             preferences.remove(LEGACY_GAME_MODE_ENABLED)
             preferences.remove(LEGACY_RINGER_METHOD)
@@ -459,6 +482,7 @@ class PreferencesManager(private val context: Context) {
             )
             .put("appSettings", JSONObject(AppSettingsCodec.encode(settings)))
             .put("appSettingsHealth", health.name)
+            .put("profiles", JSONObject(ProfileCodec.encode(readProfileStore(preferences), false)))
         if (health != AppSettingsStoreHealth.HEALTHY) {
             export.put(
                 "recoveryRawAppSettings",
@@ -474,6 +498,8 @@ class PreferencesManager(private val context: Context) {
             appCount = validated.settings.size,
             customizedAppCount = validated.settings.values.count { it.isCustomized },
             standDownCount = validated.standDownPackages.size,
+            profileCount = validated.profileStore.profiles.size,
+            outputDeviceCount = validated.profileStore.devices.size,
             valid = true
         )
     } catch (error: Exception) {
@@ -524,6 +550,12 @@ class PreferencesManager(private val context: Context) {
                     }
                 )
                 preferences[APP_OVERLAY_ORDER_JSON] = encodeAppOverlayOrder(imported.appOverlayOrder)
+                val currentProfiles = readProfileStore(preferences)
+                val nextProfiles = when (mode) {
+                    ImportMode.REPLACE -> imported.profileStore
+                    ImportMode.MERGE -> mergeProfileStores(currentProfiles, imported.profileStore)
+                }
+                writeProfileStore(preferences, currentProfiles, nextProfiles)
                 preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] = 0L
                 preferences.remove(LEGACY_GAME_MODE_ENABLED)
                 preferences.remove(LEGACY_RINGER_METHOD)
@@ -547,7 +579,8 @@ class PreferencesManager(private val context: Context) {
         val hideStandDownButton: Boolean,
         val showDndButton: Boolean,
         val appOverlayOrder: List<AppIdentity>,
-        val standDownPackages: Set<String>
+        val standDownPackages: Set<String>,
+        val profileStore: ProfileStore
     )
 
     private fun validateImport(raw: String): ValidatedImport {
@@ -566,6 +599,10 @@ class PreferencesManager(private val context: Context) {
         require(decoded is AppSettingsDecodeResult.Success) {
             (decoded as? AppSettingsDecodeResult.Corrupt)?.reason ?: "App settings are malformed"
         }
+        val profileStore = if (root.has("profiles")) {
+            require(root.get("profiles") is JSONObject) { "Invalid profiles" }
+            ProfileCodec.decode(root.getJSONObject("profiles").toString())
+        } else ProfileStore()
         val overlaySide = if (root.has("overlaySide")) {
             require(root.get("overlaySide") is String) { "Invalid overlay side" }
             OverlaySide.entries.firstOrNull { it.name == root.getString("overlaySide") }
@@ -672,7 +709,8 @@ class PreferencesManager(private val context: Context) {
             hideStandDownButton = hideStandDownButton,
             showDndButton = showDndButton,
             appOverlayOrder = appOverlayOrder,
-            standDownPackages = standDown
+            standDownPackages = standDown,
+            profileStore = profileStore
         )
     }
 
@@ -680,6 +718,39 @@ class PreferencesManager(private val context: Context) {
         if (!root.has(key)) return false
         require(root.get(key) is Boolean) { error }
         return root.getBoolean(key)
+    }
+
+    private fun readProfileStore(preferences: Preferences): ProfileStore {
+        return runCatching { ProfileCodec.decode(preferences[AUDIO_PROFILES_JSON]) }.getOrElse {
+            runCatching { ProfileCodec.decode(preferences[AUDIO_PROFILES_JSON_BACKUP]) }
+                .getOrDefault(ProfileStore())
+        }
+    }
+
+    private fun writeProfileStore(
+        preferences: MutablePreferences,
+        previous: ProfileStore,
+        next: ProfileStore
+    ) {
+        preferences[AUDIO_PROFILES_JSON_BACKUP] = ProfileCodec.encode(previous)
+        preferences[AUDIO_PROFILES_JSON] = ProfileCodec.encode(next)
+    }
+
+    private fun mergeProfileStores(existing: ProfileStore, imported: ProfileStore): ProfileStore {
+        val importedNames = imported.profiles.values.mapTo(hashSetOf()) { it.name.lowercase() }
+        val removedIds = existing.profiles.values.filter {
+            it.name.lowercase() in importedNames && it.id !in imported.profiles
+        }.mapTo(hashSetOf()) { it.id }
+        val retainedProfiles = existing.profiles - removedIds
+        val retainedDevices = existing.devices.mapValues { (_, device) ->
+            if (device.assignedProfileId in removedIds) device.copy(assignedProfileId = null) else device
+        }
+        return ProfileStore(
+            profiles = retainedProfiles + imported.profiles,
+            devices = retainedDevices + imported.devices,
+            activeProfileId = existing.activeProfileId?.takeIf { it !in removedIds },
+            activeDraft = existing.activeDraft.takeIf { existing.activeProfileId !in removedIds }
+        )
     }
 
     private suspend fun editSettings(

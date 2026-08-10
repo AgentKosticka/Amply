@@ -23,6 +23,9 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
+import com.agentkosticka.amply.profiles.AudioProfile
+import com.agentkosticka.amply.profiles.ProfileRuntimeState
+import com.agentkosticka.amply.profiles.ProfileSaveMode
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.settings.model.VolumeDotScaleConfig
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
@@ -123,6 +126,10 @@ object OverlayManager {
     private val showStandDownButton = mutableStateOf(true)
     private val showDndButton = mutableStateOf(false)
     private val dndActive = mutableStateOf(false)
+    private val profiles = mutableStateOf<List<AudioProfile>>(emptyList())
+    private val activeProfileId = mutableStateOf<String?>(null)
+    private val profileDirty = mutableStateOf(false)
+    private val autoSavingProfile = mutableStateOf(false)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -135,6 +142,8 @@ object OverlayManager {
     private var onNotificationModeToggleCallback: (() -> Unit)? = null
     private var onSystemStreamVolumeChangeCallback: ((VolumeTarget, Int) -> Boolean)? = null
     private var onRemoteMediaVolumeChangeCallback: ((Long, Int) -> Boolean)? = null
+    private var onProfileActivateCallback: ((String) -> Unit)? = null
+    private var onProfileSaveCallback: (() -> Unit)? = null
     private val overlayVisible = mutableStateOf(false)
     private val overlayExpanded = mutableStateOf(false)
     private var presentationMode = OverlayPresentationMode.NORMAL
@@ -281,6 +290,23 @@ object OverlayManager {
 
     fun updatePerAppVolumeControlEnabled(enabled: Boolean) {
         showPerAppVolumeControl.value = enabled
+    }
+
+    fun setProfileCallbacks(onActivate: (String) -> Unit, onSave: () -> Unit) {
+        onProfileActivateCallback = onActivate
+        onProfileSaveCallback = onSave
+    }
+
+    fun clearProfileCallbacks() {
+        onProfileActivateCallback = null
+        onProfileSaveCallback = null
+    }
+
+    fun updateProfileState(state: ProfileRuntimeState) {
+        profiles.value = state.store.profiles.values.toList()
+        activeProfileId.value = state.store.activeProfileId
+        profileDirty.value = state.dirty
+        autoSavingProfile.value = state.activeProfile?.saveMode == ProfileSaveMode.AUTO_DEVICE
     }
 
     fun updateAppProfileIdentityVisible(visible: Boolean) {
@@ -481,6 +507,10 @@ object OverlayManager {
                     showStandDownButton = showStandDownButton.value,
                     showDndButton = showDndButton.value,
                     dndActive = dndActive.value,
+                    profiles = profiles.value,
+                    activeProfileId = activeProfileId.value,
+                    profileDirty = profileDirty.value,
+                    autoSavingProfile = autoSavingProfile.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
                     onStreamVolumeChange = { streamType, newVolume ->
@@ -526,6 +556,8 @@ object OverlayManager {
                     onDndToggle = {
                         onDndToggleCallback?.invoke()
                     },
+                    onProfileActivate = { id -> onProfileActivateCallback?.invoke(id) },
+                    onProfileSave = { onProfileSaveCallback?.invoke() },
                     onDismissRequest = {
                         hide()
                     }
