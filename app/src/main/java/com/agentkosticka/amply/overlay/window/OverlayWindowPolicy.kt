@@ -14,6 +14,15 @@ internal object OverlayWindowPolicy {
         WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 
     const val PARKED_FLAGS: Int = FLAGS or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+
+    fun flags(parked: Boolean, secureCaptureFallback: Boolean): Int {
+        val base = if (parked) PARKED_FLAGS else FLAGS
+        return if (secureCaptureFallback) {
+            base or WindowManager.LayoutParams.FLAG_SECURE
+        } else {
+            base
+        }
+    }
 }
 
 enum class OverlayPresentationMode {

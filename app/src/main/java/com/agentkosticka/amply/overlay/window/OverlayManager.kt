@@ -62,6 +62,8 @@ object OverlayManager {
     private var recomposer: Recomposer? = null
     private var audioManager: AudioManager? = null
     private var currentWindowType: Int? = null
+    private val captureExclusion = OverlayCaptureExclusion()
+    private var secureCaptureFallbackActive = true
     private val streamMuteToggleController = StreamMuteToggleController()
     private data class StreamTemplateSignature(
         val targets: List<VolumeTarget>,
@@ -124,6 +126,7 @@ object OverlayManager {
     private val showAppProfileIdentity = mutableStateOf(false)
     private val showStandDownButton = mutableStateOf(true)
     private val showDndButton = mutableStateOf(false)
+    private val captureExclusionEnabled = mutableStateOf(true)
     private val dndActive = mutableStateOf(false)
     private val profiles = mutableStateOf<List<AudioProfile>>(emptyList())
     private val activeProfileId = mutableStateOf<String?>(null)
@@ -325,6 +328,11 @@ object OverlayManager {
         dndActive.value = active
     }
 
+    fun updateCaptureExclusionEnabled(enabled: Boolean) {
+        captureExclusionEnabled.value = enabled
+        overlayContainer?.let(::configureCaptureExclusion)
+    }
+
     /**
      * Invoke the session volume callback
      * This method ensures the callback is always read fresh from the property
@@ -407,6 +415,7 @@ object OverlayManager {
         val attachResult = if (overlayContainer == null) {
             createOverlay(context, windowType)
         } else {
+            configureCaptureExclusion(checkNotNull(overlayContainer))
             unparkOverlay()
             updateOverlayPosition(context)
             OverlayAttachResult.ALREADY_ATTACHED
@@ -568,7 +577,10 @@ object OverlayManager {
             windowWidthForCurrentOrientation(context),
             WindowManager.LayoutParams.WRAP_CONTENT,
             windowType,
-            OverlayWindowPolicy.FLAGS,
+            OverlayWindowPolicy.flags(
+                parked = false,
+                secureCaptureFallback = captureExclusionEnabled.value
+            ),
             PixelFormat.TRANSLUCENT
         ).applyPosition(context)
 
@@ -576,6 +588,8 @@ object OverlayManager {
         try {
             windowManager?.addView(container, params)
             currentWindowType = windowType
+            secureCaptureFallbackActive = captureExclusionEnabled.value
+            container.post { configureCaptureExclusion(container) }
             // On API 29 the final system/cutout insets are only reliable after the
             // overlay is attached. Re-apply once to avoid an oversized first frame.
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -628,7 +642,10 @@ object OverlayManager {
     private fun parkOverlay() {
         val container = overlayContainer ?: return
         val params = container.layoutParams as? WindowManager.LayoutParams ?: return
-        params.flags = OverlayWindowPolicy.PARKED_FLAGS
+        params.flags = OverlayWindowPolicy.flags(
+            parked = true,
+            secureCaptureFallback = secureCaptureFallbackActive
+        )
         runCatching { windowManager?.updateViewLayout(container, params) }
             .onFailure { Log.w("OverlayManager", "Failed to park overlay input window", it) }
         container.visibility = View.INVISIBLE
@@ -640,8 +657,12 @@ object OverlayManager {
         val container = overlayContainer ?: return
         val params = container.layoutParams as? WindowManager.LayoutParams ?: return
         container.visibility = View.VISIBLE
-        if (params.flags == OverlayWindowPolicy.FLAGS) return
-        params.flags = OverlayWindowPolicy.FLAGS
+        val activeFlags = OverlayWindowPolicy.flags(
+            parked = false,
+            secureCaptureFallback = secureCaptureFallbackActive
+        )
+        if (params.flags == activeFlags) return
+        params.flags = activeFlags
         runCatching { windowManager?.updateViewLayout(container, params) }
             .onFailure { Log.w("OverlayManager", "Failed to restore overlay input window", it) }
     }
@@ -666,6 +687,8 @@ object OverlayManager {
         overlayContainerRef = null
         composeView = null
         currentWindowType = null
+        captureExclusion.reset()
+        secureCaptureFallbackActive = captureExclusionEnabled.value
         overlayVisible.value = false
         volumeObservationJob?.cancel()
         volumeObservationJob = null
@@ -673,6 +696,24 @@ object OverlayManager {
         presentationMode = OverlayPresentationMode.NORMAL
         volumeLimitFeedback.value = null
         removeJob = null
+    }
+
+    /** Prefer clean compositor omission, retaining FLAG_SECURE as a privacy fallback. */
+    private fun configureCaptureExclusion(container: FrameLayout) {
+        val enabled = captureExclusionEnabled.value
+        val skipScreenshotApplied = captureExclusion.setEnabled(container, enabled)
+        val nextSecureFallback = enabled && !skipScreenshotApplied
+        if (secureCaptureFallbackActive == nextSecureFallback) return
+
+        secureCaptureFallbackActive = nextSecureFallback
+        val params = container.layoutParams as? WindowManager.LayoutParams ?: return
+        val parked = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+        params.flags = OverlayWindowPolicy.flags(
+            parked = parked,
+            secureCaptureFallback = nextSecureFallback
+        )
+        runCatching { windowManager?.updateViewLayout(container, params) }
+            .onFailure { Log.w("OverlayManager", "Failed to update screenshot exclusion", it) }
     }
 
     private fun refreshSystemStreamVolumes() {

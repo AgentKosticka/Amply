@@ -569,6 +569,7 @@ fun SettingsDashboard(
     val hideAppProfileIdentity by preferences.hideAppProfileIdentity.collectAsState(initial = true)
     val hideStandDownButton by preferences.hideStandDownButton.collectAsState(initial = false)
     val showDndButton by preferences.showDndButton.collectAsState(initial = false)
+    val captureExclusionEnabled by preferences.captureExclusionEnabled.collectAsState(initial = true)
     val sessionState by runtime.sessionState.collectAsState(initial = AudioSessionState.empty())
     val shizukuState by shizukuRepository.permissionState.collectAsState(initial = ShizukuPermissionState.UNKNOWN)
     val connectionState by runtime.connectionState.collectAsState(initial = VolumeServiceConnectionState.WAITING_FOR_PERMISSION)
@@ -1362,6 +1363,16 @@ fun SettingsDashboard(
                     item {
                         SectionTitle(
                             stringResource(com.agentkosticka.amply.R.string.pill_optional_controls)
+                        )
+                    }
+                    item {
+                        OverlayPreferenceToggle(
+                            title = stringResource(com.agentkosticka.amply.R.string.pill_capture_exclusion),
+                            description = stringResource(com.agentkosticka.amply.R.string.pill_capture_exclusion_description),
+                            checked = captureExclusionEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch { preferences.setCaptureExclusionEnabled(enabled) }
+                            }
                         )
                     }
                     item {

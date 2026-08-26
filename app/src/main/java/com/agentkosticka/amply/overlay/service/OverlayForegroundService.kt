@@ -223,6 +223,9 @@ open class OverlayForegroundService : Service() {
                     preferences.showDndButton.collect(OverlayManager::updateDndButtonEnabled)
                 },
                 serviceScope.launch {
+                    preferences.captureExclusionEnabled.collect(OverlayManager::updateCaptureExclusionEnabled)
+                },
+                serviceScope.launch {
                     runtime.dndController.active.collect(OverlayManager::updateDndActive)
                 },
                 serviceScope.launch {

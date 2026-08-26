@@ -50,6 +50,7 @@ class PreferencesManager(private val context: Context) {
         private val HIDE_APP_PROFILE_IDENTITY = booleanPreferencesKey("hide_app_profile_identity")
         private val HIDE_STAND_DOWN_BUTTON = booleanPreferencesKey("hide_stand_down_button")
         private val SHOW_DND_BUTTON = booleanPreferencesKey("show_dnd_button")
+        private val CAPTURE_EXCLUSION_ENABLED = booleanPreferencesKey("capture_exclusion_enabled")
         private val AUTOMATICALLY_SAVE_PROFILE_CHANGES =
             booleanPreferencesKey("automatically_save_profile_changes")
         private val AUDIO_PROFILES_JSON = stringPreferencesKey("audio_profiles_json")
@@ -59,7 +60,7 @@ class PreferencesManager(private val context: Context) {
             longPreferencesKey("last_successful_update_check_epoch_ms")
         private val LEGACY_RINGER_METHOD = stringPreferencesKey("ringer_method")
         const val MAX_IMPORT_BYTES = 2 * 1024 * 1024
-        const val EXPORT_SCHEMA_VERSION = 4
+        const val EXPORT_SCHEMA_VERSION = 5
         private const val AUTO_PRUNE_AGE_MS = 90L * 24L * 60L * 60L * 1_000L
         private const val AUTO_PRUNE_INTERVAL_MS = 7L * 24L * 60L * 60L * 1_000L
     }
@@ -237,6 +238,13 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setShowDndButton(show: Boolean): SettingsOperationResult =
         editSettings { it[SHOW_DND_BUTTON] = show }
+
+    val captureExclusionEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[CAPTURE_EXCLUSION_ENABLED] ?: true
+    }
+
+    suspend fun setCaptureExclusionEnabled(enabled: Boolean): SettingsOperationResult =
+        editSettings { it[CAPTURE_EXCLUSION_ENABLED] = enabled }
 
     val automaticallySaveProfileChanges: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] ?: true
@@ -441,6 +449,7 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(HIDE_APP_PROFILE_IDENTITY)
             preferences.remove(HIDE_STAND_DOWN_BUTTON)
             preferences.remove(SHOW_DND_BUTTON)
+            preferences.remove(CAPTURE_EXCLUSION_ENABLED)
             preferences.remove(AUDIO_PROFILES_JSON)
             preferences.remove(AUDIO_PROFILES_JSON_BACKUP)
             preferences.remove(LAST_STALE_APP_CLEANUP_EPOCH_MS)
@@ -484,6 +493,7 @@ class PreferencesManager(private val context: Context) {
             .put("hideAppProfileIdentity", preferences[HIDE_APP_PROFILE_IDENTITY] ?: true)
             .put("hideStandDownButton", preferences[HIDE_STAND_DOWN_BUTTON] ?: false)
             .put("showDndButton", preferences[SHOW_DND_BUTTON] ?: false)
+            .put("captureExclusionEnabled", preferences[CAPTURE_EXCLUSION_ENABLED] ?: true)
             .put(
                 "automaticallySaveProfileChanges",
                 preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] ?: true
@@ -551,6 +561,7 @@ class PreferencesManager(private val context: Context) {
                 preferences[HIDE_APP_PROFILE_IDENTITY] = imported.hideAppProfileIdentity
                 preferences[HIDE_STAND_DOWN_BUTTON] = imported.hideStandDownButton
                 preferences[SHOW_DND_BUTTON] = imported.showDndButton
+                preferences[CAPTURE_EXCLUSION_ENABLED] = imported.captureExclusionEnabled
                 preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] =
                     imported.automaticallySaveProfileChanges
                 val existingPackages = decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
@@ -593,6 +604,7 @@ class PreferencesManager(private val context: Context) {
         val hideAppProfileIdentity: Boolean,
         val hideStandDownButton: Boolean,
         val showDndButton: Boolean,
+        val captureExclusionEnabled: Boolean,
         val automaticallySaveProfileChanges: Boolean,
         val appOverlayOrder: List<AppIdentity>,
         val standDownPackages: Set<String>,
@@ -675,6 +687,12 @@ class PreferencesManager(private val context: Context) {
             "showDndButton",
             "Invalid Do Not Disturb button visibility setting"
         )
+        val captureExclusionEnabled = if (root.has("captureExclusionEnabled")) {
+            require(root.get("captureExclusionEnabled") is Boolean) {
+                "Invalid screenshot exclusion setting"
+            }
+            root.getBoolean("captureExclusionEnabled")
+        } else true
         val automaticallySaveProfileChanges = if (root.has("automaticallySaveProfileChanges")) {
             require(root.get("automaticallySaveProfileChanges") is Boolean) {
                 "Invalid automatic profile saving setting"
@@ -730,6 +748,7 @@ class PreferencesManager(private val context: Context) {
             hideAppProfileIdentity = hideAppProfileIdentity,
             hideStandDownButton = hideStandDownButton,
             showDndButton = showDndButton,
+            captureExclusionEnabled = captureExclusionEnabled,
             automaticallySaveProfileChanges = automaticallySaveProfileChanges,
             appOverlayOrder = appOverlayOrder,
             standDownPackages = standDown,

@@ -82,6 +82,8 @@
     <string name="update_view_release">VIEW RELEASE</string>
     <string name="update_later">LATER</string>
     <string name="pill_optional_controls">OPTIONAL OVERLAY CONTROLS</string>
+    <string name="pill_capture_exclusion">Hide overlay from screenshots</string>
+    <string name="pill_capture_exclusion_description">Keep Amply visible on screen while excluding it from screenshots and screen recordings. On unsupported devices, Android may redact the overlay area instead.</string>
     <string name="pill_hide_shizuku_warning">Hide Shizuku disconnection warning</string>
     <string name="pill_hide_shizuku_warning_description">Don’t show the connection warning in the volume overlay when Shizuku disconnects.</string>
     <string name="pill_hide_per_app_control">Hide per-app volume control</string>

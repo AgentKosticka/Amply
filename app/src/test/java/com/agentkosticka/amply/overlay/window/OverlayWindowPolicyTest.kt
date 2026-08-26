@@ -28,4 +28,21 @@ class OverlayWindowPolicyTest {
             OverlayWindowPolicy.PARKED_FLAGS and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0
         )
     }
+
+    @Test
+    fun secureCaptureFallbackCanBeAppliedToActiveAndParkedWindows() {
+        assertTrue(
+            OverlayWindowPolicy.flags(parked = false, secureCaptureFallback = true) and
+                WindowManager.LayoutParams.FLAG_SECURE != 0
+        )
+        assertTrue(
+            OverlayWindowPolicy.flags(parked = true, secureCaptureFallback = true) and
+                WindowManager.LayoutParams.FLAG_SECURE != 0
+        )
+        assertEquals(
+            0,
+            OverlayWindowPolicy.flags(parked = false, secureCaptureFallback = false) and
+                WindowManager.LayoutParams.FLAG_SECURE
+        )
+    }
 }
