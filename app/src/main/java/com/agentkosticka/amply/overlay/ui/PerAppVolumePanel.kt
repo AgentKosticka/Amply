@@ -1,6 +1,19 @@
 package com.agentkosticka.amply.overlay.ui
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -10,6 +23,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +34,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -44,14 +61,16 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.agentkosticka.amply.audio.session.AppVolumeTarget
 import com.agentkosticka.amply.audio.session.AppVolumeControlState
+import com.agentkosticka.amply.profiles.AudioProfile
+import com.agentkosticka.amply.profiles.ProfileSaveMode
 import com.agentkosticka.amply.settings.model.appDisplayName
 import com.agentkosticka.amply.settings.model.appProfileFallbackLabel
 import com.agentkosticka.amply.ui.theme.NothingColors
-import com.agentkosticka.amply.profiles.AudioProfile
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.milliseconds
@@ -149,49 +168,208 @@ internal fun OverlayProfileSelectorPanel(
     maxHeight: Dp,
     profiles: List<AudioProfile>,
     activeProfileId: String?,
+    switchingProfileId: String? = null,
+    profileApplying: Boolean = false,
     onProfileActivate: (String) -> Unit
 ) {
     val shape = RoundedCornerShape(OverlayCornerRadius)
-    val selectorScrollState = rememberScrollState()
+    val haptic = LocalHapticFeedback.current
     val sortedProfiles = remember(profiles) { profiles.sortedBy { it.name } }
+    val activeProfileLabel = profiles.firstOrNull { it.id == activeProfileId }
+        ?.let { "${it.name} · active" }
+        ?: "No active profile"
     Column(
         modifier = Modifier
             .width(panelWidth)
             .heightIn(min = 100.dp, max = maxHeight)
             .clip(shape)
             .background(Color(0xFF1C1C1C), shape)
-            .verticalScroll(selectorScrollState)
             .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            "PROFILES",
-            color = NothingColors.White,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
-        )
-        sortedProfiles.forEach { profile ->
-            val selected = profile.id == activeProfileId
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (selected) Color(0xFF292929) else Color.Transparent)
-                    .clickable { onProfileActivate(profile.id) }
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(NothingColors.Red),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    profile.name,
-                    color = NothingColors.White,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                Icon(
+                    imageVector = Icons.Default.SwapHoriz,
+                    contentDescription = null,
+                    tint = NothingColors.White,
+                    modifier = Modifier.size(20.dp)
                 )
-                if (selected) {
-                    Icon(Icons.Default.Check, "Active profile", tint = NothingColors.Red, modifier = Modifier.size(20.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "SOUND PROFILE",
+                    color = NothingColors.GreyMedium,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                AnimatedContent(
+                    targetState = activeProfileLabel,
+                    transitionSpec = {
+                        (slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it / 2 } +
+                            fadeIn(tween(180))) togetherWith
+                            (slideOutVertically(tween(180)) { -it / 2 } + fadeOut(tween(120)))
+                    },
+                    label = "activeProfileName"
+                ) { name ->
+                    Text(
+                        text = name,
+                        color = NothingColors.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .padding(horizontal = 4.dp)
+                .background(Color(0xFF303030))
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            itemsIndexed(
+                items = sortedProfiles,
+                key = { _, profile -> profile.id },
+                contentType = { _, _ -> "profile" }
+            ) { _, profile ->
+                val active = profile.id == activeProfileId
+                val targeted = profile.id == switchingProfileId
+                val switchComplete = targeted && active && !profileApplying
+                val interactionLocked = switchingProfileId != null
+                val rowBackground by animateColorAsState(
+                    targetValue = when {
+                        targeted -> Color(0xFF3A2022)
+                        active -> Color(0xFF292929)
+                        else -> Color.Transparent
+                    },
+                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                    label = "profileRowBackground"
+                )
+                val badgeBackground by animateColorAsState(
+                    targetValue = if (active || targeted) NothingColors.Red else Color(0xFF353535),
+                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                    label = "profileBadgeBackground"
+                )
+                val rowScale by animateFloatAsState(
+                    targetValue = if (targeted) 0.985f else 1f,
+                    animationSpec = tween(160, easing = FastOutSlowInEasing),
+                    label = "profileRowScale"
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
+                        .graphicsLayer {
+                            scaleX = rowScale
+                            scaleY = rowScale
+                        }
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(rowBackground)
+                        .selectable(
+                            selected = active || targeted,
+                            enabled = !interactionLocked,
+                            role = Role.RadioButton,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onProfileActivate(profile.id)
+                            }
+                        )
+                        .semantics {
+                            stateDescription = when {
+                                targeted && profileApplying -> "Applying profile"
+                                switchComplete -> "Active profile"
+                                targeted -> "Switching profile"
+                                active -> "Active profile"
+                                else -> "Available profile"
+                            }
+                        }
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(badgeBackground),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = profile.name.firstOrNull()?.uppercase() ?: "•",
+                            color = NothingColors.White,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            profile.name,
+                            color = NothingColors.White,
+                            fontWeight = if (active || targeted) FontWeight.Bold else FontWeight.Medium,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = when {
+                                targeted && profileApplying -> "APPLYING"
+                                switchComplete -> "ACTIVE"
+                                targeted -> "SWITCHING"
+                                active -> "ACTIVE"
+                                profile.saveMode == ProfileSaveMode.AUTO_DEVICE -> "DEVICE LINKED"
+                                else -> "SAVED PROFILE"
+                            },
+                            color = if (active || targeted) NothingColors.Red else NothingColors.GreyMedium,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = active || targeted,
+                        enter = scaleIn(tween(220, easing = FastOutSlowInEasing)) + fadeIn(tween(160)),
+                        exit = scaleOut(tween(140)) + fadeOut(tween(100))
+                    ) {
+                        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                            if (targeted && !switchComplete) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(19.dp),
+                                    color = NothingColors.Red,
+                                    trackColor = Color(0xFF4A2B2D),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Check,
+                                    "Active profile",
+                                    tint = NothingColors.Red,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

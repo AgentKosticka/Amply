@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -71,6 +72,7 @@ import com.agentkosticka.amply.profiles.AudioProfile
 import com.agentkosticka.amply.settings.model.OverlaySide
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionState
 import com.agentkosticka.amply.ui.theme.NothingColors
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private val CollapsedPillWidth = 54.dp
@@ -115,6 +117,7 @@ fun VolumeOverlay(
     dndActive: Boolean = false,
     profiles: List<AudioProfile> = emptyList(),
     activeProfileId: String? = null,
+    profileApplying: Boolean = false,
     overlaySide: OverlaySide = OverlaySide.LEFT,
     availableWidthDp: Float = 0f,
     initiallyExpanded: Boolean = false,
@@ -134,6 +137,7 @@ fun VolumeOverlay(
 ) {
     var internalExpanded by remember { mutableStateOf(initiallyExpanded) }
     var profileMenuExpanded by remember { mutableStateOf(false) }
+    var switchingProfileId by remember { mutableStateOf<String?>(null) }
     val isExpanded = expanded ?: internalExpanded
     val canSwitchProfiles = profiles.size > 1
     val showCollapsedDnd = selectedTarget == VolumeTarget.RING ||
@@ -232,7 +236,22 @@ fun VolumeOverlay(
     }
 
     LaunchedEffect(isExpanded, canSwitchProfiles) {
-        if (!isExpanded || !canSwitchProfiles) profileMenuExpanded = false
+        if (!isExpanded || !canSwitchProfiles) {
+            profileMenuExpanded = false
+            switchingProfileId = null
+        }
+    }
+
+    LaunchedEffect(activeProfileId, profileApplying, switchingProfileId) {
+        val requestedId = switchingProfileId ?: return@LaunchedEffect
+        if (activeProfileId == requestedId && !profileApplying) {
+            delay(260)
+            if (switchingProfileId == requestedId) {
+                profileMenuExpanded = false
+                switchingProfileId = null
+                onInteraction()
+            }
+        }
     }
 
     panelTransitionState.targetState = isExpanded && hasPanelContent
@@ -316,6 +335,8 @@ fun VolumeOverlay(
                     }
                     val profileControl: @Composable () -> Unit = {
                         if (canSwitchProfiles) {
+                            val activeProfileName = profiles.firstOrNull { it.id == activeProfileId }?.name
+                            val activeProfileIndex = profiles.indexOfFirst { it.id == activeProfileId }.coerceAtLeast(0)
                             val profileButtonBackground by animateColorAsState(
                                 targetValue = if (profileMenuExpanded) {
                                     NothingColors.Red
@@ -324,6 +345,11 @@ fun VolumeOverlay(
                                 },
                                 animationSpec = tween(220, easing = FastOutSlowInEasing),
                                 label = "profileButtonBackground"
+                            )
+                            val profileIconRotation by animateFloatAsState(
+                                targetValue = activeProfileIndex * 180f + if (profileMenuExpanded) 90f else 0f,
+                                animationSpec = tween(360, easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)),
+                                label = "profileIconRotation"
                             )
                             Box(Modifier.size(CollapsedPillWidth), contentAlignment = Alignment.Center) {
                                 androidx.compose.animation.AnimatedVisibility(
@@ -336,8 +362,13 @@ fun VolumeOverlay(
                                             .size(48.dp)
                                             .clip(CircleShape)
                                             .background(profileButtonBackground)
+                                            .semantics {
+                                                stateDescription = activeProfileName?.let { "Current profile, $it" }
+                                                    ?: "No active profile"
+                                            }
                                             .clickable {
                                                 profileMenuExpanded = !profileMenuExpanded
+                                                if (!profileMenuExpanded) switchingProfileId = null
                                                 onInteraction()
                                             },
                                         contentAlignment = Alignment.Center
@@ -346,7 +377,9 @@ fun VolumeOverlay(
                                             imageVector = Icons.Default.SwapHoriz,
                                             contentDescription = "Switch profile",
                                             tint = NothingColors.White,
-                                            modifier = Modifier.size(24.dp)
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .graphicsLayer { rotationZ = profileIconRotation }
                                         )
                                     }
                                 }
@@ -495,10 +528,18 @@ fun VolumeOverlay(
                     maxHeight = maxHeight,
                     profiles = profiles,
                     activeProfileId = activeProfileId,
+                    switchingProfileId = switchingProfileId,
+                    profileApplying = profileApplying,
                     onProfileActivate = { profileId ->
                         if (profileMenuExpanded) {
-                            profileMenuExpanded = false
-                            onProfileActivate(profileId)
+                            if (profileId == activeProfileId) {
+                                profileMenuExpanded = false
+                                switchingProfileId = null
+                            } else if (switchingProfileId == null) {
+                                switchingProfileId = profileId
+                                onProfileActivate(profileId)
+                                onInteraction()
+                            }
                         }
                     }
                 )

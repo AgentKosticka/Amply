@@ -130,6 +130,7 @@ object OverlayManager {
     private val dndActive = mutableStateOf(false)
     private val profiles = mutableStateOf<List<AudioProfile>>(emptyList())
     private val activeProfileId = mutableStateOf<String?>(null)
+    private val profileApplying = mutableStateOf(false)
 
     // Callback for per-app volume changes (wired to the foreground runtime backend)
     private var onAppVolumeChangeCallback: ((AppVolumeTarget, Float) -> Unit)? = null
@@ -303,6 +304,7 @@ object OverlayManager {
         val hadProfileButton = profiles.value.size > 1
         profiles.value = state.store.profiles.values.toList()
         activeProfileId.value = state.store.activeProfileId
+        profileApplying.value = state.applying
         if (hadProfileButton != (profiles.value.size > 1)) {
             overlayContainer?.context?.let(::updateOverlayPosition)
         }
@@ -514,6 +516,7 @@ object OverlayManager {
                     dndActive = dndActive.value,
                     profiles = profiles.value,
                     activeProfileId = activeProfileId.value,
+                    profileApplying = profileApplying.value,
                     overlaySide = currentOverlaySide.value,
                     availableWidthDp = availableOverlayWidthDp.floatValue,
                     onStreamVolumeChange = { streamType, newVolume ->
