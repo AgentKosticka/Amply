@@ -101,6 +101,9 @@ import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.overlay.ui.HorizontalDraggableDotSlider
 import com.agentkosticka.amply.profiles.AudioProfile
 import com.agentkosticka.amply.profiles.AudioProfileSnapshot
+import com.agentkosticka.amply.profiles.ProfileOperationResult
+import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.agentkosticka.amply.profiles.KnownOutputDevice
 import com.agentkosticka.amply.profiles.OutputKind
 import com.agentkosticka.amply.profiles.PROFILE_SYSTEM_TARGETS
@@ -153,6 +156,7 @@ internal fun ProfilesSettingsPage(
     val dynamicStreams by runtime.dynamicStreamState.collectAsState()
     val dotConfig by runtime.preferencesManager.volumeDotScaleConfig.collectAsState(initial = VolumeDotScaleConfig())
     val scope = rememberCoroutineScope()
+    val editorModel: ProfileEditorViewModel = viewModel()
     val profilesListState = rememberLazyListState()
     var creating by rememberSaveable { mutableStateOf(false) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -172,6 +176,9 @@ internal fun ProfilesSettingsPage(
     if (editing != null) {
         ProfileEditor(
             profile = editing,
+            draft = editorModel.open(editing, state.store.devices.values
+                .filter { it.assignedProfileId == editing.id }.mapTo(linkedSetOf()) { it.descriptor.key }),
+            errorMessage = state.operationError,
             appSettings = appSettings,
             devices = state.store.devices.values.toList(),
             systemBars = runtime.profileCoordinator.systemVolumeBars(dotConfig),
@@ -184,18 +191,20 @@ internal fun ProfilesSettingsPage(
             navigationGuard = navigationGuard,
             modifier = modifier,
             onNotificationPolicyClick = onNotificationPolicyClick,
-            onDiscard = { editingId = null },
+            onDiscard = { editorModel.close(editing.id); editingId = null },
             onSave = { name, snapshot, assignedKeys, afterSave ->
                 scope.launch {
-                    if (runtime.profileCoordinator.updateProfile(editing.id, name, snapshot)) {
-                        state.store.devices.keys.forEach { key ->
+                    if (runtime.profileCoordinator.updateProfile(editing.id, name, snapshot) is ProfileOperationResult.Success) {
+                        for (key in state.store.devices.keys) {
                             val current = state.store.devices[key]
-                            if (key in assignedKeys) {
+                            val result = if (key in assignedKeys) {
                                 runtime.profileCoordinator.assignDevice(key, editing.id)
                             } else if (current?.assignedProfileId == editing.id) {
                                 runtime.profileCoordinator.assignDevice(key, null)
-                            }
+                            } else continue
+                            if (result is ProfileOperationResult.Failure) return@launch
                         }
+                        editorModel.close(editing.id)
                         editingId = null
                         afterSave()
                     }
@@ -219,6 +228,15 @@ internal fun ProfilesSettingsPage(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
+            state.operationError?.let { Text(it, color = NothingColors.Red) }
+            if (state.storeHealth != AppSettingsStoreHealth.HEALTHY) {
+                Text(
+                    if (state.storeHealth == AppSettingsStoreHealth.RECOVERED_FROM_BACKUP)
+                        "Profiles recovered from backup. Export settings to preserve the recovery data."
+                    else "Profile data needs recovery. Export settings, then import a valid backup or reset settings in Apps.",
+                    color = NothingColors.Red
+                )
+            }
             SectionTitle("CURRENT PROFILE")
             Spacer(Modifier.height(10.dp))
             SettingsPanel {
@@ -451,10 +469,16 @@ internal fun ProfilesSettingsPage(
     if (creating) {
         CreateProfileDialog(
             onDismiss = { creating = false },
+            errorMessage = state.operationError,
             onCreate = { name ->
                 scope.launch {
-                    runtime.profileCoordinator.createNamedProfile(name)?.let { editingId = it.id }
-                    creating = false
+                    when (val result = runtime.profileCoordinator.createNamedProfile(name)) {
+                        is ProfileOperationResult.Success -> {
+                            editingId = result.value.id
+                            creating = false
+                        }
+                        is ProfileOperationResult.Failure -> Unit
+                    }
                 }
             }
         )
@@ -503,7 +527,7 @@ private fun ProfileCard(
 }
 
 @Composable
-private fun CreateProfileDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+private fun CreateProfileDialog(onDismiss: () -> Unit, errorMessage: String?, onCreate: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     AmplyPopupDialog(
         title = "Create profile",
@@ -522,12 +546,15 @@ private fun CreateProfileDialog(onDismiss: () -> Unit, onCreate: (String) -> Uni
         )
     ) {
         NothingTextField(name, { name = it.take(40) }, "Profile name")
+        errorMessage?.let { Text(it, color = NothingColors.Red) }
     }
 }
 
 @Composable
 private fun ProfileEditor(
     profile: AudioProfile,
+    draft: ProfileEditorDraft,
+    errorMessage: String?,
     appSettings: Map<AppIdentity, AppSettings>,
     devices: List<KnownOutputDevice>,
     systemBars: Map<VolumeTarget, VolumeBarModel>,
@@ -540,14 +567,11 @@ private fun ProfileEditor(
     onDiscard: () -> Unit,
     onSave: (String, AudioProfileSnapshot, Set<String>, () -> Unit) -> Unit
 ) {
-    var name by rememberSaveable(profile.id) { mutableStateOf(profile.name) }
-    var snapshot by remember(profile.id) { mutableStateOf(profile.snapshot) }
+    var name by draft::name
+    var snapshot by draft::snapshot
     var search by rememberSaveable(profile.id) { mutableStateOf("") }
-    val originalAssigned = remember(profile.id, devices) {
-        devices.filter { it.assignedProfileId == profile.id }.mapTo(linkedSetOf()) { it.descriptor.key }
-    }
-    var assigned by remember(profile.id) { mutableStateOf<Set<String>>(originalAssigned) }
-    val dirty = name != profile.name || snapshot != profile.snapshot || assigned != originalAssigned
+    var assigned by draft::assigned
+    val dirty = name != draft.original.name || snapshot != draft.original.snapshot || assigned != draft.originalAssigned
     var showExitPrompt by remember { mutableStateOf(false) }
     var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     val editorListState = rememberLazyListState()
@@ -647,7 +671,10 @@ private fun ProfileEditor(
                 }
             }
         }
-        item { NothingTextField(name, { name = it.take(40) }, "Profile name") }
+        item {
+            errorMessage?.let { Text(it, color = NothingColors.Red) }
+            NothingTextField(name, { name = it.take(40) }, "Profile name")
+        }
         item { SectionTitle("SYSTEM VOLUMES") }
         PROFILE_SYSTEM_TARGETS.forEach { target ->
             item(target.name) {

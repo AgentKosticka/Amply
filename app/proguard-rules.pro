@@ -2,6 +2,7 @@
 -keep class com.agentkosticka.amply.shizuku.protocol.IVolumeService$Stub { *; }
 -keep class com.agentkosticka.amply.shizuku.protocol.IVolumeService$Stub$Proxy { *; }
 -keep class com.agentkosticka.amply.shizuku.protocol.PlaybackSessionParcel { *; }
+-keep class com.agentkosticka.amply.shizuku.protocol.PlaybackQueryResultParcel { *; }
 -keep class com.agentkosticka.amply.shizuku.protocol.OperationResultParcel { *; }
 
 # Shizuku reflects the UserService entry point from the configured component.

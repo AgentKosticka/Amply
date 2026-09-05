@@ -3,6 +3,8 @@ package com.agentkosticka.amply.profiles
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.settings.model.AppIdentity
+import com.agentkosticka.amply.settings.data.AppSettingsCodec
+import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -11,6 +13,32 @@ internal object ProfileCodec {
     private const val MAX_PROFILES = 64
     private const val MAX_DEVICES = 256
     private const val MAX_TOTAL_APP_VOLUMES = 10_000
+
+    fun validatedEncoding(store: ProfileStore): String {
+        val encoded = encode(store)
+        require(decode(encoded) == store) { "Profile data is not valid for storage" }
+        return encoded
+    }
+
+    fun resolve(primary: String?, backup: String?): ProfileStoreResolution {
+        if (!primary.isNullOrBlank()) {
+            try {
+                return ProfileStoreResolution(decode(primary), AppSettingsStoreHealth.HEALTHY)
+            } catch (_: Exception) {
+                // Fall through to the backup before declaring the store corrupt.
+            }
+            if (backup.isNullOrBlank()) {
+                return ProfileStoreResolution(ProfileStore(), AppSettingsStoreHealth.CORRUPT)
+            }
+        } else if (backup.isNullOrBlank()) {
+            return ProfileStoreResolution(ProfileStore(), AppSettingsStoreHealth.HEALTHY)
+        }
+        return try {
+            ProfileStoreResolution(decode(backup), AppSettingsStoreHealth.RECOVERED_FROM_BACKUP)
+        } catch (_: Exception) {
+            ProfileStoreResolution(ProfileStore(), AppSettingsStoreHealth.CORRUPT)
+        }
+    }
 
     fun encode(store: ProfileStore, includeTransient: Boolean = true): String {
         val root = JSONObject().put("schemaVersion", SCHEMA_VERSION)
@@ -132,6 +160,10 @@ internal object ProfileCodec {
             while (keys.hasNext()) {
                 val key = keys.next()
                 val identity = AppIdentity.fromStorageKey(key) ?: error("Invalid app identity")
+                require(identity.userId >= 0 && AppSettingsCodec.isValidPackageName(identity.packageName)) {
+                    "Invalid app identity"
+                }
+                require(identity !in this) { "Duplicate app identity" }
                 put(identity, fraction(appsObject.get(key)))
             }
         }

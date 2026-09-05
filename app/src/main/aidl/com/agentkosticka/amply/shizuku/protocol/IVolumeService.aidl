@@ -1,12 +1,13 @@
 package com.agentkosticka.amply.shizuku.protocol;
 
 import com.agentkosticka.amply.shizuku.protocol.PlaybackSessionParcel;
+import com.agentkosticka.amply.shizuku.protocol.PlaybackQueryResultParcel;
 import com.agentkosticka.amply.shizuku.protocol.OperationResultParcel;
 
 interface IVolumeService {
     int getProtocolVersion();
     long getCapabilities();
-    List<PlaybackSessionParcel> getActivePlaybacks();
+    PlaybackQueryResultParcel getActivePlaybacks();
     OperationResultParcel setPlayerVolume(int playerInterfaceId, float volume);
     int[] getStreamTopology();
     OperationResultParcel setSystemStreamVolume(int streamType, int index);

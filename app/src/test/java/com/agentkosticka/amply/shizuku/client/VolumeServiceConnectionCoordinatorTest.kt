@@ -117,6 +117,23 @@ class VolumeServiceConnectionCoordinatorTest {
         assertTrue(coordinator.nextWakeDelayMs(600L) >= 60L * 60L * 1_000L)
     }
 
+    @Test fun explicitRetryLeavesProtocolMismatchAndBindsAgain() {
+        val permission = MutableStateFlow(ShizukuPermissionState.GRANTED)
+        val connector = FakeConnector()
+        val coordinator = coordinator(permission, connector)
+        coordinator.step(0)
+        coordinator.step(500)
+        connector.mismatch()
+        coordinator.step(600)
+        coordinator.retryNow()
+        coordinator.step(700)
+        assertEquals(2, connector.bindCalls)
+        assertEquals(VolumeServiceConnectionState.BINDING, connector.connectionState.value)
+        connector.connect()
+        coordinator.step(800)
+        assertEquals(VolumeServiceConnectionState.CONNECTED, connector.connectionState.value)
+    }
+
     private fun coordinator(
         permission: StateFlow<ShizukuPermissionState>,
         connector: FakeConnector
@@ -162,5 +179,7 @@ class VolumeServiceConnectionCoordinatorTest {
         fun disconnect() {
             mutableState.value = VolumeServiceConnectionState.DISCONNECTED
         }
+
+        fun mismatch() { mutableState.value = VolumeServiceConnectionState.PROTOCOL_MISMATCH }
     }
 }

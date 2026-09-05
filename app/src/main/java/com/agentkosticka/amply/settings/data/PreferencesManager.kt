@@ -18,6 +18,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import org.json.JSONArray
 import com.agentkosticka.amply.tutorial.TutorialStage
@@ -25,7 +27,10 @@ import com.agentkosticka.amply.profiles.ProfileCodec
 import com.agentkosticka.amply.profiles.ProfileStore
 
 
-class PreferencesManager(private val context: Context) {
+class PreferencesManager(
+    private val context: Context,
+    private val dataStore: DataStore<Preferences> = context.dataStore
+) {
 
     companion object {
         private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "amply_preferences")
@@ -68,12 +73,12 @@ class PreferencesManager(private val context: Context) {
     /**
      * Flow that emits whether the setup wizard has been completed
      */
-    val isSetupIntroductionSeen: Flow<Boolean> = context.dataStore.data
+    val isSetupIntroductionSeen: Flow<Boolean> = dataStore.data
         .map { preferences ->
             preferences[SETUP_COMPLETED] ?: false
         }
 
-    internal val tutorialStage: Flow<TutorialStage> = context.dataStore.data.map { preferences ->
+    internal val tutorialStage: Flow<TutorialStage> = dataStore.data.map { preferences ->
         TutorialStage.fromStored(
             value = preferences[TUTORIAL_STAGE],
             introductionSeen = preferences[SETUP_COMPLETED] ?: false
@@ -91,7 +96,7 @@ class PreferencesManager(private val context: Context) {
     }
 
     internal suspend fun lastSuccessfulUpdateCheckEpochMs(): Long =
-        context.dataStore.data.first()[LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS] ?: 0L
+        dataStore.data.first()[LAST_SUCCESSFUL_UPDATE_CHECK_EPOCH_MS] ?: 0L
 
     internal suspend fun recordSuccessfulUpdateCheck(epochMs: Long): SettingsOperationResult {
         if (epochMs <= 0L) {
@@ -102,7 +107,7 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    val overlaySide: Flow<OverlaySide> = context.dataStore.data
+    val overlaySide: Flow<OverlaySide> = dataStore.data
         .map { preferences ->
             OverlaySide.fromStored(preferences[OVERLAY_SIDE])
         }
@@ -112,7 +117,7 @@ class PreferencesManager(private val context: Context) {
             preferences[OVERLAY_SIDE] = side.name
         }
 
-    val overlayVerticalFraction: Flow<Float> = context.dataStore.data
+    val overlayVerticalFraction: Flow<Float> = dataStore.data
         .map { preferences ->
             (preferences[OVERLAY_VERTICAL_FRACTION] ?: 0.5f).coerceIn(0f, 1f)
         }
@@ -126,7 +131,7 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    val volumeDotScaleConfig: Flow<VolumeDotScaleConfig> = context.dataStore.data.map { preferences ->
+    val volumeDotScaleConfig: Flow<VolumeDotScaleConfig> = dataStore.data.map { preferences ->
         VolumeDotScaleConfig(
             mode = runCatching {
                 VolumeDotScaleMode.valueOf(preferences[VOLUME_DOT_SCALE_MODE].orEmpty())
@@ -145,50 +150,58 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    val appSettings: Flow<Map<AppIdentity, AppSettings>> = context.dataStore.data
+    val appSettings: Flow<Map<AppIdentity, AppSettings>> = dataStore.data
         .map { preferences ->
             readAppSettings(preferences).first
-        }
+        }.distinctUntilChanged()
 
-    val appSettingsStoreHealth: Flow<AppSettingsStoreHealth> = context.dataStore.data.map { preferences ->
+    val appSettingsStoreHealth: Flow<AppSettingsStoreHealth> = dataStore.data.map { preferences ->
         readAppSettings(preferences).second
     }
 
-    val profileStore: Flow<ProfileStore> = context.dataStore.data.map(::readProfileStore)
+    val profileStoreResolution = dataStore.data.map { preferences ->
+        ProfileCodec.resolve(preferences[AUDIO_PROFILES_JSON], preferences[AUDIO_PROFILES_JSON_BACKUP])
+    }.distinctUntilChanged()
+    val profileStore: Flow<ProfileStore> = profileStoreResolution.map { it.store }.distinctUntilChanged()
 
     suspend fun updateProfileStore(
         transform: (ProfileStore) -> ProfileStore
     ): SettingsOperationResult = try {
-        context.dataStore.edit { preferences ->
+        dataStore.edit { preferences ->
+            checkProfileStoreWritable(preferences)
             val current = readProfileStore(preferences)
             writeProfileStore(preferences, current, transform(current))
         }
         SettingsOperationResult.Success
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: CorruptProfileStoreException) {
+        SettingsOperationResult.StoreCorrupt
     } catch (error: IllegalArgumentException) {
         SettingsOperationResult.ValidationFailed(error.message ?: "Invalid profile")
     } catch (error: Exception) {
         SettingsOperationResult.IoFailed(error.message ?: "Profile storage failed")
     }
 
-    val volumeKeyPassThroughPackages: Flow<Set<String>> = context.dataStore.data.map { preferences ->
+    val volumeKeyPassThroughPackages: Flow<Set<String>> = dataStore.data.map { preferences ->
         decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
             ?: AppSettingsCodec.legacyPassThroughPackages(
                 preferences[APP_SETTINGS_JSON_V2] ?: preferences[APP_SETTINGS_JSON]
             )
     }
 
-    val amplyPauseDuration: Flow<AmplyPauseDuration> = context.dataStore.data.map { preferences ->
+    val amplyPauseDuration: Flow<AmplyPauseDuration> = dataStore.data.map { preferences ->
         AmplyPauseDuration.fromStored(
             value = preferences[AMPLY_PAUSE_DURATION],
             legacyMinutes = preferences[AMPLY_PAUSE_DURATION_MINUTES] ?: DEFAULT_AMPLY_PAUSE_MINUTES
         )
     }
 
-    val amplyPausedUntilEpochMs: Flow<Long> = context.dataStore.data.map { preferences ->
+    val amplyPausedUntilEpochMs: Flow<Long> = dataStore.data.map { preferences ->
         preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] ?: 0L
     }
 
-    val appOverlayOrder: Flow<List<AppIdentity>> = context.dataStore.data.map { preferences ->
+    val appOverlayOrder: Flow<List<AppIdentity>> = dataStore.data.map { preferences ->
         decodeAppOverlayOrder(preferences[APP_OVERLAY_ORDER_JSON])
     }
 
@@ -204,49 +217,49 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
-    val disableShizukuDisconnectedWarning: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val disableShizukuDisconnectedWarning: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[DISABLE_SHIZUKU_DISCONNECTED_WARNING] ?: false
     }
 
     suspend fun setDisableShizukuDisconnectedWarning(disabled: Boolean): SettingsOperationResult =
         editSettings { it[DISABLE_SHIZUKU_DISCONNECTED_WARNING] = disabled }
 
-    val hidePerAppVolumeControl: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val hidePerAppVolumeControl: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[HIDE_PER_APP_VOLUME_CONTROL] ?: false
     }
 
     suspend fun setHidePerAppVolumeControl(hidden: Boolean): SettingsOperationResult =
         editSettings { it[HIDE_PER_APP_VOLUME_CONTROL] = hidden }
 
-    val hideAppProfileIdentity: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val hideAppProfileIdentity: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[HIDE_APP_PROFILE_IDENTITY] ?: true
     }
 
     suspend fun setHideAppProfileIdentity(hidden: Boolean): SettingsOperationResult =
         editSettings { it[HIDE_APP_PROFILE_IDENTITY] = hidden }
 
-    val hideStandDownButton: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val hideStandDownButton: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[HIDE_STAND_DOWN_BUTTON] ?: false
     }
 
     suspend fun setHideStandDownButton(hidden: Boolean): SettingsOperationResult =
         editSettings { it[HIDE_STAND_DOWN_BUTTON] = hidden }
 
-    val showDndButton: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val showDndButton: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[SHOW_DND_BUTTON] ?: false
     }
 
     suspend fun setShowDndButton(show: Boolean): SettingsOperationResult =
         editSettings { it[SHOW_DND_BUTTON] = show }
 
-    val captureExclusionEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val captureExclusionEnabled: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[CAPTURE_EXCLUSION_ENABLED] ?: true
     }
 
     suspend fun setCaptureExclusionEnabled(enabled: Boolean): SettingsOperationResult =
         editSettings { it[CAPTURE_EXCLUSION_ENABLED] = enabled }
 
-    val automaticallySaveProfileChanges: Flow<Boolean> = context.dataStore.data.map { preferences ->
+    val automaticallySaveProfileChanges: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[AUTOMATICALLY_SAVE_PROFILE_CHANGES] ?: true
     }
 
@@ -368,7 +381,7 @@ class PreferencesManager(private val context: Context) {
             return SettingsOperationResult.ValidationFailed("Invalid package name")
         }
         return try {
-            context.dataStore.edit { preferences ->
+            dataStore.edit { preferences ->
                 val packages = (decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
                     ?: AppSettingsCodec.legacyPassThroughPackages(
                         preferences[APP_SETTINGS_JSON_V2] ?: preferences[APP_SETTINGS_JSON]
@@ -396,7 +409,7 @@ class PreferencesManager(private val context: Context) {
         nowEpochMs: Long = System.currentTimeMillis()
     ): Int {
         if (automatic) {
-            val lastRun = context.dataStore.data.first()[LAST_STALE_APP_CLEANUP_EPOCH_MS] ?: 0L
+            val lastRun = dataStore.data.first()[LAST_STALE_APP_CLEANUP_EPOCH_MS] ?: 0L
             if (nowEpochMs - lastRun < AUTO_PRUNE_INTERVAL_MS) return 0
         }
         val stale = getAppSettingsSnapshot().values.filter { setting ->
@@ -409,7 +422,7 @@ class PreferencesManager(private val context: Context) {
             .distinct()
             .filterNot(::isPackageInstalledInAnyProfile)
             .toSet()
-        context.dataStore.edit { preferences ->
+        dataStore.edit { preferences ->
             val (decoded, health) = readAppSettings(preferences)
             if (health != AppSettingsStoreHealth.CORRUPT && stale.isNotEmpty()) {
                 val current = decoded.toMutableMap()
@@ -452,6 +465,7 @@ class PreferencesManager(private val context: Context) {
             preferences.remove(CAPTURE_EXCLUSION_ENABLED)
             preferences.remove(AUDIO_PROFILES_JSON)
             preferences.remove(AUDIO_PROFILES_JSON_BACKUP)
+            preferences.remove(AUTOMATICALLY_SAVE_PROFILE_CHANGES)
             preferences.remove(LAST_STALE_APP_CLEANUP_EPOCH_MS)
             preferences.remove(LEGACY_GAME_MODE_ENABLED)
             preferences.remove(LEGACY_RINGER_METHOD)
@@ -466,7 +480,7 @@ class PreferencesManager(private val context: Context) {
         }
 
     suspend fun exportSettings(): String {
-        val preferences = context.dataStore.data.first()
+        val preferences = dataStore.data.first()
         val (settings, health) = readAppSettings(preferences)
         val passThrough = decodeStringSet(preferences[VOLUME_KEY_PASS_THROUGH_JSON])
             ?: AppSettingsCodec.legacyPassThroughPackages(
@@ -506,6 +520,14 @@ class PreferencesManager(private val context: Context) {
             .put("appSettings", JSONObject(AppSettingsCodec.encode(settings)))
             .put("appSettingsHealth", health.name)
             .put("profiles", JSONObject(ProfileCodec.encode(readProfileStore(preferences), false)))
+            .put("profileStoreHealth", ProfileCodec.resolve(
+                preferences[AUDIO_PROFILES_JSON], preferences[AUDIO_PROFILES_JSON_BACKUP]
+            ).health.name)
+        if (ProfileCodec.resolve(preferences[AUDIO_PROFILES_JSON], preferences[AUDIO_PROFILES_JSON_BACKUP]).health !=
+            AppSettingsStoreHealth.HEALTHY) {
+            export.put("recoveryRawProfiles", preferences[AUDIO_PROFILES_JSON] ?: JSONObject.NULL)
+            export.put("recoveryRawProfilesBackup", preferences[AUDIO_PROFILES_JSON_BACKUP] ?: JSONObject.NULL)
+        }
         if (health != AppSettingsStoreHealth.HEALTHY) {
             export.put(
                 "recoveryRawAppSettings",
@@ -539,7 +561,7 @@ class PreferencesManager(private val context: Context) {
         }
         return try {
             var result: SettingsOperationResult = SettingsOperationResult.Success
-            context.dataStore.edit { preferences ->
+            dataStore.edit { preferences ->
                 val (existing, health) = readAppSettings(preferences)
                 if (health == AppSettingsStoreHealth.CORRUPT) {
                     result = SettingsOperationResult.StoreCorrupt
@@ -581,12 +603,19 @@ class PreferencesManager(private val context: Context) {
                     ImportMode.REPLACE -> imported.profileStore
                     ImportMode.MERGE -> mergeProfileStores(currentProfiles, imported.profileStore)
                 }
+                if (mode == ImportMode.MERGE) checkProfileStoreWritable(preferences)
                 writeProfileStore(preferences, currentProfiles, nextProfiles)
                 preferences[AMPLY_PAUSED_UNTIL_EPOCH_MS] = 0L
                 preferences.remove(LEGACY_GAME_MODE_ENABLED)
                 preferences.remove(LEGACY_RINGER_METHOD)
             }
             result
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: CorruptProfileStoreException) {
+            SettingsOperationResult.StoreCorrupt
+        } catch (error: IllegalArgumentException) {
+            SettingsOperationResult.ValidationFailed(error.message ?: "Invalid settings")
         } catch (error: Exception) {
             SettingsOperationResult.IoFailed(error.message ?: "Settings storage failed")
         }
@@ -763,10 +792,14 @@ class PreferencesManager(private val context: Context) {
     }
 
     private fun readProfileStore(preferences: Preferences): ProfileStore {
-        return runCatching { ProfileCodec.decode(preferences[AUDIO_PROFILES_JSON]) }.getOrElse {
-            runCatching { ProfileCodec.decode(preferences[AUDIO_PROFILES_JSON_BACKUP]) }
-                .getOrDefault(ProfileStore())
-        }
+        return ProfileCodec.resolve(preferences[AUDIO_PROFILES_JSON], preferences[AUDIO_PROFILES_JSON_BACKUP]).store
+    }
+
+    private class CorruptProfileStoreException : IllegalStateException()
+
+    private fun checkProfileStoreWritable(preferences: Preferences) {
+        if (ProfileCodec.resolve(preferences[AUDIO_PROFILES_JSON], preferences[AUDIO_PROFILES_JSON_BACKUP]).health ==
+            AppSettingsStoreHealth.CORRUPT) throw CorruptProfileStoreException()
     }
 
     private fun writeProfileStore(
@@ -774,8 +807,12 @@ class PreferencesManager(private val context: Context) {
         previous: ProfileStore,
         next: ProfileStore
     ) {
-        preferences[AUDIO_PROFILES_JSON_BACKUP] = ProfileCodec.encode(previous)
-        preferences[AUDIO_PROFILES_JSON] = ProfileCodec.encode(next)
+        if (previous == next && ProfileCodec.resolve(
+                preferences[AUDIO_PROFILES_JSON], preferences[AUDIO_PROFILES_JSON_BACKUP]
+            ).health == AppSettingsStoreHealth.HEALTHY) return
+        val encoded = ProfileCodec.validatedEncoding(next)
+        preferences[AUDIO_PROFILES_JSON_BACKUP] = ProfileCodec.validatedEncoding(previous)
+        preferences[AUDIO_PROFILES_JSON] = encoded
     }
 
     private fun mergeProfileStores(existing: ProfileStore, imported: ProfileStore): ProfileStore {
@@ -798,8 +835,10 @@ class PreferencesManager(private val context: Context) {
     private suspend fun editSettings(
         update: (MutablePreferences) -> Unit
     ): SettingsOperationResult = try {
-        context.dataStore.edit(update)
+        dataStore.edit(update)
         SettingsOperationResult.Success
+    } catch (error: CancellationException) {
+        throw error
     } catch (error: IllegalArgumentException) {
         SettingsOperationResult.ValidationFailed(error.message ?: "Invalid setting")
     } catch (error: Exception) {
@@ -811,7 +850,7 @@ class PreferencesManager(private val context: Context) {
     ): SettingsOperationResult {
         return try {
             var result: SettingsOperationResult = SettingsOperationResult.Success
-            context.dataStore.edit { preferences ->
+            dataStore.edit { preferences ->
                 val (decoded, health) = readAppSettings(preferences)
                 if (health == AppSettingsStoreHealth.CORRUPT) {
                     result = SettingsOperationResult.StoreCorrupt

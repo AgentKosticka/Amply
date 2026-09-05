@@ -49,7 +49,7 @@ android {
         minSdk = 29
         targetSdk = amplyTargetSdk
         versionCode = 79
-        versionName = "1.4.1"
+        versionName = "1.4.3"
         if (versionedReleaseRequested) {
             versionCode = nextVersionCode
             versionName = nextVersionName
@@ -74,12 +74,6 @@ android {
         debug {
             isPseudoLocalesEnabled = true
         }
-        create("benchmark") {
-            initWith(getByName("release"))
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += listOf("release")
-            isDebuggable = false
-        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -88,6 +82,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
         }
     }
 

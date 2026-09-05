@@ -2,9 +2,25 @@ package com.agentkosticka.amply.shizuku.protocol
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class VolumeProtocolModelsTest {
+    @Test fun idleQueryIsSuccessfulButUnavailableQueryIsNot() {
+        assertTrue(PlaybackQueryResultParcel(VolumeOperationStatus.OK).requireSessions().isEmpty())
+        assertThrows(IllegalStateException::class.java) {
+            PlaybackQueryResultParcel(VolumeOperationStatus.UNAVAILABLE).requireSessions()
+        }
+        assertThrows(IllegalStateException::class.java) {
+            PlaybackQueryResultParcel(VolumeOperationStatus.FAILED).requireSessions()
+        }
+    }
+
+    @Test fun queryRejectsMalformedSessionPayload() {
+        assertThrows(IllegalStateException::class.java) {
+            PlaybackQueryResultParcel(VolumeOperationStatus.OK, listOf(valid().copy(pid = 0))).requireSessions()
+        }
+    }
     private fun valid() = PlaybackSessionParcel(
         userId = 1,
         uid = 100_123,

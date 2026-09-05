@@ -3,6 +3,8 @@ package com.agentkosticka.amply.profiles
 import com.agentkosticka.amply.audio.ringer.NotificationAlertMode
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.settings.model.AppIdentity
+import com.agentkosticka.amply.settings.model.AppSettingsStoreHealth
+import com.agentkosticka.amply.settings.model.SettingsOperationResult
 
 enum class OutputKind { SPEAKER, WIRED, BLUETOOTH, CAST }
 
@@ -58,17 +60,23 @@ data class ProfileRuntimeState(
     val store: ProfileStore = ProfileStore(),
     val currentOutput: OutputDeviceDescriptor? = null,
     val applying: Boolean = false,
-    val lastApplyWarnings: List<String> = emptyList()
+    val lastApplyWarnings: List<String> = emptyList(),
+    val storeHealth: AppSettingsStoreHealth = AppSettingsStoreHealth.HEALTHY,
+    val operationError: String? = null
 ) {
     val activeProfile: AudioProfile? get() = store.activeProfile
     val activeSnapshot: AudioProfileSnapshot? get() = store.activeSnapshot
     val dirty: Boolean get() = store.dirty
 }
 
-data class ProfileActivationResult(
-    val applied: Boolean,
-    val warnings: List<String> = emptyList()
-)
+sealed interface ProfileOperationResult<out T> {
+    data class Success<T>(val value: T) : ProfileOperationResult<T>
+    data class Failure(val error: SettingsOperationResult) : ProfileOperationResult<Nothing>
+}
+
+data class ProfileVolumeContext(val profileId: String?, val outputGeneration: Long, val revision: Long)
+
+data class ProfileStoreResolution(val store: ProfileStore, val health: AppSettingsStoreHealth)
 
 internal val PROFILE_SYSTEM_TARGETS = listOf(
     VolumeTarget.MEDIA,

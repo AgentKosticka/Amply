@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 
 internal val STABLE_VOLUME_USER_SERVICE_CLASS_NAME: String = VolumeUserService::class.java.name
-internal const val VOLUME_USER_SERVICE_VERSION = 5
+internal const val VOLUME_USER_SERVICE_VERSION = 6
 
 /** Manages the single process-wide connection to the privileged volume service. */
 class ShizukuVolumeManager(
@@ -248,7 +248,7 @@ class ShizukuVolumeManager(
         val service = synchronized(lock) { volumeService } ?: return null
 
         return try {
-            service.activePlaybacks.orEmpty().mapNotNull { playback ->
+            service.activePlaybacks.requireSessions().mapNotNull { playback ->
                 if (!playback.isValid()) return@mapNotNull null
                 PrivilegedPlayback(
                     piid = playback.playerInterfaceId,

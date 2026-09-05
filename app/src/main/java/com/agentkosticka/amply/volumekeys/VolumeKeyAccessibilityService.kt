@@ -233,7 +233,7 @@ open class VolumeKeyAccessibilityService : AccessibilityService() {
                 val route = sequenceRouter.onDown(event.keyCode, event.repeatCount, ::currentRoute)
                 if (route == VolumeKeyRoute.PASS_THROUGH) {
                     handleVolumeKeyUp()
-                    Log.d(TAG, "Passing volume key through to $foregroundPackage")
+                    Log.d(TAG, "Passing volume key through")
                     false
                 } else {
                     val action = streamActionRouter.onDown(

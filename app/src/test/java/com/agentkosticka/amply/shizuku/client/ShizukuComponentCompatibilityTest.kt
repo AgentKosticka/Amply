@@ -14,6 +14,6 @@ class ShizukuComponentCompatibilityTest {
 
     @Test
     fun userServiceVersionRecreatesPreCleanupInstances() {
-        assertEquals(5, VOLUME_USER_SERVICE_VERSION)
+        assertEquals(6, VOLUME_USER_SERVICE_VERSION)
     }
 }

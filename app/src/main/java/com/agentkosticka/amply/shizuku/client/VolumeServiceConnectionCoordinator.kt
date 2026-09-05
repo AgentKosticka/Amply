@@ -100,7 +100,9 @@ internal class VolumeServiceConnectionCoordinator(
         if (permissionState.value != ShizukuPermissionState.GRANTED) return
         retryIndex = 0
         nextRetryAt = 0L
-        if (connector.connectionState.value == VolumeServiceConnectionState.BINDING) {
+        if (connector.connectionState.value == VolumeServiceConnectionState.BINDING ||
+            connector.connectionState.value == VolumeServiceConnectionState.PROTOCOL_MISMATCH
+        ) {
             connector.invalidateConnection("manual retry")
             lastState = VolumeServiceConnectionState.DISCONNECTED
         }

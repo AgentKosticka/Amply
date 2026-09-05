@@ -13,6 +13,7 @@ import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.shizuku.protocol.IVolumeService
 import com.agentkosticka.amply.shizuku.protocol.OperationResultParcel
 import com.agentkosticka.amply.shizuku.protocol.PlaybackSessionParcel
+import com.agentkosticka.amply.shizuku.protocol.PlaybackQueryResultParcel
 import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_CAPABILITIES
 import com.agentkosticka.amply.shizuku.protocol.VOLUME_PROTOCOL_VERSION
 import com.agentkosticka.amply.shizuku.protocol.VolumeOperationStatus
@@ -169,20 +170,23 @@ open class VolumeUserService : IVolumeService.Stub() {
     override fun getCapabilities(): Long = VOLUME_PROTOCOL_CAPABILITIES
 
     @Synchronized
-    override fun getActivePlaybacks(): MutableList<PlaybackSessionParcel> {
+    override fun getActivePlaybacks(): PlaybackQueryResultParcel {
         if (!reflectionInitialized) {
             initializeReflection()
         }
 
         try {
-            val configs = getActivePlaybackConfigurations() ?: return mutableListOf()
+            val configs = getActivePlaybackConfigurations() ?: run {
+                lastConfigs = emptyList()
+                return PlaybackQueryResultParcel(STATUS_UNAVAILABLE)
+            }
             lastConfigs = configs // Store for setPlayerVolume
 
-            return configs.mapNotNullTo(mutableListOf()) { config ->
+            val sessions = configs.mapNotNull { config ->
                 val piid = getPlayerInterfaceId(config)
                 val uid = getClientUid(config)
                 val pid = getClientPid(config)
-                if (piid <= 0 || uid < 0 || pid < 0) return@mapNotNullTo null
+                if (piid <= 0 || uid < 0 || pid < 0) return@mapNotNull null
                 val state = getPlayerState(config)
                 val attributes = config.audioAttributes
                 val allFlags = runCatching {
@@ -205,9 +209,11 @@ open class VolumeUserService : IVolumeService.Stub() {
                     volume = 1f
                 )
             }
+            return PlaybackQueryResultParcel(STATUS_OK, sessions)
         } catch (e: Exception) {
             Log.e(TAG, "Error getting playback configurations", e)
-            return mutableListOf()
+            lastConfigs = emptyList()
+            return PlaybackQueryResultParcel(STATUS_FAILED)
         }
     }
 
