@@ -16,11 +16,13 @@ import com.agentkosticka.amply.audio.routing.SystemStreamSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.routing.VolumeTargetSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTargetPolicy
+import com.agentkosticka.amply.overlay.window.OverlayManager
 import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.runtime.RuntimeError
 import com.agentkosticka.amply.runtime.RuntimeErrorCode
 import com.agentkosticka.amply.runtime.RuntimeHealth
 import com.agentkosticka.amply.runtime.RuntimeOperationState
+import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
@@ -54,6 +56,7 @@ class AmplyRuntime(context: Context) {
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var notificationExpiryJob: Job? = null
     private var pauseHealthExpiryJob: Job? = null
+    private var screenshotMonitorJob: Job? = null
     private var lastObservedAudioMode: Int? = null
     private val _runtimeHealth = MutableStateFlow(RuntimeHealth())
     val runtimeHealth: StateFlow<RuntimeHealth> = _runtimeHealth.asStateFlow()
@@ -115,6 +118,31 @@ class AmplyRuntime(context: Context) {
         runtimeScope.launch {
             sessionState.collect { state ->
                 foregroundVisitTracker.onSessionsChanged(state.sessions)
+            }
+        }
+        runtimeScope.launch {
+            shizukuRepository.permissionState.collect { permission ->
+                screenshotMonitorJob?.cancel()
+                screenshotMonitorJob = null
+                if (permission == ShizukuPermissionState.GRANTED) {
+                    screenshotMonitorJob = runtimeScope.launch(Dispatchers.IO) {
+                        shizukuRepository.monitorHardwareKeys { likelyScreenshotChord ->
+                            runtimeScope.launch {
+                                if (OverlayManager.isShowing()) {
+                                    Log.d(
+                                        TAG,
+                                        if (likelyScreenshotChord) {
+                                            "Hiding overlay for likely screenshot chord"
+                                        } else {
+                                            "Hiding overlay preemptively on Power key"
+                                        }
+                                    )
+                                    OverlayManager.hide()
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         runtimeScope.launch {
@@ -256,111 +284,5 @@ class AmplyRuntime(context: Context) {
         if (!wasCallActive && VolumeTargetPolicy.isActiveCallMode(mode)) {
             profileCoordinator.onCallBecameActive()
         }
-    }
-
-    fun onOverlayShown(): Boolean {
-        volumeTargetSessionController.onOverlayShown()
-        systemStreamSessionController.onOverlayShown()
-        return tutorialCoordinator.onOverlayAttached()
-    }
-
-    fun onTutorialOverlayPreviewFinished() {
-        tutorialCoordinator.onOverlayPreviewFinished()
-    }
-
-    fun onOverlayHidden() {
-        volumeTargetSessionController.onOverlayHidden()
-        systemStreamSessionController.onOverlayHidden()
-    }
-
-    fun disableSystemStream(target: VolumeTarget) {
-        val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
-        if (canonical.permanentlyVisible || canonical == VolumeTarget.RING || canonical == VolumeTarget.NOTIFICATION) {
-            return
-        }
-        systemStreamSessionController.disable(canonical)
-        volumeTargetSessionController.onTargetUnavailable(canonical)
-        volumeTargetSessionController.onStreamsChanged(
-            audioSessionManager.activeSystemStreams.value,
-            systemStreamSessionController.state.value.disabledTargets
-        )
-    }
-
-    fun setSystemStreamVolume(target: VolumeTarget, index: Int): Boolean {
-        val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
-        if (!canonical.userAdjustable) {
-            disableSystemStream(canonical)
-            return false
-        }
-        val min = runCatching { audioManager.getStreamMinVolume(canonical.streamType) }.getOrDefault(0)
-        val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min)
-        val clamped = index.coerceIn(min, max)
-        if (canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) {
-            if (dndController.active.value) {
-                dndController.setActive(false)
-            }
-        }
-        val success = when {
-            canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING -> runCatching {
-                ringerExperimentExecutor.setAlertVolumeFromControl(canonical.streamType, clamped)
-            }.getOrDefault(false)
-            canonical.permanentlyVisible -> runCatching {
-                audioManager.setStreamVolume(canonical.streamType, clamped, 0)
-                audioManager.getStreamVolume(canonical.streamType) == clamped
-            }.getOrDefault(false)
-            else -> shizukuVolumeManager.setSystemStreamVolume(canonical.streamType, clamped)
-        }
-        reportVolumeOperation(success)
-        if (!success) {
-            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
-            if (!canonical.permanentlyVisible && canonical != VolumeTarget.RING && canonical != VolumeTarget.NOTIFICATION) {
-                disableSystemStream(canonical)
-            }
-        }
-        return success
-    }
-
-    fun adjustRingerKeyStep(
-        target: VolumeTarget,
-        isUp: Boolean,
-        currentVolume: Int,
-        minVolume: Int
-    ): RingerKeyAdjustmentResult {
-        if (target != VolumeTarget.RING && target != VolumeTarget.NOTIFICATION) {
-            return RingerKeyAdjustmentResult.NOT_HANDLED
-        }
-        val mode = NotificationAlertMode.resolve(audioManager.ringerMode)
-        return when (
-            RingerKeyStepPolicy.action(
-                mode = mode,
-                isUp = isUp,
-                atMinimum = currentVolume <= minVolume,
-                dndActive = dndController.active.value,
-                dndAvailable = dndController.canUseVolumeKeyStep()
-            )
-        ) {
-            RingerKeyStepAction.ADJUST_VOLUME -> RingerKeyAdjustmentResult.NOT_HANDLED
-            RingerKeyStepAction.LIMIT -> RingerKeyAdjustmentResult.LIMIT
-            RingerKeyStepAction.ENABLE_DND -> dndController.setActive(true).toRingerResult()
-            RingerKeyStepAction.DISABLE_DND -> dndController.setActive(false).toRingerResult()
-            RingerKeyStepAction.TO_LOUD -> setAlertMode(target, NotificationAlertMode.LOUD)
-            RingerKeyStepAction.TO_VIBRATIONS -> setAlertMode(target, NotificationAlertMode.VIBRATIONS)
-            RingerKeyStepAction.TO_MUTED -> setAlertMode(target, NotificationAlertMode.MUTED)
-        }
-    }
-
-    private fun setAlertMode(target: VolumeTarget, mode: NotificationAlertMode): RingerKeyAdjustmentResult =
-        if (ringerExperimentExecutor.setProductionAlertMode(mode, target.streamType)) {
-            RingerKeyAdjustmentResult.APPLIED
-        } else {
-            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
-            RingerKeyAdjustmentResult.FAILED
-        }
-
-    private fun DndOperationResult.toRingerResult(): RingerKeyAdjustmentResult = when (this) {
-        DndOperationResult.APPLIED -> RingerKeyAdjustmentResult.APPLIED
-        DndOperationResult.ACCESS_REQUIRED,
-        DndOperationResult.FEATURE_DISABLED,
-        DndOperationResult.FAILED -> RingerKeyAdjustmentResult.FAILED
     }
 }
