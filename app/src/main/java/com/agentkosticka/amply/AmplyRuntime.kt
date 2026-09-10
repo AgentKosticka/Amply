@@ -285,4 +285,110 @@ class AmplyRuntime(context: Context) {
             profileCoordinator.onCallBecameActive()
         }
     }
+
+    fun onOverlayShown(): Boolean {
+        volumeTargetSessionController.onOverlayShown()
+        systemStreamSessionController.onOverlayShown()
+        return tutorialCoordinator.onOverlayAttached()
+    }
+
+    fun onTutorialOverlayPreviewFinished() {
+        tutorialCoordinator.onOverlayPreviewFinished()
+    }
+
+    fun onOverlayHidden() {
+        volumeTargetSessionController.onOverlayHidden()
+        systemStreamSessionController.onOverlayHidden()
+    }
+
+    fun disableSystemStream(target: VolumeTarget) {
+        val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
+        if (canonical.permanentlyVisible || canonical == VolumeTarget.RING || canonical == VolumeTarget.NOTIFICATION) {
+            return
+        }
+        systemStreamSessionController.disable(canonical)
+        volumeTargetSessionController.onTargetUnavailable(canonical)
+        volumeTargetSessionController.onStreamsChanged(
+            audioSessionManager.activeSystemStreams.value,
+            systemStreamSessionController.state.value.disabledTargets
+        )
+    }
+
+    fun setSystemStreamVolume(target: VolumeTarget, index: Int): Boolean {
+        val canonical = dynamicStreamState.value.topology.canonicalTarget(target)
+        if (!canonical.userAdjustable) {
+            disableSystemStream(canonical)
+            return false
+        }
+        val min = runCatching { audioManager.getStreamMinVolume(canonical.streamType) }.getOrDefault(0)
+        val max = runCatching { audioManager.getStreamMaxVolume(canonical.streamType) }.getOrDefault(min)
+        val clamped = index.coerceIn(min, max)
+        if (canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING) {
+            if (dndController.active.value) {
+                dndController.setActive(false)
+            }
+        }
+        val success = when {
+            canonical == VolumeTarget.NOTIFICATION || canonical == VolumeTarget.RING -> runCatching {
+                ringerExperimentExecutor.setAlertVolumeFromControl(canonical.streamType, clamped)
+            }.getOrDefault(false)
+            canonical.permanentlyVisible -> runCatching {
+                audioManager.setStreamVolume(canonical.streamType, clamped, 0)
+                audioManager.getStreamVolume(canonical.streamType) == clamped
+            }.getOrDefault(false)
+            else -> shizukuVolumeManager.setSystemStreamVolume(canonical.streamType, clamped)
+        }
+        reportVolumeOperation(success)
+        if (!success) {
+            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
+            if (!canonical.permanentlyVisible && canonical != VolumeTarget.RING && canonical != VolumeTarget.NOTIFICATION) {
+                disableSystemStream(canonical)
+            }
+        }
+        return success
+    }
+
+    fun adjustRingerKeyStep(
+        target: VolumeTarget,
+        isUp: Boolean,
+        currentVolume: Int,
+        minVolume: Int
+    ): RingerKeyAdjustmentResult {
+        if (target != VolumeTarget.RING && target != VolumeTarget.NOTIFICATION) {
+            return RingerKeyAdjustmentResult.NOT_HANDLED
+        }
+        val mode = NotificationAlertMode.resolve(audioManager.ringerMode)
+        return when (
+            RingerKeyStepPolicy.action(
+                mode = mode,
+                isUp = isUp,
+                atMinimum = currentVolume <= minVolume,
+                dndActive = dndController.active.value,
+                dndAvailable = dndController.canUseVolumeKeyStep()
+            )
+        ) {
+            RingerKeyStepAction.ADJUST_VOLUME -> RingerKeyAdjustmentResult.NOT_HANDLED
+            RingerKeyStepAction.LIMIT -> RingerKeyAdjustmentResult.LIMIT
+            RingerKeyStepAction.ENABLE_DND -> dndController.setActive(true).toRingerResult()
+            RingerKeyStepAction.DISABLE_DND -> dndController.setActive(false).toRingerResult()
+            RingerKeyStepAction.TO_LOUD -> setAlertMode(target, NotificationAlertMode.LOUD)
+            RingerKeyStepAction.TO_VIBRATIONS -> setAlertMode(target, NotificationAlertMode.VIBRATIONS)
+            RingerKeyStepAction.TO_MUTED -> setAlertMode(target, NotificationAlertMode.MUTED)
+        }
+    }
+
+    private fun setAlertMode(target: VolumeTarget, mode: NotificationAlertMode): RingerKeyAdjustmentResult =
+        if (ringerExperimentExecutor.setProductionAlertMode(mode, target.streamType)) {
+            RingerKeyAdjustmentResult.APPLIED
+        } else {
+            reportRuntimeError(RuntimeErrorCode.VOLUME_CHANGE_FAILED)
+            RingerKeyAdjustmentResult.FAILED
+        }
+
+    private fun DndOperationResult.toRingerResult(): RingerKeyAdjustmentResult = when (this) {
+        DndOperationResult.APPLIED -> RingerKeyAdjustmentResult.APPLIED
+        DndOperationResult.ACCESS_REQUIRED,
+        DndOperationResult.FEATURE_DISABLED,
+        DndOperationResult.FAILED -> RingerKeyAdjustmentResult.FAILED
+    }
 }
