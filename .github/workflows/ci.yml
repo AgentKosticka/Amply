@@ -49,6 +49,15 @@ jobs:
           LIMIT="$((BASELINE + BASELINE / 10))"
           echo "Release APK: $ACTUAL bytes; baseline: $BASELINE; limit: $LIMIT"
           test "$ACTUAL" -le "$LIMIT"
+      - name: Upload experimental debug APK
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: amply-screenshot-evasion-debug-${{ github.sha }}
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: app/build/outputs/apk/debug/*.apk
       - name: Stage promotable release build
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
