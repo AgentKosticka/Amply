@@ -10,17 +10,41 @@ import java.lang.reflect.Method
  * Applies SurfaceControl.SKIP_SCREENSHOT to Amply's own overlay surface.
  *
  * The API is hidden, so all framework types involved are resolved reflectively. Amply initializes
- * HiddenApiBypass in its Application before this code can run. Callers must retain FLAG_SECURE until
- * this reports success, because a successful reflection call is the point at which the compositor
- * transaction has been submitted.
+ * HiddenApiBypass in its Application before this code can run.
+ *
+ * Important: a successful reflective transaction only proves that the transaction was submitted.
+ * It does not prove that an OEM screenshot implementation will honor SKIP_SCREENSHOT, and a window
+ * relayout can replace the native SurfaceControl behind the stable Java wrapper. For that reason we
+ * deliberately tell the caller to retain FLAG_SECURE whenever capture exclusion is enabled, and we
+ * re-resolve/reapply the flag on the next frame instead of caching by Java object identity.
  */
 internal class OverlayCaptureExclusion {
-    private var configuredSurface: Any? = null
-    private var configuredEnabled: Boolean? = null
     private var unavailableLogged = false
 
     @SuppressLint("PrivateApi", "SoonBlockedPrivateApi")
     fun setEnabled(view: View, enabled: Boolean): Boolean {
+        val applied = applyOnce(view, enabled, logSuccess = true)
+
+        // configureCaptureExclusion() can be followed immediately by a WindowManager relayout
+        // (unpark/position/flag update). Re-resolve the SurfaceControl after that work has had a
+        // chance to land so SKIP_SCREENSHOT is also applied to a replacement native surface.
+        if (applied) {
+            view.postOnAnimation {
+                applyOnce(view, enabled, logSuccess = false)
+            }
+        }
+
+        // OverlayManager interprets true as permission to drop FLAG_SECURE. Keep the supported
+        // secure-window fallback while exclusion is enabled even when this hidden API did not throw.
+        return applied && !enabled
+    }
+
+    fun reset() {
+        unavailableLogged = false
+    }
+
+    @SuppressLint("PrivateApi", "SoonBlockedPrivateApi")
+    private fun applyOnce(view: View, enabled: Boolean, logSuccess: Boolean): Boolean {
         val surface = runCatching { viewRootSurface(view) }.getOrElse { error ->
             logUnavailable(error)
             return false
@@ -28,8 +52,6 @@ internal class OverlayCaptureExclusion {
             logUnavailable(IllegalStateException("Overlay surface is not attached"))
             return false
         }
-
-        if (surface === configuredSurface && configuredEnabled == enabled) return true
 
         return runCatching {
             val surfaceControlClass = Class.forName(SURFACE_CONTROL_CLASS)
@@ -53,22 +75,18 @@ internal class OverlayCaptureExclusion {
                     }
                 }
             }
-            configuredSurface = surface
-            configuredEnabled = enabled
             unavailableLogged = false
-            Log.i(TAG, "SKIP_SCREENSHOT ${if (enabled) "enabled" else "disabled"} on overlay surface")
+            if (logSuccess) {
+                Log.i(
+                    TAG,
+                    "SKIP_SCREENSHOT ${if (enabled) "submitted" else "cleared"}; FLAG_SECURE fallback retained when enabled"
+                )
+            }
             true
         }.getOrElse { error ->
-            configuredSurface = null
-            configuredEnabled = null
             logUnavailable(error)
             false
         }
-    }
-
-    fun reset() {
-        configuredSurface = null
-        configuredEnabled = null
     }
 
     @SuppressLint("PrivateApi", "SoonBlockedPrivateApi")
@@ -116,7 +134,7 @@ internal class OverlayCaptureExclusion {
     private fun logUnavailable(error: Throwable) {
         if (unavailableLogged) return
         unavailableLogged = true
-        Log.w(TAG, "SKIP_SCREENSHOT unavailable; keeping FLAG_SECURE fallback", error)
+        Log.w(TAG, "SKIP_SCREENSHOT unavailable; FLAG_SECURE remains active", error)
     }
 
     private companion object {

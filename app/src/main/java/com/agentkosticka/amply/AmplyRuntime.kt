@@ -16,11 +16,13 @@ import com.agentkosticka.amply.audio.routing.SystemStreamSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTarget
 import com.agentkosticka.amply.audio.routing.VolumeTargetSessionController
 import com.agentkosticka.amply.audio.routing.VolumeTargetPolicy
+import com.agentkosticka.amply.overlay.window.OverlayManager
 import com.agentkosticka.amply.settings.data.PreferencesManager
 import com.agentkosticka.amply.runtime.RuntimeError
 import com.agentkosticka.amply.runtime.RuntimeErrorCode
 import com.agentkosticka.amply.runtime.RuntimeHealth
 import com.agentkosticka.amply.runtime.RuntimeOperationState
+import com.agentkosticka.amply.shizuku.client.ShizukuPermissionState
 import com.agentkosticka.amply.shizuku.client.ShizukuRepository
 import com.agentkosticka.amply.shizuku.client.ShizukuVolumeManager
 import com.agentkosticka.amply.shizuku.client.VolumeServiceConnectionCoordinator
@@ -54,6 +56,7 @@ class AmplyRuntime(context: Context) {
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var notificationExpiryJob: Job? = null
     private var pauseHealthExpiryJob: Job? = null
+    private var screenshotMonitorJob: Job? = null
     private var lastObservedAudioMode: Int? = null
     private val _runtimeHealth = MutableStateFlow(RuntimeHealth())
     val runtimeHealth: StateFlow<RuntimeHealth> = _runtimeHealth.asStateFlow()
@@ -115,6 +118,31 @@ class AmplyRuntime(context: Context) {
         runtimeScope.launch {
             sessionState.collect { state ->
                 foregroundVisitTracker.onSessionsChanged(state.sessions)
+            }
+        }
+        runtimeScope.launch {
+            shizukuRepository.permissionState.collect { permission ->
+                screenshotMonitorJob?.cancel()
+                screenshotMonitorJob = null
+                if (permission == ShizukuPermissionState.GRANTED) {
+                    screenshotMonitorJob = runtimeScope.launch(Dispatchers.IO) {
+                        shizukuRepository.monitorHardwareKeys { likelyScreenshotChord ->
+                            runtimeScope.launch {
+                                if (OverlayManager.isShowing()) {
+                                    Log.d(
+                                        TAG,
+                                        if (likelyScreenshotChord) {
+                                            "Hiding overlay for likely screenshot chord"
+                                        } else {
+                                            "Hiding overlay preemptively on Power key"
+                                        }
+                                    )
+                                    OverlayManager.hide()
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         runtimeScope.launch {

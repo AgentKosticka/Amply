@@ -6,9 +6,11 @@ import android.util.Log
 import android.os.SystemClock
 import com.agentkosticka.amply.util.readAtMost
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import kotlinx.coroutines.async
@@ -56,18 +58,12 @@ class ShizukuRepository(private val context: Context) {
         }
 
     init {
-        // Register listeners
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(requestPermissionResultListener)
-
-        // Initial check
         checkPermissionState()
     }
 
-    /**
-     * Checks if Shizuku app is installed on the device
-     */
     fun isShizukuInstalled(): Boolean {
         return try {
             context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
@@ -77,9 +73,6 @@ class ShizukuRepository(private val context: Context) {
         }
     }
 
-    /**
-     * Checks if Shizuku service is currently running
-     */
     fun isShizukuRunning(): Boolean {
         return try {
             Shizuku.pingBinder()
@@ -88,9 +81,6 @@ class ShizukuRepository(private val context: Context) {
         }
     }
 
-    /**
-     * Checks current permission state and updates the StateFlow
-     */
     fun checkPermissionState() {
         lastPermissionCheckElapsedMs = SystemClock.elapsedRealtime()
         val newState = runCatching {
@@ -122,9 +112,6 @@ class ShizukuRepository(private val context: Context) {
             }
     }
 
-    /**
-     * Requests Shizuku permission from the user
-     */
     fun requestPermission() {
         try {
             if (isShizukuRunning()) {
@@ -138,17 +125,9 @@ class ShizukuRepository(private val context: Context) {
         }
     }
 
-    /**
-     * Executes a shell command using Shizuku's elevated permissions
-     * Uses reflection to access Shizuku.newProcess() which is marked as private
-     * @param command The shell command to execute
-     * @return The command output as a string, or null if failed
-     */
     suspend fun injectVolumeKey(keyCode: Int): Boolean {
         require(keyCode == 24 || keyCode == 25) { "Only volume keys are allowed" }
-        if (_permissionState.value != ShizukuPermissionState.GRANTED) {
-            return false
-        }
+        if (_permissionState.value != ShizukuPermissionState.GRANTED) return false
 
         return withContext(Dispatchers.IO) {
             val process = createShizukuProcess(arrayOf("input", "keyevent", keyCode.toString()))
@@ -176,12 +155,70 @@ class ShizukuRepository(private val context: Context) {
     }
 
     /**
-     * Creates a process using Shizuku's newProcess method via reflection
-     * This is necessary because newProcess is marked as private in some Shizuku versions
+     * Experimental ADB/Shizuku-only hardware key observer.
+     *
+     * Shizuku started through wireless/USB debugging runs commands as Android's shell user. The
+     * shell domain can use getevent to read kernel input events without root. We intentionally use
+     * the platform getevent binary rather than opening /dev/input nodes from Amply's app process.
+     *
+     * The callback fires immediately for KEY_POWER DOWN. `likelyScreenshotChord` is true when a
+     * Volume Down press was observed close enough to the Power press to resemble Android's standard
+     * screenshot chord. Amply hides on Power itself because waiting for the second key loses valuable
+     * compositor time.
      */
+    suspend fun monitorHardwareKeys(
+        onPowerDown: (likelyScreenshotChord: Boolean) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        if (_permissionState.value != ShizukuPermissionState.GRANTED) return@withContext
+
+        val process = createShizukuProcess(arrayOf("getevent", "-lt")) ?: run {
+            Log.w(TAG, "Could not start ADB/Shizuku getevent monitor")
+            return@withContext
+        }
+
+        val monitorContext = currentCoroutineContext()
+        var lastVolumeDownElapsedMs = Long.MIN_VALUE
+        var lastPowerDownElapsedMs = Long.MIN_VALUE
+        Log.i(TAG, "ADB/Shizuku hardware-key monitor started")
+
+        try {
+            process.inputStream.bufferedReader().useLines { lines ->
+                val iterator = lines.iterator()
+                while (monitorContext.isActive && iterator.hasNext()) {
+                    val line = iterator.next()
+                    val now = SystemClock.elapsedRealtime()
+                    val isDown = line.contains(" DOWN") || line.trimEnd().endsWith(" 00000001")
+
+                    when {
+                        isDown && (line.contains("KEY_VOLUMEDOWN") || line.contains(" 0072 ")) -> {
+                            lastVolumeDownElapsedMs = now
+                            if (now - lastPowerDownElapsedMs in 0..SCREENSHOT_CHORD_WINDOW_MS) {
+                                Log.d(TAG, "Likely screenshot chord: Volume Down after Power")
+                            }
+                        }
+
+                        isDown && (line.contains("KEY_POWER") || line.contains(" 0074 ")) -> {
+                            lastPowerDownElapsedMs = now
+                            val chord = now - lastVolumeDownElapsedMs in 0..SCREENSHOT_CHORD_WINDOW_MS
+                            if (chord) Log.d(TAG, "Likely screenshot chord: Power after Volume Down")
+                            onPowerDown(chord)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (monitorContext.isActive) {
+                Log.w(TAG, "ADB/Shizuku hardware-key monitor stopped unexpectedly", e)
+            }
+        } finally {
+            process.destroy()
+            if (process.isAlive) process.destroyForcibly()
+            Log.i(TAG, "ADB/Shizuku hardware-key monitor stopped")
+        }
+    }
+
     private fun createShizukuProcess(cmd: Array<String>): Process? {
         return try {
-            // Try to find and invoke Shizuku.newProcess using reflection
             val shizukuClass = Shizuku::class.java
             val newProcessMethod = shizukuClass.getDeclaredMethod(
                 "newProcess",
@@ -202,11 +239,9 @@ class ShizukuRepository(private val context: Context) {
 
     companion object {
         private const val TAG = "ShizukuRepository"
+        private const val SCREENSHOT_CHORD_WINDOW_MS = 500L
     }
 
-    /**
-     * Cleanup listeners when repository is destroyed
-     */
     fun cleanup() {
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
@@ -233,9 +268,6 @@ internal fun resolveShizukuPermissionState(
     }
 }
 
-/**
- * Represents the current state of Shizuku permission
- */
 enum class ShizukuPermissionState {
     UNKNOWN,
     SHIZUKU_NOT_INSTALLED,
