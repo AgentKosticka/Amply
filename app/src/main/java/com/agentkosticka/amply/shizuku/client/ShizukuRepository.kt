@@ -6,9 +6,11 @@ import android.util.Log
 import android.os.SystemClock
 import com.agentkosticka.amply.util.readAtMost
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import kotlinx.coroutines.async
@@ -176,6 +178,68 @@ class ShizukuRepository(private val context: Context) {
     }
 
     /**
+     * Experimental ADB/Shizuku-only hardware key observer.
+     *
+     * Shizuku started through wireless/USB debugging runs commands as Android's shell user. The
+     * shell domain can use getevent to read kernel input events without root. We intentionally use
+     * the platform getevent binary rather than opening /dev/input nodes from Amply's app process.
+     *
+     * The callback fires immediately for KEY_POWER DOWN. `likelyScreenshotChord` is true when a
+     * Volume Down press was observed close enough to the Power press to resemble Android's standard
+     * screenshot chord. Amply hides on Power itself because waiting for the second key loses valuable
+     * compositor time.
+     */
+    suspend fun monitorHardwareKeys(
+        onPowerDown: (likelyScreenshotChord: Boolean) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        if (_permissionState.value != ShizukuPermissionState.GRANTED) return@withContext
+
+        val process = createShizukuProcess(arrayOf("getevent", "-lt")) ?: run {
+            Log.w(TAG, "Could not start ADB/Shizuku getevent monitor")
+            return@withContext
+        }
+
+        var lastVolumeDownElapsedMs = Long.MIN_VALUE
+        var lastPowerDownElapsedMs = Long.MIN_VALUE
+        Log.i(TAG, "ADB/Shizuku hardware-key monitor started")
+
+        try {
+            process.inputStream.bufferedReader().useLines { lines ->
+                val iterator = lines.iterator()
+                while (currentCoroutineContext().isActive && iterator.hasNext()) {
+                    val line = iterator.next()
+                    val now = SystemClock.elapsedRealtime()
+                    val isDown = line.contains(" DOWN") || line.trimEnd().endsWith(" 00000001")
+
+                    when {
+                        isDown && (line.contains("KEY_VOLUMEDOWN") || line.contains(" 0072 ")) -> {
+                            lastVolumeDownElapsedMs = now
+                            if (now - lastPowerDownElapsedMs in 0..SCREENSHOT_CHORD_WINDOW_MS) {
+                                Log.d(TAG, "Likely screenshot chord: Volume Down after Power")
+                            }
+                        }
+
+                        isDown && (line.contains("KEY_POWER") || line.contains(" 0074 ")) -> {
+                            lastPowerDownElapsedMs = now
+                            val chord = now - lastVolumeDownElapsedMs in 0..SCREENSHOT_CHORD_WINDOW_MS
+                            if (chord) Log.d(TAG, "Likely screenshot chord: Power after Volume Down")
+                            onPowerDown(chord)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            if (currentCoroutineContext().isActive) {
+                Log.w(TAG, "ADB/Shizuku hardware-key monitor stopped unexpectedly", e)
+            }
+        } finally {
+            process.destroy()
+            if (process.isAlive) process.destroyForcibly()
+            Log.i(TAG, "ADB/Shizuku hardware-key monitor stopped")
+        }
+    }
+
+    /**
      * Creates a process using Shizuku's newProcess method via reflection
      * This is necessary because newProcess is marked as private in some Shizuku versions
      */
@@ -202,6 +266,7 @@ class ShizukuRepository(private val context: Context) {
 
     companion object {
         private const val TAG = "ShizukuRepository"
+        private const val SCREENSHOT_CHORD_WINDOW_MS = 500L
     }
 
     /**
