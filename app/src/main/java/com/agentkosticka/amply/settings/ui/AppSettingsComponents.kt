@@ -103,7 +103,11 @@ internal fun AppSettingsRow(
     LaunchedEffect(app.defaultVolume) {
         displayedVolume = app.defaultVolume
     }
-    val icon = rememberApplicationIconBitmap(app.packageName, bitmapSizePx = 72)
+    val icon = rememberApplicationIconBitmap(
+        packageName = app.packageName,
+        uid = app.uid,
+        bitmapSizePx = 72
+    )
     val volumePercent = (displayedVolume * 100).roundToInt()
     val personalUserId = Process.myUid() / 100_000
     val displayName = appDisplayName(

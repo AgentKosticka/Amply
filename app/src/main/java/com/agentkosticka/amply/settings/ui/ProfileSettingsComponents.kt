@@ -755,6 +755,7 @@ private fun ProfileEditor(
                 ?: presentation.setting.defaultVolume
             ProfileAppVolumeRow(
                 packageName = presentation.identity.packageName,
+                uid = presentation.setting.uid,
                 displayName = presentation.displayName,
                 profileLabel = presentation.profileLabel,
                 fraction = value,
@@ -1036,6 +1037,7 @@ private fun ProfileAppSearchSurface(
                     ?: presentation.setting.defaultVolume
                 ProfileAppVolumeRow(
                     packageName = presentation.identity.packageName,
+                    uid = presentation.setting.uid,
                     displayName = presentation.displayName,
                     profileLabel = presentation.profileLabel,
                     fraction = value,
@@ -1118,13 +1120,18 @@ private fun ProfileSystemVolumeRow(
 @Composable
 private fun ProfileAppVolumeRow(
     packageName: String,
+    uid: Int,
     displayName: String,
     profileLabel: String?,
     fraction: Float,
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val icon = rememberApplicationIconBitmap(packageName, 72)
+    val icon = rememberApplicationIconBitmap(
+        packageName = packageName,
+        uid = uid,
+        bitmapSizePx = 72
+    )
     val percent = (fraction * 100).roundToInt()
     Column(
         modifier

@@ -179,7 +179,11 @@ internal fun StandDownAppRow(
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit
 ) {
-    val icon = rememberApplicationIconBitmap(app.packageName, bitmapSizePx = 80)
+    val icon = rememberApplicationIconBitmap(
+        packageName = app.packageName,
+        uid = app.uid,
+        bitmapSizePx = 80
+    )
     SettingsPanel(
         modifier = Modifier.toggleable(
             value = enabled,

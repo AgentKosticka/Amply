@@ -61,6 +61,7 @@ class AudioSessionManager(
     private val packageManager: PackageManager = context.packageManager
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
     private val activityManager = context.getSystemService(ActivityManager::class.java)
+    private val iconDensityDpi = context.resources.displayMetrics.densityDpi
     private val audioManager: AudioManager =
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -336,11 +337,7 @@ class AudioSessionManager(
             val profile = UserHandle.getUserHandleForUid(uid)
             val appInfo = launcherApps.getApplicationInfo(packageName, 0, profile)
             val appName = packageManager.getApplicationLabel(appInfo).toString()
-            val appIcon = try {
-                launcherApps.getApplicationInfo(packageName, 0, profile).loadIcon(packageManager)
-            } catch (_: Exception) {
-                null
-            }
+            val appIcon = loadLauncherIcon(packageName, uid)
 
             // Cache metadata
             appMetadataCache.put(identity.storageKey, AppMetadata(packageName, appName, appIcon))
@@ -364,6 +361,20 @@ class AudioSessionManager(
             Log.e(TAG, "Could not resolve playback metadata", e)
             null
         }
+    }
+    private fun loadLauncherIcon(
+        packageName: String,
+        uid: Int
+    ): Drawable? {
+        val profile = UserHandle.getUserHandleForUid(uid)
+
+        return runCatching {
+            launcherApps
+                .getActivityList(packageName, profile)
+                .firstOrNull()
+                ?.getIcon(iconDensityDpi)
+                ?: packageManager.getApplicationIcon(packageName)
+        }.getOrNull()
     }
 
     private fun resolvePlaybackPackage(uid: Int, pid: Int): String? {
@@ -402,13 +413,15 @@ class AudioSessionManager(
             val foreground = foregroundVisitSession?.takeIf { it.identity == identity }
             if (active == null && setting == null && foreground == null) return@mapNotNull null
 
+            val resolvedUid = active?.uid ?: foreground?.uid ?: setting!!.uid
+
             OverlayAppEntry(
                 packageName = identity.packageName,
-                uid = active?.uid ?: foreground?.uid ?: setting!!.uid,
+                uid = resolvedUid,
                 appName = active?.appName ?: foreground?.appName ?: setting!!.appName,
-                appIcon = active?.appIcon ?: foreground?.appIcon ?: runCatching {
-                    packageManager.getApplicationIcon(identity.packageName)
-                }.getOrNull(),
+                appIcon = active?.appIcon
+                    ?: foreground?.appIcon
+                    ?: loadLauncherIcon(identity.packageName, resolvedUid),
                 volume = setting?.defaultVolume ?: active?.volume ?: foreground!!.volume,
                 isPlaying = active != null,
                 controlState = if (active == null) {
